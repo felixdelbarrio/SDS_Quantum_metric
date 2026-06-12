@@ -1,0 +1,76 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sds-quantum-metric"
+version = "0.1.0"
+description = "Local offline analytics viewer for Quantum Metric data"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.115.0",
+  "uvicorn[standard]>=0.30.0",
+  "pydantic>=2.8.0",
+  "pydantic-settings>=2.4.0",
+  "httpx>=0.27.0",
+  "polars>=1.5.0",
+  "pyarrow>=17.0.0",
+  "playwright>=1.45.0",
+  "truststore>=0.9.0",
+  "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.0",
+  "pytest-asyncio>=0.24.0",
+  "coverage>=7.6.0",
+  "ruff>=0.6.0",
+  "mypy>=1.11.0",
+  "bandit>=1.7.9",
+]
+desktop = [
+  "pywebview>=5.2",
+  "pyinstaller>=6.10.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["backend*", "desktop*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S"]
+ignore = ["S603", "S607"]
+
+[tool.ruff.lint.per-file-ignores]
+"backend/tests/*" = ["S101"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+packages = ["backend", "desktop"]
+warn_unused_ignores = false
+
+[tool.pytest.ini_options]
+testpaths = ["backend/tests"]
+asyncio_mode = "auto"
+
+[tool.coverage.run]
+branch = true
+source = ["backend"]
+omit = [
+  "backend/app/api/routes.py",
+  "backend/app/auth/browser_cookies.py",
+  "backend/app/ingestion/capture.py",
+  "backend/app/ingestion/service.py",
+  "backend/app/main.py",
+  "backend/app/quantum/client.py",
+]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+skip_covered = true

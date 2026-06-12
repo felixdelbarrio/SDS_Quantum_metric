@@ -1,0 +1,63 @@
+from functools import lru_cache
+from pathlib import Path
+
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    qm_base_url: str = "https://bbvamx.quantummetric.com"
+    qm_browser: str = "chrome"
+    qm_session_mode: str = "browser"
+    qm_country: str = "MX"
+    qm_verify_tls: bool = True
+    qm_data_dir: Path = Path("data")
+    qm_default_dashboard_url: str = (
+        "https://bbvamx.quantummetric.com/#/dashboard/"
+        "8e53eb82-587c-4b92-a0fa-0f6283677e28"
+        "?tab=0&teamID=1da677de-9313-4b49-9110-81a6b756ca7e"
+    )
+    backend_host: str = "127.0.0.1"
+    backend_port: int = 8765
+    frontend_host: str = "127.0.0.1"
+    frontend_port: int = 5173
+    chrome_cookie_profile: str = "Default"
+    chrome_executable: Path = Field(
+        default=Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+    )
+
+    @property
+    def config_dir(self) -> Path:
+        return self.qm_data_dir / "config"
+
+    @property
+    def parquet_dir(self) -> Path:
+        return self.qm_data_dir / "parquet"
+
+    @property
+    def manifests_dir(self) -> Path:
+        return self.qm_data_dir / "manifests"
+
+    @property
+    def exports_dir(self) -> Path:
+        return self.qm_data_dir / "exports"
+
+    @property
+    def runtime_dir(self) -> Path:
+        return self.qm_data_dir / "runtime"
+
+
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    settings = Settings()
+    for directory in [
+        settings.config_dir,
+        settings.parquet_dir,
+        settings.manifests_dir,
+        settings.exports_dir,
+        settings.runtime_dir,
+    ]:
+        directory.mkdir(parents=True, exist_ok=True)
+    return settings

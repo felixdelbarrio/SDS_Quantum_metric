@@ -1,0 +1,16 @@
+{
+  "name": "sds-quantum-metric-root",
+  "private": true,
+  "workspaces": [
+    "frontend"
+  ],
+  "scripts": {
+    "dev": "npm --workspace frontend run dev",
+    "build": "npm --workspace frontend run build",
+    "lint": "npm --workspace frontend run lint",
+    "typecheck": "npm --workspace frontend run typecheck",
+    "test": "npm --workspace frontend run test",
+    "format:check": "npm --workspace frontend run format:check",
+    "format": "npm --workspace frontend run format"
+  }
+}
