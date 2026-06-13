@@ -3,9 +3,12 @@ import {
   Database,
   Gauge,
   GitBranch,
+  PanelLeftClose,
+  PanelLeftOpen,
   Settings,
   UploadCloud,
 } from "lucide-react";
+import { useState } from "react";
 import { NavLink, Route, Routes } from "react-router-dom";
 import { AsIsExplorer } from "../features/as-is/AsIsExplorer";
 import { DatasetsPage } from "../features/datasets/DatasetsPage";
@@ -23,23 +26,57 @@ const nav = [
 ];
 
 export function App() {
+  const [isSidebarCollapsed, setSidebarCollapsed] = useState(true);
+  const SidebarToggleIcon = isSidebarCollapsed ? PanelLeftOpen : PanelLeftClose;
+  const sidebarToggleLabel = isSidebarCollapsed
+    ? "Expandir navegación"
+    : "Contraer navegación";
+
   return (
-    <div className="app-shell">
-      <aside className="side-nav" aria-label="Principal">
-        <div className="brand">
-          <div className="brand-lockup">
-            <BarChart3 aria-hidden="true" />
-            <span>SDS Quantum</span>
+    <div
+      className="app-shell"
+      data-sidebar={isSidebarCollapsed ? "collapsed" : "expanded"}
+    >
+      <aside
+        className="side-nav"
+        aria-label="Principal"
+        data-state={isSidebarCollapsed ? "collapsed" : "expanded"}
+      >
+        <div className="side-nav-header">
+          <div className="brand-lockup" title="SDS Quantum">
+            <span className="brand-mark" aria-hidden="true">
+              <BarChart3 />
+            </span>
+            <span className="brand-name">SDS Quantum</span>
           </div>
-          <ThemeToggle />
+          <div className="side-nav-controls">
+            <button
+              className="sidebar-toggle"
+              type="button"
+              aria-label={sidebarToggleLabel}
+              aria-expanded={!isSidebarCollapsed}
+              aria-controls="primary-navigation"
+              title={sidebarToggleLabel}
+              onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
+            >
+              <SidebarToggleIcon aria-hidden="true" size={18} />
+            </button>
+            <ThemeToggle />
+          </div>
         </div>
-        <nav>
+        <nav id="primary-navigation" className="side-nav-list">
           {nav.map((item) => {
             const Icon = item.icon;
             return (
-              <NavLink key={item.to} to={item.to} end={item.to === "/"}>
+              <NavLink
+                key={item.to}
+                to={item.to}
+                end={item.to === "/"}
+                aria-label={item.label}
+                title={item.label}
+              >
                 <Icon aria-hidden="true" />
-                <span>{item.label}</span>
+                <span className="nav-label">{item.label}</span>
               </NavLink>
             );
           })}

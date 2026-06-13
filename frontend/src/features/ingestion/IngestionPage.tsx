@@ -1,6 +1,6 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Play, RefreshCcw, Square } from "lucide-react";
-import { FormEvent, useState } from "react";
+import { FormEvent } from "react";
 import { apiGet, apiPost } from "../../shared/api/client";
 import { useAppStore } from "../../shared/state/appStore";
 
@@ -26,7 +26,6 @@ type IngestionsResponse = {
 
 export function IngestionPage() {
   const { activeCountry, setActiveCountry } = useAppStore();
-  const [waitSeconds, setWaitSeconds] = useState(35);
   const ingestions = useQuery({
     queryKey: ["ingestions"],
     queryFn: () => apiGet<IngestionsResponse>("/ingestions"),
@@ -37,7 +36,6 @@ export function IngestionPage() {
     mutationFn: () =>
       apiPost<IngestionJob>("/ingestions", {
         country: activeCountry,
-        wait_seconds: waitSeconds,
       }),
     onSuccess: () => void ingestions.refetch(),
   });
@@ -63,7 +61,7 @@ export function IngestionPage() {
       <header className="page-header">
         <h1>Ingesta</h1>
         <button
-          className="button secondary"
+          className="command-button"
           onClick={() => void ingestions.refetch()}
         >
           <RefreshCcw size={16} /> Actualizar
@@ -83,16 +81,6 @@ export function IngestionPage() {
             <option value="CO">Colombia</option>
             <option value="AR">Argentina</option>
           </select>
-        </label>
-        <label className="field">
-          <span>Ventana</span>
-          <input
-            type="number"
-            min={5}
-            max={180}
-            value={waitSeconds}
-            onChange={(event) => setWaitSeconds(Number(event.target.value))}
-          />
         </label>
         <button className="button" type="submit" disabled={create.isPending}>
           <Play size={16} /> Ingestar

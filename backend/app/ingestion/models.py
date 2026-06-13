@@ -11,7 +11,6 @@ from backend.app.quantum.schemas import Country
 class IngestionCreate(BaseModel):
     country: Country
     dashboard_url: str | None = None
-    wait_seconds: int = Field(default=35, ge=5, le=180)
 
 
 class IngestionJob(BaseModel):

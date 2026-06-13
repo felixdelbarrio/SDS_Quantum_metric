@@ -11,7 +11,7 @@ export function CountrySelector({ countries, value, onChange }: Props) {
   const selected = countries.find((country) => country.code === value);
 
   return (
-    <label className="dashboard-country">
+    <label className="command-field">
       <span>Pais</span>
       <select
         value={value}
