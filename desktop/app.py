@@ -1,16 +1,15 @@
 from __future__ import annotations
 
-import sys
 import threading
 import time
 import urllib.request
-from pathlib import Path
 from typing import Any
 
 import uvicorn
 
 from backend.app.config.settings import get_settings
 from backend.app.main import app
+from desktop.icon import apply_macos_app_icon, resolve_icon_png
 
 
 def main() -> None:
@@ -27,6 +26,7 @@ def main() -> None:
     try:
         import webview
 
+        apply_macos_app_icon()
         _create_window(webview, url)
         webview.start()
     except Exception:
@@ -65,12 +65,7 @@ def _create_window(webview: Any, url: str) -> object:
 
 
 def _window_icon() -> str | None:
-    source = Path("desktop/assets/icon.png").resolve()
-    if source.exists():
-        return str(source)
-    bundle_root = Path(getattr(sys, "_MEIPASS", Path.cwd()))
-    bundled = (bundle_root / "desktop" / "assets" / "icon.png").resolve()
-    return str(bundled) if bundled.exists() else None
+    return resolve_icon_png()
 
 
 if __name__ == "__main__":

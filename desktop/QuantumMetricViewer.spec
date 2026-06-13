@@ -58,3 +58,19 @@ coll = COLLECT(
     upx_exclude=[],
     name="SDS Quantum Metric",
 )
+
+if sys.platform == "darwin":
+    app = BUNDLE(
+        coll,
+        name="SDS Quantum Metric.app",
+        icon=str(ICON),
+        bundle_identifier="com.sds.quantummetric",
+        info_plist={
+            "CFBundleDisplayName": "SDS Quantum Metric",
+            "CFBundleName": "SDS Quantum Metric",
+            "CFBundleShortVersionString": "0.1.0",
+            "CFBundleVersion": "0.1.0",
+            "LSApplicationCategoryType": "public.app-category.business",
+            "NSHighResolutionCapable": True,
+        },
+    )

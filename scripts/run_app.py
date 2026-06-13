@@ -4,10 +4,10 @@ import subprocess
 import sys
 import time
 import urllib.request
-from pathlib import Path
 from typing import Any
 
 from backend.app.config.settings import get_settings
+from desktop.icon import apply_macos_app_icon, resolve_icon_png
 
 
 def main() -> None:
@@ -35,6 +35,7 @@ def main() -> None:
     try:
         import webview
 
+        apply_macos_app_icon()
         _create_window(webview, url)
         webview.start()
     except Exception:
@@ -63,9 +64,9 @@ def _wait_for(url: str) -> None:
 
 def _create_window(webview: Any, url: str) -> object:
     kwargs: dict[str, object] = {"width": 1320, "height": 900}
-    icon = Path("desktop/assets/icon.png").resolve()
-    if icon.exists():
-        kwargs["icon"] = str(icon)
+    icon = resolve_icon_png()
+    if icon:
+        kwargs["icon"] = icon
     try:
         return webview.create_window("SDS Quantum Metric", url, **kwargs)
     except TypeError as exc:
