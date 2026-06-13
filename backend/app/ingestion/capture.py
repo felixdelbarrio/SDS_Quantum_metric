@@ -10,6 +10,7 @@ from playwright.sync_api import sync_playwright
 
 from backend.app.auth.browser_cookies import BrowserCookie
 from backend.app.config.settings import Settings
+from backend.app.ingestion.policy import IngestionRange, apply_ingestion_range
 from backend.app.observability.sanitizer import sanitize
 from backend.app.storage.parquet_store import hash_json
 
@@ -22,6 +23,7 @@ def capture_quantum_analytics(
     dashboard_url: str,
     wait_seconds: int,
     ingestion_id: str | None = None,
+    ingestion_range: IngestionRange | None = None,
 ) -> list[dict[str, Any]]:
     ingestion_id = ingestion_id or str(uuid.uuid4())
     ingestion_ts = datetime.now(UTC).isoformat()
@@ -36,12 +38,35 @@ def capture_quantum_analytics(
         context = browser.new_context(ignore_https_errors=not settings.qm_verify_tls)
         context.add_cookies(cast(Any, [cookie.as_playwright() for cookie in cookies]))
         page = context.new_page()
+        quantum_host = urlparse(str(settings.qm_base_url)).hostname
+
+        def is_quantum_analytics(url: str) -> bool:
+            parsed = urlparse(url)
+            return parsed.hostname == quantum_host and parsed.path in {
+                "/analytics",
+                "/analytics/historical",
+            }
+
+        def on_route(route: Any) -> None:
+            request = route.request
+            if request.method != "POST" or not ingestion_range:
+                route.continue_()
+                return
+            if not is_quantum_analytics(request.url):
+                route.continue_()
+                return
+            request_json = _parse_json(request.post_data or "")
+            rewritten, changed = apply_ingestion_range(request_json, ingestion_range)
+            if changed:
+                route.continue_(
+                    post_data=json.dumps(rewritten, ensure_ascii=False, separators=(",", ":"))
+                )
+                return
+            route.continue_()
 
         def on_response(response: Any) -> None:
             parsed = urlparse(response.url)
-            if parsed.hostname != urlparse(str(settings.qm_base_url)).hostname:
-                return
-            if parsed.path not in {"/analytics", "/analytics/historical"}:
+            if not is_quantum_analytics(response.url):
                 return
             request = response.request
             request_json = _parse_json(request.post_data or "")
@@ -79,6 +104,7 @@ def capture_quantum_analytics(
                 }
             )
 
+        page.route("**/*", on_route)
         page.on("response", on_response)
         page.goto(dashboard_url, wait_until="domcontentloaded", timeout=60_000)
         page.wait_for_timeout(wait_seconds * 1000)

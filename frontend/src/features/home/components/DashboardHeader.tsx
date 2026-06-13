@@ -41,21 +41,27 @@ export function DashboardHeader({
         </div>
       </div>
 
-      <div className="dashboard-actions">
+      <div className="dashboard-actions command-bar">
         <CountrySelector
           countries={countries}
           value={country}
           onChange={onCountryChange}
         />
-        <button className="button secondary" onClick={onOpenDimensions}>
-          <Layers3 size={16} /> Add Dashboard Dimension
-        </button>
-        <button className="button secondary" onClick={onOpenSegments}>
-          <Filter size={16} /> Dashboard Segment
-        </button>
-        <button className="button" onClick={onRefresh} disabled={isRefreshing}>
-          <RefreshCcw size={16} /> Actualizar
-        </button>
+        <div className="command-group">
+          <button className="command-button" onClick={onOpenDimensions}>
+            <Layers3 size={16} /> Dimension
+          </button>
+          <button className="command-button" onClick={onOpenSegments}>
+            <Filter size={16} /> Segmento
+          </button>
+          <button
+            className="command-button primary"
+            onClick={onRefresh}
+            disabled={isRefreshing}
+          >
+            <RefreshCcw size={16} /> Actualizar
+          </button>
+        </div>
       </div>
     </header>
   );
