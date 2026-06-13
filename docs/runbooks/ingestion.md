@@ -5,4 +5,32 @@
 3. Ir a Quantum y ejecutar Test de conexion.
 4. Ir a Ingesta, seleccionar pais y ejecutar Nueva ingesta.
 5. Revisar progreso y manifest.
-6. Verificar datos en Home/Datasets.
+6. Verificar datos en Datasets.
+7. Ir a Home y confirmar `Dashboard General {pais}`.
+8. Revisar que el selector marca el pais con datos.
+9. Validar pestaña Resumen:
+   - widgets de paginas vistas, sesiones, conversion y tiempo medio;
+   - tabla por App Name y sistema operativo;
+   - search y ordenacion.
+10. Validar pestaña Errores:
+    - comparativa de sesiones con error;
+    - porcentaje de sesiones con error;
+    - search y ordenacion.
+11. Abrir `Add Dashboard Dimension`, aplicar una dimension y confirmar que widgets y tablas se
+    refrescan desde `/api/analytics/*`.
+12. Abrir `Dashboard Segment`, aplicar un segmento y confirmar que widgets y tablas se filtran.
+
+## Verificacion offline
+
+1. Ejecutar una ingesta real.
+2. Desconectar internet o bloquear el dominio Quantum.
+3. Recargar Home.
+4. Confirmar que el dashboard sigue funcionando sobre Parquet local.
+5. Mover temporalmente `data/parquet/country=<pais>/raw_api_calls`.
+6. Recargar Home y confirmar estado `empty` sin datos falsos.
+
+## Seguridad
+
+- Cookies y secretos no se persisten.
+- Analytics offline no usa `QuantumClient`, Playwright ni `httpx`.
+- Solo Test de conexion e Ingesta pueden llamar a Quantum.
