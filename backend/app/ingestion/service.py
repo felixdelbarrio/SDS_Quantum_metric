@@ -10,6 +10,7 @@ from backend.app.auth.session_store import secret_store
 from backend.app.config.settings import Settings
 from backend.app.ingestion.capture import capture_quantum_analytics
 from backend.app.ingestion.models import IngestionCreate, IngestionJob
+from backend.app.ingestion.policy import CAPTURE_WAIT_SECONDS, build_ingestion_range
 from backend.app.observability.sanitizer import sanitize_error
 from backend.app.quantum.config_store import QuantumConfigStore
 from backend.app.storage.parquet_store import ParquetStore
@@ -66,6 +67,9 @@ class IngestionService:
         dashboard_url = (
             request.dashboard_url or config.dashboard_url or self.settings.qm_default_dashboard_url
         )
+        ingestion_range = build_ingestion_range(
+            self.parquet_store.latest_source_end(request.country.value)
+        )
         try:
             if config.session_mode == "manual":
                 manual_cookie = secret_store.get_manual_cookie()
@@ -82,14 +86,21 @@ class IngestionService:
                 cookies=cookies,
                 country=request.country.value,
                 dashboard_url=dashboard_url,
-                wait_seconds=request.wait_seconds,
+                wait_seconds=CAPTURE_WAIT_SECONDS,
                 ingestion_id=job.ingestion_id,
+                ingestion_range=ingestion_range,
             )
-            path = self.parquet_store.write_raw_calls(request.country.value, rows)
+            merge = self.parquet_store.merge_raw_calls(request.country.value, rows)
             job.records_received = sum(int(row.get("row_count") or 0) for row in rows)
-            job.records_persisted = len(rows)
+            job.records_persisted = merge.rows_captured
             job.pages_processed = 1
-            job.details = {"parquet_path": str(path) if path else None, "raw_calls": len(rows)}
+            job.details = {
+                "parquet_path": str(merge.path) if merge.path else None,
+                "raw_calls": len(rows),
+                "rows_replaced": merge.rows_replaced,
+                "rows_after_merge": merge.rows_after,
+                "range": ingestion_range.details(),
+            }
             job.status = "completed"
         except asyncio.CancelledError:
             job.status = "cancelled"

@@ -4,6 +4,7 @@ import hashlib
 import json
 import shutil
 import zipfile
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,28 @@ import polars as pl
 
 from backend.app.config.settings import Settings
 from backend.app.observability.sanitizer import sanitize
+
+DEDUPLICATION_COLUMNS = (
+    "source_endpoint",
+    "dashboard_id",
+    "card_id",
+    "card_type",
+    "view_name",
+    "metric_ids",
+    "source_ts_start",
+    "source_ts_end",
+    "query_hash",
+    "response_hash",
+)
+COMPACTED_RAW_CALLS_FILE = "raw_api_calls.parquet"
+
+
+@dataclass(frozen=True)
+class RawCallMergeResult:
+    path: Path | None
+    rows_captured: int
+    rows_replaced: int
+    rows_after: int
 
 
 class ParquetStore:
@@ -22,15 +45,34 @@ class ParquetStore:
         self.settings.exports_dir.mkdir(parents=True, exist_ok=True)
 
     def write_raw_calls(self, country: str, rows: list[dict[str, Any]]) -> Path | None:
+        return self.merge_raw_calls(country, rows).path
+
+    def merge_raw_calls(self, country: str, rows: list[dict[str, Any]]) -> RawCallMergeResult:
         if not rows:
-            return None
-        ingestion_id = str(rows[0]["ingestion_id"])
+            return RawCallMergeResult(path=None, rows_captured=0, rows_replaced=0, rows_after=0)
         target = self.settings.parquet_dir / f"country={country}" / "raw_api_calls"
         target.mkdir(parents=True, exist_ok=True)
-        path = target / f"ingestion_id={ingestion_id}.parquet"
-        frame = pl.DataFrame(rows)
-        frame.write_parquet(path)
-        return path
+        path = target / COMPACTED_RAW_CALLS_FILE
+        files = self._raw_call_files(country)
+        new_frame = pl.DataFrame(rows)
+        existing = self._read_parquet_files(files)
+        kept_existing, rows_replaced = self._drop_overlapping_source_range(existing, rows)
+        frame = pl.concat([kept_existing, new_frame], how="diagonal_relaxed")
+        dedupe_columns = [column for column in DEDUPLICATION_COLUMNS if column in frame.columns]
+        if dedupe_columns:
+            frame = frame.unique(subset=dedupe_columns, keep="last", maintain_order=True)
+
+        temporary = path.with_suffix(".tmp.parquet")
+        frame.write_parquet(temporary)
+        for file in files:
+            file.unlink(missing_ok=True)
+        temporary.replace(path)
+        return RawCallMergeResult(
+            path=path,
+            rows_captured=len(rows),
+            rows_replaced=rows_replaced,
+            rows_after=frame.height,
+        )
 
     def append_manifest(self, manifest: dict[str, Any]) -> Path:
         path = self.settings.manifests_dir / "ingestion_manifest.parquet"
@@ -140,7 +182,85 @@ class ParquetStore:
             return []
         return frame.filter(pl.col("card_id") == card_id).to_dicts()
 
+    def latest_source_end(self, country: str) -> datetime | None:
+        files = self._raw_call_files(country)
+        if not files:
+            return None
+        frame = self._read_parquet_files(files)
+        if "source_ts_end" not in frame.columns or frame.is_empty():
+            return None
+        values = frame.get_column("source_ts_end").drop_nulls().to_list()
+        parsed = [_parse_source_ts(value) for value in values]
+        timestamps = [value for value in parsed if value is not None]
+        return max(timestamps) if timestamps else None
+
+    def _raw_call_files(self, country: str) -> list[Path]:
+        root = self.settings.parquet_dir / f"country={country}" / "raw_api_calls"
+        return sorted(root.glob("*.parquet")) if root.exists() else []
+
+    def _read_parquet_files(self, files: list[Path]) -> pl.DataFrame:
+        if not files:
+            return pl.DataFrame()
+        return pl.concat([pl.read_parquet(file) for file in files], how="diagonal_relaxed")
+
+    def _drop_overlapping_source_range(
+        self, frame: pl.DataFrame, new_rows: list[dict[str, Any]]
+    ) -> tuple[pl.DataFrame, int]:
+        bounds = _source_bounds(new_rows)
+        if frame.is_empty() or bounds is None:
+            return frame, 0
+        kept: list[dict[str, Any]] = []
+        replaced = 0
+        for row in frame.to_dicts():
+            if _row_overlaps(row, bounds):
+                replaced += 1
+            else:
+                kept.append(row)
+        if kept:
+            return pl.DataFrame(kept), replaced
+        return pl.DataFrame(schema=frame.schema), replaced
+
 
 def hash_json(value: Any) -> str:
     payload = json.dumps(value, sort_keys=True, ensure_ascii=False, default=str)
     return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def _source_bounds(rows: list[dict[str, Any]]) -> tuple[datetime, datetime] | None:
+    starts = [_parse_source_ts(row.get("source_ts_start")) for row in rows]
+    ends = [_parse_source_ts(row.get("source_ts_end")) for row in rows]
+    valid_starts = [value for value in starts if value is not None]
+    valid_ends = [value for value in ends if value is not None]
+    if not valid_starts or not valid_ends:
+        return None
+    return min(valid_starts), max(valid_ends)
+
+
+def _row_overlaps(row: dict[str, Any], bounds: tuple[datetime, datetime]) -> bool:
+    start = _parse_source_ts(row.get("source_ts_start"))
+    end = _parse_source_ts(row.get("source_ts_end"))
+    if start is None or end is None:
+        return False
+    lower, upper = bounds
+    return start <= upper and end >= lower
+
+
+def _parse_source_ts(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.astimezone(UTC) if value.tzinfo else value.replace(tzinfo=UTC)
+    if isinstance(value, int | float):
+        timestamp = value / 1000 if abs(value) > 10_000_000_000 else value
+        return datetime.fromtimestamp(timestamp, UTC)
+    if isinstance(value, str):
+        normalized = value.strip()
+        if not normalized:
+            return None
+        if normalized.isdigit():
+            return _parse_source_ts(int(normalized))
+        try:
+            return datetime.fromisoformat(normalized.replace("Z", "+00:00")).astimezone(UTC)
+        except ValueError:
+            return None
+    return None

@@ -50,3 +50,68 @@ def test_parquet_store_roundtrip(tmp_path: Path) -> None:
     imported = store.import_zip(exported)
     assert imported["manifest"]["countries"] == ["MX"]
     assert store.list_datasets()[0]["country"] == "MX"
+
+
+def test_parquet_store_merge_replaces_overlap_and_tracks_latest_source_end(
+    tmp_path: Path,
+) -> None:
+    store = ParquetStore(Settings(qm_data_dir=tmp_path))
+    older = _raw_call(
+        ingestion_id="ing-1",
+        card_id="old",
+        source_ts_start="2026-05-01T00:00:00Z",
+        source_ts_end="2026-05-31T23:59:59Z",
+    )
+    overlap = _raw_call(
+        ingestion_id="ing-1",
+        card_id="overlap-old",
+        source_ts_start="2026-06-01T00:00:00Z",
+        source_ts_end="2026-06-10T00:00:00Z",
+    )
+    store.merge_raw_calls("MX", [older, overlap])
+
+    replacement = _raw_call(
+        ingestion_id="ing-2",
+        card_id="overlap-new",
+        source_ts_start="2026-06-03T00:00:00Z",
+        source_ts_end="2026-06-13T00:00:00Z",
+    )
+    result = store.merge_raw_calls("MX", [replacement, replacement])
+
+    assert result.path is not None and result.path.exists()
+    assert result.rows_replaced == 1
+    assert result.rows_after == 2
+    latest = store.latest_source_end("MX")
+    assert latest is not None
+    assert latest.isoformat() == "2026-06-13T00:00:00+00:00"
+    rows = store.card_data("old") + store.card_data("overlap-new")
+    assert {row["card_id"] for row in rows} == {"old", "overlap-new"}
+
+
+def _raw_call(
+    *,
+    ingestion_id: str,
+    card_id: str,
+    source_ts_start: str,
+    source_ts_end: str,
+) -> dict[str, object]:
+    return {
+        "ingestion_id": ingestion_id,
+        "ingestion_ts": "2026-06-12T00:00:00Z",
+        "country": "MX",
+        "source_endpoint": "/analytics",
+        "http_method": "POST",
+        "status_code": 200,
+        "dashboard_id": "dash",
+        "card_id": card_id,
+        "card_type": "TABLE",
+        "view_name": "topN",
+        "metric_ids": "[]",
+        "query_hash": f"q-{card_id}",
+        "response_hash": f"r-{card_id}",
+        "request_json": "{}",
+        "response_json": '{"rows":[1]}',
+        "row_count": 1,
+        "source_ts_start": source_ts_start,
+        "source_ts_end": source_ts_end,
+    }

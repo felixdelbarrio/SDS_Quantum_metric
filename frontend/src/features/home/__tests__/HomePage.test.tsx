@@ -144,13 +144,11 @@ describe("HomePage local dashboard", () => {
     ).toBeInTheDocument();
   });
 
-  it("Add Dashboard Dimension abre, aplica y limpia dimension", async () => {
+  it("Dimension abre, aplica y limpia dimension", async () => {
     mockFetch();
     renderHome();
 
-    fireEvent.click(
-      await screen.findByRole("button", { name: /Add Dashboard Dimension/i }),
-    );
+    fireEvent.click(await screen.findByRole("button", { name: /Dimension/i }));
     fireEvent.click(await screen.findByRole("button", { name: "Browser" }));
 
     await waitFor(() => {
@@ -160,9 +158,7 @@ describe("HomePage local dashboard", () => {
       ).toBe(true);
     });
 
-    fireEvent.click(
-      screen.getByRole("button", { name: /Add Dashboard Dimension/i }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: /Dimension/i }));
     fireEvent.click(
       await screen.findByRole("button", { name: "Quitar dimension" }),
     );
@@ -172,13 +168,11 @@ describe("HomePage local dashboard", () => {
     ).toBeInTheDocument();
   });
 
-  it("Dashboard Segment abre, aplica y limpia segmento", async () => {
+  it("Segmento abre, aplica y limpia segmento", async () => {
     mockFetch();
     renderHome();
 
-    fireEvent.click(
-      await screen.findByRole("button", { name: /Dashboard Segment/i }),
-    );
+    fireEvent.click(await screen.findByRole("button", { name: /Segmento/i }));
     fireEvent.click(
       await screen.findByRole("button", { name: /App Name: pagos/i }),
     );
@@ -192,7 +186,7 @@ describe("HomePage local dashboard", () => {
       ).toBe(true);
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /Dashboard Segment/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Segmento/i }));
     fireEvent.click(
       await screen.findByRole("button", { name: "Limpiar segmento" }),
     );

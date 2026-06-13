@@ -230,6 +230,73 @@ textarea:focus-visible {
   opacity: 0.55;
 }
 
+.command-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.command-group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.command-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: 38px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-3);
+  background: var(--color-button-secondary-bg);
+  color: var(--color-button-secondary-text);
+  cursor: pointer;
+  font-weight: 800;
+  white-space: nowrap;
+  box-shadow: var(--shadow-soft);
+}
+
+.command-button.primary {
+  border-color: transparent;
+  background: var(--color-accent);
+  color: var(--color-on-action);
+}
+
+.command-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.command-field {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 180px;
+}
+
+.command-field > span:first-child {
+  color: var(--color-muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.command-field select {
+  min-height: 38px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-3);
+  background: var(--color-input-bg);
+  color: var(--color-input-text);
+}
+
 .status {
   display: inline-flex;
   align-items: center;
@@ -344,35 +411,6 @@ textarea:focus-visible {
   border-color: var(--color-chip-ok-border);
   color: var(--color-status-ok-text);
   background: var(--color-chip-ok-bg);
-}
-
-.dashboard-actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: var(--space-3);
-  min-width: 0;
-}
-
-.dashboard-country {
-  display: grid;
-  gap: var(--space-2);
-  min-width: 180px;
-}
-
-.dashboard-country > span:first-child {
-  color: var(--color-muted);
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.dashboard-country select {
-  min-height: 40px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  padding: 0 var(--space-3);
-  background: var(--color-input-bg);
-  color: var(--color-input-text);
 }
 
 .dashboard-tabs {
@@ -821,12 +859,14 @@ textarea:focus-visible {
     min-width: 0;
   }
 
+  .command-bar,
   .dashboard-actions {
     justify-content: stretch;
   }
 
-  .dashboard-actions > *,
-  .dashboard-actions .button,
+  .command-bar > *,
+  .command-group,
+  .command-button,
   .search-field.compact {
     width: 100%;
   }
