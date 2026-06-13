@@ -1,6 +1,14 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help setup run clean CI build kill
+CODEQL_VERSION ?= latest
+CODEQL_HOME ?= .tools/codeql
+CODEQL ?= $(CODEQL_HOME)/codeql
+CODEQL_DB_DIR ?= .codeql-db
+CODEQL_SOURCE_DIR ?= .codeql-source
+CODEQL_PYTHON_DB ?= $(CODEQL_DB_DIR)/python
+CODEQL_TS_DB ?= $(CODEQL_DB_DIR)/javascript-typescript
+
+.PHONY: help setup run clean CI build kill codeql codeql-clean
 
 help:
 	@printf "Targets disponibles:\\n"
@@ -10,6 +18,7 @@ help:
 	@printf "  make CI     Ejecuta checks backend/frontend/security\\n"
 	@printf "  make build  Genera artefacto desktop local\\n"
 	@printf "  make kill   Detiene procesos iniciados por make run\\n"
+	@printf "  make codeql Ejecuta analisis CodeQL local\\n"
 
 setup:
 	python3 -m venv .venv
@@ -17,15 +26,16 @@ setup:
 	. .venv/bin/activate && python -m pip install -e ".[dev,desktop]"
 	. .venv/bin/activate && python -m playwright install chromium
 	npm install
+	. .venv/bin/activate && python scripts/setup_codeql.py --version "$(CODEQL_VERSION)" --home "$(CODEQL_HOME)"
 	mkdir -p data/parquet data/manifests data/exports data/config data/runtime
 
 run:
 	. .venv/bin/activate && python scripts/run_app.py
 
 clean:
-	rm -rf .pytest_cache .mypy_cache .ruff_cache htmlcov build dist frontend/dist desktop/build desktop/dist
+	rm -rf .pytest_cache .mypy_cache .ruff_cache htmlcov build dist frontend/dist desktop/build desktop/dist $(CODEQL_DB_DIR) $(CODEQL_SOURCE_DIR)
 	find . -name __pycache__ -type d -prune -exec rm -rf {} +
-	rm -f .coverage data/runtime/*.pid
+	rm -f .coverage data/runtime/*.pid codeql-results*.sarif
 
 CI:
 	. .venv/bin/activate && ruff format --check backend desktop scripts
@@ -39,6 +49,21 @@ CI:
 	npm test
 	. .venv/bin/activate && python scripts/scan_no_secrets.py
 	. .venv/bin/activate && bandit -q -c bandit.yml -x backend/tests -r backend desktop scripts
+	$(MAKE) codeql
+
+codeql:
+	. .venv/bin/activate && python scripts/setup_codeql.py --version "$(CODEQL_VERSION)" --home "$(CODEQL_HOME)"
+	rm -rf "$(CODEQL_PYTHON_DB)" "$(CODEQL_TS_DB)" "$(CODEQL_SOURCE_DIR)" codeql-results-python.sarif codeql-results-javascript-typescript.sarif
+	mkdir -p "$(CODEQL_DB_DIR)" "$(CODEQL_SOURCE_DIR)"
+	git ls-files -z --cached --others --exclude-standard | rsync -a --files-from=- --from0 ./ "$(CODEQL_SOURCE_DIR)"
+	"$(CODEQL)" database create "$(CODEQL_PYTHON_DB)" --language=python --source-root="$(CODEQL_SOURCE_DIR)" --overwrite
+	"$(CODEQL)" database analyze "$(CODEQL_PYTHON_DB)" codeql/python-queries --format=sarif-latest --output=codeql-results-python.sarif
+	"$(CODEQL)" database create "$(CODEQL_TS_DB)" --language=javascript-typescript --source-root="$(CODEQL_SOURCE_DIR)" --overwrite
+	"$(CODEQL)" database analyze "$(CODEQL_TS_DB)" codeql/javascript-queries --format=sarif-latest --output=codeql-results-javascript-typescript.sarif
+
+codeql-clean:
+	rm -rf "$(CODEQL_DB_DIR)" "$(CODEQL_SOURCE_DIR)"
+	rm -f codeql-results*.sarif
 
 build:
 	npm run build

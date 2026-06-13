@@ -4,7 +4,7 @@ type Props = {
   widget: ErrorComparisonWidget;
 };
 
-const COLORS = ["#0f7b6c", "#2d5bff", "#b75f00", "#7c3aed", "#b42318"];
+const COLOR_COUNT = 5;
 
 export function ErrorDonut({ widget }: Props) {
   const total = widget.series.reduce((sum, point) => sum + point.value, 0);
@@ -31,7 +31,7 @@ export function ErrorDonut({ widget }: Props) {
                   cx="21"
                   cy="21"
                   r="15.915"
-                  stroke={COLORS[index % COLORS.length]}
+                  className={`donut-segment-${index % COLOR_COUNT}`}
                   strokeDasharray={`${dash} ${100 - dash}`}
                   strokeDashoffset={offset}
                 />
@@ -43,9 +43,7 @@ export function ErrorDonut({ widget }: Props) {
           <div className="donut-legend">
             {widget.series.slice(0, 6).map((point, index) => (
               <span key={point.name}>
-                <i
-                  className={`legend-swatch swatch-${index % COLORS.length}`}
-                />
+                <i className={`legend-swatch swatch-${index % COLOR_COUNT}`} />
                 {point.name}: {point.percent.toFixed(2)}%
               </span>
             ))}

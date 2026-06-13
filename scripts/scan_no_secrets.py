@@ -1,17 +1,24 @@
 from __future__ import annotations
 
+import os
 import re
 import sys
 from pathlib import Path
 
 SKIP_DIRS = {
     ".git",
+    ".codeql-db",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".tools",
     ".venv",
-    "node_modules",
-    "frontend/dist",
+    "build",
     "data",
     "dist",
-    "build",
+    "htmlcov",
+    "node_modules",
+    "QuantumMetric.iconset",
     "__pycache__",
     "tests",
 }
@@ -25,12 +32,7 @@ PATTERNS = [
 
 def main() -> None:
     failures: list[str] = []
-    for path in Path(".").rglob("*"):
-        if not path.is_file():
-            continue
-        parts = set(path.parts)
-        if parts & SKIP_DIRS:
-            continue
+    for path in _iter_scannable_files(Path(".")):
         try:
             text = path.read_text(errors="ignore")
         except OSError:
@@ -45,6 +47,14 @@ def main() -> None:
             print(f" - {failure}")
         sys.exit(1)
     print("No persisted cookies or tokens detected.")
+
+
+def _iter_scannable_files(root: Path) -> list[Path]:
+    files: list[Path] = []
+    for current_root, dirnames, filenames in os.walk(root):
+        dirnames[:] = [dirname for dirname in dirnames if dirname not in SKIP_DIRS]
+        files.extend(Path(current_root) / filename for filename in filenames)
+    return files
 
 
 if __name__ == "__main__":

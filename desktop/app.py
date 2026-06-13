@@ -3,11 +3,13 @@ from __future__ import annotations
 import threading
 import time
 import urllib.request
+from typing import Any
 
 import uvicorn
 
 from backend.app.config.settings import get_settings
 from backend.app.main import app
+from desktop.icon import apply_macos_app_icon, resolve_icon_png
 
 
 def main() -> None:
@@ -24,7 +26,8 @@ def main() -> None:
     try:
         import webview
 
-        webview.create_window("SDS Quantum Metric", url, width=1320, height=900)
+        apply_macos_app_icon()
+        _create_window(webview, url)
         webview.start()
     except Exception:
         print(f"SDS Quantum Metric: {url}")
@@ -45,6 +48,24 @@ def _wait_for(url: str) -> None:
         except Exception:
             time.sleep(0.5)
     raise RuntimeError(f"Timed out waiting for {url}")
+
+
+def _create_window(webview: Any, url: str) -> object:
+    kwargs: dict[str, object] = {"width": 1320, "height": 900}
+    icon = _window_icon()
+    if icon:
+        kwargs["icon"] = icon
+    try:
+        return webview.create_window("SDS Quantum Metric", url, **kwargs)
+    except TypeError as exc:
+        if "icon" not in kwargs or "icon" not in str(exc):
+            raise
+        kwargs.pop("icon")
+        return webview.create_window("SDS Quantum Metric", url, **kwargs)
+
+
+def _window_icon() -> str | None:
+    return resolve_icon_png()
 
 
 if __name__ == "__main__":
