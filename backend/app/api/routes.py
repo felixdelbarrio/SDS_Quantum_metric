@@ -6,6 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
+from backend.app.analytics.models import SortDirection
 from backend.app.analytics.service import AnalyticsService
 from backend.app.auth.browser_cookies import BrowserCookieProvider
 from backend.app.auth.session_store import secret_store
@@ -199,6 +200,89 @@ def analytics_summary(
     store: Annotated[ParquetStore, Depends(parquet_store_dep)],
 ) -> dict[str, object]:
     return AnalyticsService(store).summary()
+
+
+@router.get("/analytics/countries")
+def analytics_countries(
+    store: Annotated[ParquetStore, Depends(parquet_store_dep)],
+) -> dict[str, object]:
+    return AnalyticsService(store).countries()
+
+
+@router.get("/analytics/dashboard/summary")
+def analytics_dashboard_summary(
+    store: Annotated[ParquetStore, Depends(parquet_store_dep)],
+    country: str = "MX",
+    dimension: str | None = None,
+    segment: str | None = None,
+) -> dict[str, object]:
+    return AnalyticsService(store).dashboard_summary(country, dimension, segment)
+
+
+@router.get("/analytics/dashboard/summary/table")
+def analytics_dashboard_summary_table(
+    store: Annotated[ParquetStore, Depends(parquet_store_dep)],
+    country: str = "MX",
+    search: str | None = None,
+    sort: str = "page_views",
+    direction: SortDirection = "desc",
+    dimension: str | None = None,
+    segment: str | None = None,
+) -> dict[str, object]:
+    return AnalyticsService(store).dashboard_summary_table(
+        country=country,
+        search=search,
+        sort=sort,
+        direction=direction,
+        dimension=dimension,
+        segment=segment,
+    )
+
+
+@router.get("/analytics/dashboard/errors")
+def analytics_dashboard_errors(
+    store: Annotated[ParquetStore, Depends(parquet_store_dep)],
+    country: str = "MX",
+    dimension: str | None = None,
+    segment: str | None = None,
+) -> dict[str, object]:
+    return AnalyticsService(store).dashboard_errors(country, dimension, segment)
+
+
+@router.get("/analytics/dashboard/errors/table")
+def analytics_dashboard_errors_table(
+    store: Annotated[ParquetStore, Depends(parquet_store_dep)],
+    country: str = "MX",
+    search: str | None = None,
+    sort: str = "error_session_percent",
+    direction: SortDirection = "desc",
+    dimension: str | None = None,
+    segment: str | None = None,
+) -> dict[str, object]:
+    return AnalyticsService(store).dashboard_errors_table(
+        country=country,
+        search=search,
+        sort=sort,
+        direction=direction,
+        dimension=dimension,
+        segment=segment,
+    )
+
+
+@router.get("/analytics/dimensions")
+def analytics_dimensions(
+    store: Annotated[ParquetStore, Depends(parquet_store_dep)],
+    country: str = "MX",
+) -> dict[str, object]:
+    return AnalyticsService(store).dimensions(country)
+
+
+@router.get("/analytics/segments")
+def analytics_segments(
+    store: Annotated[ParquetStore, Depends(parquet_store_dep)],
+    country: str = "MX",
+) -> dict[str, object]:
+    return AnalyticsService(store).segments(country)
 
 
 @router.get("/analytics/timeseries")
