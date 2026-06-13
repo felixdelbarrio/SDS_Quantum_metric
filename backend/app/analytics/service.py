@@ -18,6 +18,13 @@ class AnalyticsService:
     def countries(self) -> dict[str, Any]:
         return self.engine.countries().model_dump(mode="json")
 
+    def datasets(self) -> dict[str, Any]:
+        return {
+            "datasets": [
+                dataset.model_dump(mode="json") for dataset in self.engine.dataset_insights()
+            ]
+        }
+
     def dashboard_summary(
         self,
         country: str,

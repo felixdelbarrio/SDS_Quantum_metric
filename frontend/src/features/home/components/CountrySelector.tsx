@@ -17,12 +17,17 @@ export function CountrySelector({ countries, value, onChange }: Props) {
         value={value}
         onChange={(event) => onChange(event.target.value as CountryCode)}
         aria-label="Pais del dashboard"
+        disabled={!countries.length}
       >
-        {countries.map((country) => (
-          <option key={country.code} value={country.code}>
-            {country.code} - {country.has_data ? "con datos" : "sin datos"}
-          </option>
-        ))}
+        {countries.length ? (
+          countries.map((country) => (
+            <option key={country.code} value={country.code}>
+              {country.label}
+            </option>
+          ))
+        ) : (
+          <option value={value}>Sin datos</option>
+        )}
       </select>
       <span className={`data-badge ${selected?.has_data ? "ok" : ""}`}>
         {selected?.has_data ? (

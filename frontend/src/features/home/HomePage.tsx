@@ -1,4 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { RefreshCcw } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
   getCountries,
@@ -20,11 +21,12 @@ import {
   DashboardSelection,
   DashboardSegment,
 } from "./types";
+import { COUNTRY_OPTIONS } from "../../shared/countries";
 import { useAppStore } from "../../shared/state/appStore";
 
 type DashboardTab = "summary" | "errors";
 
-const COUNTRY_CODES: CountryCode[] = ["ES", "MX", "PE", "CO", "AR"];
+const COUNTRY_CODES = COUNTRY_OPTIONS.map((country) => country.code);
 
 export function HomePage() {
   const queryClient = useQueryClient();
@@ -42,36 +44,60 @@ export function HomePage() {
     queryFn: getCountries,
   });
 
-  useEffect(() => {
-    if (!countries.data || hasCountryPreference) return;
-    if (countries.data.default_country !== country) {
-      setActiveCountry(countries.data.default_country);
+  const hasDashboardData = Boolean(countries.data?.countries.length);
+  const selectedCountry = useMemo(() => {
+    if (!countries.data?.countries.length) return country;
+    if (countries.data.countries.some((item) => item.code === country)) {
+      return country;
     }
-  }, [countries.data, country, hasCountryPreference, setActiveCountry]);
+    const defaultCountry = countries.data.countries.find(
+      (item) => item.code === countries.data?.default_country,
+    );
+    return defaultCountry?.code ?? countries.data.countries[0].code;
+  }, [countries.data, country]);
+
+  useEffect(() => {
+    if (!countries.data?.countries.length) return;
+    if (
+      !hasCountryPreference ||
+      !countries.data.countries.some((item) => item.code === country)
+    ) {
+      setActiveCountry(selectedCountry);
+    }
+  }, [
+    countries.data,
+    country,
+    hasCountryPreference,
+    selectedCountry,
+    setActiveCountry,
+  ]);
 
   useEffect(() => {
     setSegment(null);
-  }, [country]);
+  }, [selectedCountry]);
 
   const summary = useQuery({
-    queryKey: ["dashboard", "summary", country, dimension, segment],
-    queryFn: () => getSummary({ country, dimension, segment }),
+    queryKey: ["dashboard", "summary", selectedCountry, dimension, segment],
+    queryFn: () => getSummary({ country: selectedCountry, dimension, segment }),
+    enabled: hasDashboardData,
   });
 
   const errors = useQuery({
-    queryKey: ["dashboard", "errors", country, dimension, segment],
-    queryFn: () => getErrors({ country, dimension, segment }),
-    enabled: activeTab === "errors",
+    queryKey: ["dashboard", "errors", selectedCountry, dimension, segment],
+    queryFn: () => getErrors({ country: selectedCountry, dimension, segment }),
+    enabled: activeTab === "errors" && hasDashboardData,
   });
 
   const dimensions = useQuery({
-    queryKey: ["dashboard", "dimensions", country],
-    queryFn: () => getDimensions(country),
+    queryKey: ["dashboard", "dimensions", selectedCountry],
+    queryFn: () => getDimensions(selectedCountry),
+    enabled: hasDashboardData,
   });
 
   const segments = useQuery({
-    queryKey: ["dashboard", "segments", country],
-    queryFn: () => getSegments(country),
+    queryKey: ["dashboard", "segments", selectedCountry],
+    queryFn: () => getSegments(selectedCountry),
+    enabled: hasDashboardData,
   });
 
   const appliedDimension = useMemo(
@@ -125,10 +151,27 @@ export function HomePage() {
     );
   }
 
+  if (!countries.data.countries.length) {
+    return (
+      <div className="dashboard-page">
+        <header className="page-header">
+          <h1>Dashboard General</h1>
+          <button className="command-button primary" onClick={refreshDashboard}>
+            <RefreshCcw size={16} /> Actualizar
+          </button>
+        </header>
+        <EmptyAnalyticsState
+          title="Sin datos ingestados"
+          reason="No hay datos locales disponibles para ningun pais."
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="dashboard-page">
       <DashboardHeader
-        country={country}
+        country={selectedCountry}
         countries={countries.data.countries}
         appliedDimension={appliedDimension}
         appliedSegment={appliedSegment}
@@ -143,7 +186,7 @@ export function HomePage() {
 
       {activeTab === "summary" ? (
         <SummaryTab
-          country={country}
+          country={selectedCountry}
           dimension={dimension}
           segment={segment}
           response={summary.data}
@@ -151,7 +194,7 @@ export function HomePage() {
         />
       ) : (
         <ErrorsTab
-          country={country}
+          country={selectedCountry}
           dimension={dimension}
           segment={segment}
           response={errors.data}

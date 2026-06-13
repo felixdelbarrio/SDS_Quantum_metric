@@ -20,5 +20,6 @@ def test_health_and_config(tmp_path: Path) -> None:
     response = client.get("/api/config/quantum")
     assert response.status_code == 200
     assert response.json()["country"] == "MX"
+    assert response.json()["countries"][0]["country"] == "MX"
 
     app.dependency_overrides.clear()

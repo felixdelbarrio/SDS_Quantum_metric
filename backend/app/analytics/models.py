@@ -200,3 +200,22 @@ class ErrorComparisonResponse(BaseModel):
     reason: str | None = None
     required_dataset: str | None = None
     available_datasets: list[str] = Field(default_factory=list)
+
+
+class DatasetBusinessInsight(BaseModel):
+    status: AnalyticsStatus
+    country: str
+    label: str
+    files: int
+    bytes: int
+    updated_at: str | None = None
+    raw_calls: int = 0
+    rows: int = 0
+    cards: int = 0
+    last_ingestion_at: str | None = None
+    source_start: str | None = None
+    source_end: str | None = None
+    kpis: list[KpiWidget] = Field(default_factory=list)
+    top_apps: list[DetailTableRow] = Field(default_factory=list)
+    top_errors: list[ErrorPercentRow] = Field(default_factory=list)
+    reason: str | None = None

@@ -26,12 +26,13 @@ class QuantumClient:
     ) -> None:
         self.settings = settings
         self.config = config
+        self.country_config = config.required_country_config()
         self.cookie_provider = cookie_provider
         self.cookies = cookies
 
     def test_connection(self) -> TestConnectionResponse:
         started = time.perf_counter()
-        endpoint = str(urljoin(str(self.config.base_url), "/data/init"))
+        endpoint = str(urljoin(str(self.country_config.base_url), "/data/init"))
         try:
             with self._client() as client:
                 init_response = client.get(
@@ -40,7 +41,7 @@ class QuantumClient:
                 )
                 init_response.raise_for_status()
                 init_json = init_response.json()
-                auth_endpoint = str(urljoin(str(self.config.base_url), "/auth-token"))
+                auth_endpoint = str(urljoin(str(self.country_config.base_url), "/auth-token"))
                 token_response = client.get(
                     auth_endpoint, headers=self._cookie_headers(auth_endpoint)
                 )

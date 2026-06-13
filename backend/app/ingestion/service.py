@@ -64,27 +64,33 @@ class IngestionService:
         job.status = "running"
         job.endpoint_current = "/analytics"
         config = self.config_store.read()
-        dashboard_url = (
-            request.dashboard_url or config.dashboard_url or self.settings.qm_default_dashboard_url
-        )
         ingestion_range = build_ingestion_range(
             self.parquet_store.latest_source_end(request.country.value)
         )
         try:
+            country_config = config.required_country_config(request.country)
+            if not country_config.is_ready_for_ingestion():
+                raise RuntimeError(
+                    f"Country {request.country.value} needs base URL and dashboard ID."
+                )
+            dashboard_url = country_config.dashboard_url()
             if config.session_mode == "manual":
                 manual_cookie = secret_store.get_manual_cookie()
                 if not manual_cookie:
                     raise RuntimeError("Manual session mode needs a cookie in memory.")
                 cookies = self.cookie_provider.from_manual_header(
-                    manual_cookie, str(config.base_url)
+                    manual_cookie, str(country_config.base_url)
                 )
             else:
-                cookies = self.cookie_provider.load(config.browser.value, str(config.base_url))
+                cookies = self.cookie_provider.load(
+                    config.browser.value, str(country_config.base_url)
+                )
             rows = await asyncio.to_thread(
                 capture_quantum_analytics,
                 settings=self.settings,
                 cookies=cookies,
                 country=request.country.value,
+                base_url=country_config.base_url,
                 dashboard_url=dashboard_url,
                 wait_seconds=CAPTURE_WAIT_SECONDS,
                 ingestion_id=job.ingestion_id,
