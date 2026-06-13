@@ -1,7 +1,8 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Play, RefreshCcw, Square } from "lucide-react";
-import { FormEvent } from "react";
+import { FormEvent, useEffect, useMemo } from "react";
 import { apiGet, apiPost } from "../../shared/api/client";
+import { CountryCode, countryLabel } from "../../shared/countries";
 import { useAppStore } from "../../shared/state/appStore";
 
 type IngestionJob = {
@@ -24,13 +25,37 @@ type IngestionsResponse = {
   persisted: IngestionJob[];
 };
 
+type QuantumCountryConfig = {
+  country: CountryCode;
+  base_url: string;
+  dashboard_id: string;
+  enabled: boolean;
+};
+
+type QuantumConfig = {
+  country: CountryCode;
+  countries: QuantumCountryConfig[];
+};
+
 export function IngestionPage() {
   const { activeCountry, setActiveCountry } = useAppStore();
+  const config = useQuery({
+    queryKey: ["quantum-config"],
+    queryFn: () => apiGet<QuantumConfig>("/config/quantum"),
+  });
   const ingestions = useQuery({
     queryKey: ["ingestions"],
     queryFn: () => apiGet<IngestionsResponse>("/ingestions"),
     refetchInterval: 2500,
   });
+
+  const configuredCountries = useMemo(
+    () => config.data?.countries.filter((country) => country.enabled) ?? [],
+    [config.data?.countries],
+  );
+  const selectedConfig = configuredCountries.find(
+    (country) => country.country === activeCountry,
+  );
 
   const create = useMutation({
     mutationFn: () =>
@@ -40,14 +65,30 @@ export function IngestionPage() {
     onSuccess: () => void ingestions.refetch(),
   });
 
+  const canIngest = Boolean(
+    selectedConfig?.base_url &&
+    selectedConfig.dashboard_id &&
+    !create.isPending,
+  );
+
   const cancel = useMutation({
     mutationFn: (id: string) =>
       apiPost<IngestionJob>(`/ingestions/${id}/cancel`),
     onSuccess: () => void ingestions.refetch(),
   });
 
+  useEffect(() => {
+    if (!configuredCountries.length) return;
+    if (
+      !configuredCountries.some((country) => country.country === activeCountry)
+    ) {
+      setActiveCountry(configuredCountries[0].country);
+    }
+  }, [activeCountry, configuredCountries, setActiveCountry]);
+
   function onSubmit(event: FormEvent) {
     event.preventDefault();
+    if (!canIngest) return;
     create.mutate();
   }
 
@@ -73,21 +114,32 @@ export function IngestionPage() {
           <span>Pais</span>
           <select
             value={activeCountry}
+            disabled={!configuredCountries.length}
             onChange={(event) => setActiveCountry(event.target.value)}
           >
-            <option value="ES">Espana</option>
-            <option value="MX">Mexico</option>
-            <option value="PE">Peru</option>
-            <option value="CO">Colombia</option>
-            <option value="AR">Argentina</option>
+            {configuredCountries.length ? (
+              configuredCountries.map((country) => (
+                <option key={country.country} value={country.country}>
+                  {countryLabel(country.country)}
+                </option>
+              ))
+            ) : (
+              <option value={activeCountry}>Sin paises</option>
+            )}
           </select>
         </label>
-        <button className="button" type="submit" disabled={create.isPending}>
+        <button className="button" type="submit" disabled={!canIngest}>
           <Play size={16} /> Ingestar
         </button>
       </form>
 
-      <section className="card" style={{ marginTop: 16 }}>
+      {!configuredCountries.length && (
+        <div className="analytics-empty compact section-offset">
+          <strong>Sin paises configurados</strong>
+        </div>
+      )}
+
+      <section className="card section-offset">
         {jobs.length ? (
           <table className="table">
             <thead>

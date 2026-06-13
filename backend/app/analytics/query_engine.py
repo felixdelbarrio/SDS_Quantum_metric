@@ -15,6 +15,7 @@ from backend.app.analytics.models import (
     DashboardDimensionsResponse,
     DashboardSegmentsResponse,
     DashboardSelection,
+    DatasetBusinessInsight,
     DetailTableResponse,
     DetailTableRow,
     EmptyAnalyticsResponse,
@@ -37,16 +38,8 @@ from backend.app.analytics.normalizer import (
     normalize_raw_calls,
 )
 from backend.app.analytics.segments import build_segments, parse_segment
-from backend.app.quantum.schemas import Country
+from backend.app.quantum.schemas import COUNTRY_LABELS, COUNTRY_ORDER, Country, country_label
 from backend.app.storage.parquet_store import ParquetStore
-
-COUNTRY_LABELS = {
-    Country.ES.value: "Espana",
-    Country.MX.value: "Mexico",
-    Country.PE.value: "Peru",
-    Country.CO.value: "Colombia",
-    Country.AR.value: "Argentina",
-}
 
 SUMMARY_COLUMNS = [
     TableColumn(key="name", label="name", sortable=True),
@@ -72,29 +65,74 @@ class AnalyticsQueryEngine:
     def countries(self) -> DashboardCountrySelection:
         countries: list[AvailableCountry] = []
         first_with_data: str | None = None
-        for code in COUNTRY_LABELS:
+        for country in COUNTRY_ORDER:
+            code = country.value
             raw_calls = self._read_raw_calls(code)
             rows = _sum_row_counts(raw_calls)
             last_ingestion_at = _last_ingestion(raw_calls)
             has_data = bool(raw_calls)
-            if has_data and first_with_data is None:
-                first_with_data = code
-            countries.append(
-                AvailableCountry(
-                    code=code,
-                    label=COUNTRY_LABELS[code],
-                    has_data=has_data,
-                    raw_calls=len(raw_calls),
-                    rows=rows,
-                    last_ingestion_at=last_ingestion_at,
+            if has_data:
+                if first_with_data is None:
+                    first_with_data = code
+                countries.append(
+                    AvailableCountry(
+                        code=code,
+                        label=COUNTRY_LABELS[code],
+                        has_data=True,
+                        raw_calls=len(raw_calls),
+                        rows=rows,
+                        last_ingestion_at=last_ingestion_at,
+                    )
                 )
-            )
 
         configured = str(self.store.settings.qm_country or Country.MX.value)
         default_country = first_with_data or (
             configured if configured in COUNTRY_LABELS else Country.MX.value
         )
         return DashboardCountrySelection(countries=countries, default_country=default_country)
+
+    def dataset_insights(self) -> list[DatasetBusinessInsight]:
+        insights: list[DatasetBusinessInsight] = []
+        for stored in self.store.list_datasets():
+            country = str(stored["country"])
+            raw_calls = self._read_raw_calls(country)
+            dataset = normalize_raw_calls(
+                country, raw_calls, self._available_dataset_names(country)
+            )
+            empty = self._empty_if_needed(dataset)
+            records = dataset.records if not empty else []
+            top_apps = self._sort_rows(
+                self._summary_rows(records, "app_name"),
+                "sessions",
+                "desc",
+            )[:5]
+            top_errors = sorted(
+                calculate_error_rows(records, "app_name"),
+                key=lambda row: _sort_value(row.error_session_percent),
+                reverse=True,
+            )[:5]
+            source_start, source_end = _source_range(raw_calls)
+            insights.append(
+                DatasetBusinessInsight(
+                    status="empty" if empty else "ok",
+                    country=country,
+                    label=country_label(country),
+                    files=int(stored["files"]),
+                    bytes=int(stored["bytes"]),
+                    updated_at=stored.get("updated_at"),
+                    raw_calls=len(raw_calls),
+                    rows=_sum_row_counts(raw_calls),
+                    cards=_card_count(raw_calls),
+                    last_ingestion_at=dataset.last_ingestion_at,
+                    source_start=source_start,
+                    source_end=source_end,
+                    kpis=self._dataset_kpis(records),
+                    top_apps=[DetailTableRow.model_validate(row) for row in top_apps],
+                    top_errors=top_errors,
+                    reason=empty.reason if empty else None,
+                )
+            )
+        return insights
 
     def dimensions(self, country: str) -> DashboardDimensionsResponse:
         dataset = self.load(country)
@@ -505,6 +543,28 @@ class AnalyticsQueryEngine:
             delta_percent=round(sum(deltas) / len(deltas), 2),
         )
 
+    def _dataset_kpis(self, records: list[NormalizedRecord]) -> list[KpiWidget]:
+        if not records:
+            return []
+        return [
+            self._kpi_widget(records, "page_views", "Paginas vistas", "count", None),
+            self._kpi_widget(records, "sessions", "Sesiones", "count", None),
+            self._kpi_widget(
+                records,
+                "converted_sessions",
+                "Sesiones con conversion",
+                "count",
+                None,
+            ),
+            self._kpi_widget(
+                records,
+                "avg_session_time",
+                "Tiempo medio de sesion",
+                "seconds",
+                None,
+            ),
+        ]
+
     def _summary_rows(
         self,
         records: list[NormalizedRecord],
@@ -629,6 +689,16 @@ def _sum_row_counts(raw_calls: list[dict[str, Any]]) -> int:
 def _last_ingestion(raw_calls: list[dict[str, Any]]) -> str | None:
     timestamps = [str(row["ingestion_ts"]) for row in raw_calls if row.get("ingestion_ts")]
     return max(timestamps) if timestamps else None
+
+
+def _source_range(raw_calls: list[dict[str, Any]]) -> tuple[str | None, str | None]:
+    starts = [str(row["source_ts_start"]) for row in raw_calls if row.get("source_ts_start")]
+    ends = [str(row["source_ts_end"]) for row in raw_calls if row.get("source_ts_end")]
+    return (min(starts) if starts else None, max(ends) if ends else None)
+
+
+def _card_count(raw_calls: list[dict[str, Any]]) -> int:
+    return len({str(row["card_id"]) for row in raw_calls if row.get("card_id")})
 
 
 def _sum_metric(records: list[NormalizedRecord], metric: str) -> float | None:

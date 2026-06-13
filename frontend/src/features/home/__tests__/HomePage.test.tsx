@@ -14,6 +14,7 @@ type MockOptions = {
   defaultCountry?: string;
   countries?: Array<{
     code: string;
+    label?: string;
     has_data: boolean;
     raw_calls?: number;
     rows?: number;
@@ -42,10 +43,10 @@ describe("HomePage local dashboard", () => {
     mockFetch({ empty: true });
     renderHome();
 
-    expect(await screen.findByText("Dashboard General MX")).toBeInTheDocument();
+    expect(await screen.findByText("Dashboard General")).toBeInTheDocument();
     expect(
       await screen.findByText(
-        "No local Parquet rows available for requested country.",
+        "No hay datos locales disponibles para ningun pais.",
       ),
     ).toBeInTheDocument();
   });
@@ -54,11 +55,7 @@ describe("HomePage local dashboard", () => {
     mockFetch({
       defaultCountry: "ES",
       countries: [
-        { code: "ES", has_data: true, raw_calls: 2, rows: 20 },
-        { code: "MX", has_data: false },
-        { code: "PE", has_data: false },
-        { code: "CO", has_data: false },
-        { code: "AR", has_data: false },
+        { code: "ES", label: "Espana", has_data: true, raw_calls: 2, rows: 20 },
       ],
     });
     renderHome();
@@ -67,7 +64,12 @@ describe("HomePage local dashboard", () => {
   });
 
   it("cambia queries al cambiar el selector de pais", async () => {
-    mockFetch();
+    mockFetch({
+      countries: [
+        { code: "MX", label: "Mexico", has_data: true, raw_calls: 1, rows: 2 },
+        { code: "PE", label: "Peru", has_data: true, raw_calls: 1, rows: 2 },
+      ],
+    });
     renderHome();
     const select = await screen.findByLabelText("Pais del dashboard");
 
@@ -237,26 +239,16 @@ function responseFor(url: URL, options: MockOptions) {
   const country =
     url.searchParams.get("country") ?? options.defaultCountry ?? "MX";
   if (url.pathname.endsWith("/analytics/countries")) {
+    if (options.empty) {
+      return {
+        default_country: options.defaultCountry ?? "MX",
+        countries: [],
+      };
+    }
     return {
       default_country: options.defaultCountry ?? "MX",
       countries: options.countries ?? [
-        { code: "ES", label: "Espana", has_data: false, raw_calls: 0, rows: 0 },
         { code: "MX", label: "Mexico", has_data: true, raw_calls: 1, rows: 2 },
-        { code: "PE", label: "Peru", has_data: false, raw_calls: 0, rows: 0 },
-        {
-          code: "CO",
-          label: "Colombia",
-          has_data: false,
-          raw_calls: 0,
-          rows: 0,
-        },
-        {
-          code: "AR",
-          label: "Argentina",
-          has_data: false,
-          raw_calls: 0,
-          rows: 0,
-        },
       ],
     };
   }

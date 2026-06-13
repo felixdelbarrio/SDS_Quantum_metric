@@ -1,4 +1,6 @@
-export type CountryCode = "ES" | "MX" | "PE" | "CO" | "AR";
+import type { CountryCode } from "../../shared/countries";
+
+export type { CountryCode };
 
 export type AnalyticsStatus = "ok" | "empty";
 export type SortDirection = "asc" | "desc";

@@ -82,13 +82,19 @@ def test_connection(
     settings: Annotated[Settings, Depends(settings_dep)],
 ) -> dict[str, object]:
     config = store.read()
+    try:
+        country_config = config.required_country_config()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not country_config.base_url:
+        raise HTTPException(status_code=400, detail="Selected country needs a base URL.")
     if config.session_mode == "manual":
         manual_cookie = secret_store.get_manual_cookie()
         if not manual_cookie:
             raise HTTPException(status_code=400, detail="Manual cookie is not available in memory.")
-        cookies = cookie_provider.from_manual_header(manual_cookie, str(config.base_url))
+        cookies = cookie_provider.from_manual_header(manual_cookie, str(country_config.base_url))
     else:
-        cookies = cookie_provider.load(config.browser.value, str(config.base_url))
+        cookies = cookie_provider.load(config.browser.value, str(country_config.base_url))
     return (
         QuantumClient(settings, config, cookie_provider, cookies)
         .test_connection()
@@ -138,7 +144,7 @@ def cancel_ingestion(
 
 @router.get("/datasets")
 def datasets(store: Annotated[ParquetStore, Depends(parquet_store_dep)]) -> dict[str, object]:
-    return {"datasets": store.list_datasets()}
+    return AnalyticsService(store).datasets()
 
 
 @router.delete("/datasets/{country}")
