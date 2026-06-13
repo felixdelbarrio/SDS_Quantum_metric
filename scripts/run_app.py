@@ -4,6 +4,8 @@ import subprocess
 import sys
 import time
 import urllib.request
+from pathlib import Path
+from typing import Any
 
 from backend.app.config.settings import get_settings
 
@@ -33,7 +35,7 @@ def main() -> None:
     try:
         import webview
 
-        webview.create_window("SDS Quantum Metric", url, width=1320, height=900)
+        _create_window(webview, url)
         webview.start()
     except Exception:
         print(f"SDS Quantum Metric: {url}")
@@ -57,6 +59,20 @@ def _wait_for(url: str) -> None:
         except Exception:
             time.sleep(0.5)
     raise RuntimeError(f"Timed out waiting for {url}")
+
+
+def _create_window(webview: Any, url: str) -> object:
+    kwargs: dict[str, object] = {"width": 1320, "height": 900}
+    icon = Path("desktop/assets/icon.png").resolve()
+    if icon.exists():
+        kwargs["icon"] = str(icon)
+    try:
+        return webview.create_window("SDS Quantum Metric", url, **kwargs)
+    except TypeError as exc:
+        if "icon" not in kwargs or "icon" not in str(exc):
+            raise
+        kwargs.pop("icon")
+        return webview.create_window("SDS Quantum Metric", url, **kwargs)
 
 
 def _terminate(process: subprocess.Popen[bytes]) -> None:

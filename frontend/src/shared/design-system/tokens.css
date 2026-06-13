@@ -1,25 +1,114 @@
 :root {
-  color-scheme: light;
-  --color-bg: #f6f7f9;
-  --color-panel: #ffffff;
-  --color-panel-alt: #eef4f1;
-  --color-text: #17201b;
-  --color-muted: #617168;
-  --color-border: #dce3df;
-  --color-accent: #0f7b6c;
-  --color-accent-2: #2d5bff;
-  --color-warn: #b75f00;
-  --color-danger: #b42318;
-  --shadow-soft: 0 14px 42px rgba(23, 32, 27, 0.08);
+  color-scheme: light dark;
+  --bbva-midnight: #070e46;
+  --bbva-electric: #001391;
+  --bbva-royal-dark: #2165ca;
+  --bbva-royal: #0c6dff;
+  --bbva-serene-dark: #53a9ef;
+  --bbva-serene: #85c8ff;
+  --bbva-grey-200: #f7f8f8;
+  --bbva-grey-300: #e2e6ea;
+  --bbva-white: #ffffff;
+  --font-sans:
+    "Benton Sans BBVA", system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+  --font-display: "Tiempos Headline", Georgia, "Times New Roman", serif;
   --radius-sm: 6px;
   --radius-md: 8px;
+  --radius-pill: 999px;
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
   --space-4: 16px;
   --space-5: 24px;
   --space-6: 32px;
-  --font-sans:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
-    "Segoe UI", sans-serif;
+}
+
+:root,
+[data-theme="light"] {
+  color-scheme: light;
+  --color-bg: var(--bbva-grey-200);
+  --color-panel: var(--bbva-white);
+  --color-panel-alt: var(--bbva-grey-300);
+  --color-elevated: var(--bbva-white);
+  --color-text: var(--bbva-midnight);
+  --color-muted: var(--bbva-electric);
+  --color-border: var(--bbva-grey-300);
+  --color-accent: var(--bbva-royal);
+  --color-accent-strong: var(--bbva-electric);
+  --color-accent-2: var(--bbva-serene-dark);
+  --color-warn: var(--bbva-royal-dark);
+  --color-danger: var(--bbva-royal-dark);
+  --color-on-action: var(--bbva-white);
+  --color-input-bg: var(--bbva-white);
+  --color-input-text: var(--bbva-midnight);
+  --color-button-secondary-bg: var(--bbva-grey-300);
+  --color-button-secondary-text: var(--bbva-midnight);
+  --color-nav-bg: var(--bbva-midnight);
+  --color-nav-text: var(--bbva-white);
+  --color-nav-muted: var(--bbva-serene);
+  --color-nav-active-bg: var(--bbva-electric);
+  --color-focus: var(--bbva-serene-dark);
+  --color-status-bg: var(--bbva-grey-300);
+  --color-status-text: var(--bbva-electric);
+  --color-status-ok-bg: var(--bbva-serene);
+  --color-status-ok-text: var(--bbva-midnight);
+  --color-status-ko-bg: var(--bbva-grey-300);
+  --color-status-ko-text: var(--bbva-royal-dark);
+  --color-chip-bg: var(--bbva-white);
+  --color-chip-ok-bg: var(--bbva-serene);
+  --color-chip-ok-border: var(--bbva-serene-dark);
+  --color-code-bg: var(--bbva-grey-300);
+  --color-donut-track: var(--bbva-grey-300);
+  --chart-1: var(--bbva-royal);
+  --chart-2: var(--bbva-electric);
+  --chart-3: var(--bbva-serene-dark);
+  --chart-4: var(--bbva-royal-dark);
+  --chart-5: var(--bbva-serene);
+  --shadow-soft: 0 14px 42px rgba(7, 14, 70, 0.1);
+  --shadow-panel: -18px 0 48px rgba(7, 14, 70, 0.18);
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --color-bg: var(--bbva-midnight);
+  --color-panel: var(--bbva-electric);
+  --color-panel-alt: var(--bbva-midnight);
+  --color-elevated: var(--bbva-electric);
+  --color-text: var(--bbva-white);
+  --color-muted: var(--bbva-serene);
+  --color-border: var(--bbva-royal-dark);
+  --color-accent: var(--bbva-serene-dark);
+  --color-accent-strong: var(--bbva-serene);
+  --color-accent-2: var(--bbva-royal);
+  --color-warn: var(--bbva-serene-dark);
+  --color-danger: var(--bbva-serene-dark);
+  --color-on-action: var(--bbva-white);
+  --color-input-bg: var(--bbva-midnight);
+  --color-input-text: var(--bbva-white);
+  --color-button-secondary-bg: var(--bbva-royal-dark);
+  --color-button-secondary-text: var(--bbva-white);
+  --color-nav-bg: var(--bbva-midnight);
+  --color-nav-text: var(--bbva-white);
+  --color-nav-muted: var(--bbva-serene);
+  --color-nav-active-bg: var(--bbva-royal-dark);
+  --color-focus: var(--bbva-serene);
+  --color-status-bg: var(--bbva-royal-dark);
+  --color-status-text: var(--bbva-white);
+  --color-status-ok-bg: var(--bbva-serene-dark);
+  --color-status-ok-text: var(--bbva-midnight);
+  --color-status-ko-bg: var(--bbva-royal-dark);
+  --color-status-ko-text: var(--bbva-white);
+  --color-chip-bg: var(--bbva-midnight);
+  --color-chip-ok-bg: var(--bbva-royal-dark);
+  --color-chip-ok-border: var(--bbva-serene-dark);
+  --color-code-bg: var(--bbva-midnight);
+  --color-donut-track: var(--bbva-royal-dark);
+  --chart-1: var(--bbva-serene-dark);
+  --chart-2: var(--bbva-royal);
+  --chart-3: var(--bbva-serene);
+  --chart-4: var(--bbva-royal-dark);
+  --chart-5: var(--bbva-white);
+  --shadow-soft: 0 14px 42px rgba(0, 0, 0, 0.28);
+  --shadow-panel: -18px 0 48px rgba(0, 0, 0, 0.34);
 }

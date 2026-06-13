@@ -2,6 +2,10 @@
   box-sizing: border-box;
 }
 
+html {
+  background: var(--color-bg);
+}
+
 body {
   margin: 0;
   min-width: 320px;
@@ -18,6 +22,15 @@ textarea {
   font: inherit;
 }
 
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
 .app-shell {
   display: grid;
   grid-template-columns: 248px 1fr;
@@ -26,8 +39,8 @@ textarea {
 }
 
 .side-nav {
-  background: #18231f;
-  color: #f8fbf9;
+  background: var(--color-nav-bg);
+  color: var(--color-nav-text);
   min-width: 0;
   padding: var(--space-5);
 }
@@ -36,8 +49,39 @@ textarea {
   display: flex;
   gap: var(--space-3);
   align-items: center;
-  height: 40px;
+  min-height: 40px;
   font-weight: 700;
+}
+
+.brand-lockup {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: var(--space-3);
+}
+
+.brand-lockup span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.theme-toggle {
+  display: grid;
+  place-items: center;
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  margin-left: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-nav-text);
+  cursor: pointer;
+}
+
+.theme-toggle:hover {
+  background: var(--color-nav-active-bg);
 }
 
 .side-nav nav {
@@ -52,15 +96,15 @@ textarea {
   gap: var(--space-3);
   min-height: 40px;
   padding: 0 var(--space-3);
-  color: #d9e6df;
+  color: var(--color-nav-muted);
   text-decoration: none;
   border-radius: var(--radius-sm);
 }
 
 .side-nav a.active,
 .side-nav a:hover {
-  background: #294139;
-  color: #ffffff;
+  background: var(--color-nav-active-bg);
+  color: var(--color-nav-text);
 }
 
 .main-pane {
@@ -79,6 +123,7 @@ textarea {
 
 .page-header h1 {
   margin: 0;
+  font-family: var(--font-display);
   font-size: 28px;
   line-height: 1.15;
 }
@@ -131,10 +176,11 @@ textarea {
   min-width: 180px;
 }
 
-.field label {
+.field label,
+.field > span {
   color: var(--color-muted);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .field input,
@@ -145,7 +191,8 @@ textarea {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   padding: 0 var(--space-3);
-  background: #fff;
+  background: var(--color-input-bg);
+  color: var(--color-input-text);
 }
 
 .field textarea {
@@ -164,14 +211,14 @@ textarea {
   border-radius: var(--radius-sm);
   padding: 0 var(--space-4);
   background: var(--color-accent);
-  color: #fff;
+  color: var(--color-on-action);
   cursor: pointer;
   font-weight: 700;
 }
 
 .button.secondary {
-  background: #e7eeeb;
-  color: var(--color-text);
+  background: var(--color-button-secondary-bg);
+  color: var(--color-button-secondary-text);
 }
 
 .button.danger {
@@ -189,21 +236,21 @@ textarea {
   gap: var(--space-2);
   min-height: 28px;
   padding: 0 var(--space-3);
-  border-radius: 999px;
-  background: #e8eeeb;
-  color: var(--color-muted);
+  border-radius: var(--radius-pill);
+  background: var(--color-status-bg);
+  color: var(--color-status-text);
   font-weight: 700;
   font-size: 13px;
 }
 
 .status.ok {
-  background: #dff5ed;
-  color: #09624f;
+  background: var(--color-status-ok-bg);
+  color: var(--color-status-ok-text);
 }
 
 .status.ko {
-  background: #fee4e2;
-  color: var(--color-danger);
+  background: var(--color-status-ko-bg);
+  color: var(--color-status-ko-text);
 }
 
 .table {
@@ -250,6 +297,7 @@ textarea {
 
 .dashboard-title-group h1 {
   margin: 0;
+  font-family: var(--font-display);
   font-size: 28px;
   line-height: 1.15;
 }
@@ -266,8 +314,8 @@ textarea {
   width: 36px;
   height: 36px;
   border-radius: var(--radius-sm);
-  background: #dff5ed;
-  color: var(--color-accent);
+  background: var(--color-status-ok-bg);
+  color: var(--color-accent-strong);
 }
 
 .dashboard-applied {
@@ -287,15 +335,15 @@ textarea {
   border-radius: var(--radius-sm);
   padding: 0 var(--space-3);
   color: var(--color-muted);
-  background: #fff;
+  background: var(--color-chip-bg);
   font-size: 13px;
   font-weight: 700;
 }
 
 .data-badge.ok {
-  border-color: #b8e6d6;
-  color: #09624f;
-  background: #effaf6;
+  border-color: var(--color-chip-ok-border);
+  color: var(--color-status-ok-text);
+  background: var(--color-chip-ok-bg);
 }
 
 .dashboard-actions {
@@ -323,7 +371,8 @@ textarea {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   padding: 0 var(--space-3);
-  background: #fff;
+  background: var(--color-input-bg);
+  color: var(--color-input-text);
 }
 
 .dashboard-tabs {
@@ -331,7 +380,7 @@ textarea {
   width: fit-content;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
-  background: #fff;
+  background: var(--color-input-bg);
   padding: 3px;
 }
 
@@ -347,8 +396,8 @@ textarea {
 }
 
 .dashboard-tabs button.active {
-  background: var(--color-text);
-  color: #fff;
+  background: var(--color-accent-strong);
+  color: var(--color-on-action);
 }
 
 .dashboard-tab-panel {
@@ -382,6 +431,16 @@ textarea {
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-4);
+}
+
+.section-heading.compact {
+  align-items: center;
+}
+
+.heading-with-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 .kpi-header span,
@@ -479,7 +538,8 @@ textarea {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   padding: 0 var(--space-3);
-  background: #fff;
+  background: var(--color-input-bg);
+  color: var(--color-input-text);
 }
 
 .search-field.compact {
@@ -491,6 +551,8 @@ textarea {
   min-width: 0;
   border: 0;
   outline: 0;
+  background: transparent;
+  color: inherit;
 }
 
 .analytics-loading,
@@ -501,7 +563,7 @@ textarea {
   gap: var(--space-2);
   border: 1px dashed var(--color-border);
   border-radius: var(--radius-md);
-  background: #fff;
+  background: var(--color-input-bg);
   color: var(--color-muted);
   padding: var(--space-5);
   text-align: center;
@@ -513,7 +575,7 @@ textarea {
 
 .analytics-empty code {
   color: var(--color-text);
-  background: #eef4f1;
+  background: var(--color-code-bg);
   border-radius: var(--radius-sm);
   padding: var(--space-1) var(--space-2);
 }
@@ -534,8 +596,8 @@ textarea {
   height: 100vh;
   overflow-y: auto;
   border-left: 1px solid var(--color-border);
-  background: #fff;
-  box-shadow: -18px 0 48px rgba(23, 32, 27, 0.16);
+  background: var(--color-elevated);
+  box-shadow: var(--shadow-panel);
   padding: var(--space-5);
 }
 
@@ -563,7 +625,8 @@ textarea {
   height: 34px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
-  background: #fff;
+  background: var(--color-input-bg);
+  color: var(--color-input-text);
   cursor: pointer;
 }
 
@@ -602,7 +665,7 @@ textarea {
   min-height: 42px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
-  background: #fff;
+  background: var(--color-input-bg);
   color: var(--color-text);
   cursor: pointer;
   padding: 0 var(--space-3);
@@ -611,11 +674,25 @@ textarea {
 
 .picker-list button.selected {
   border-color: var(--color-accent);
-  background: #effaf6;
+  background: var(--color-status-ok-bg);
 }
 
 .picker-list small {
   color: var(--color-muted);
+}
+
+.settings-section {
+  display: grid;
+  gap: var(--space-3);
+  padding-top: var(--space-2);
+}
+
+.theme-select {
+  max-width: 280px;
+}
+
+.quantum-status-card {
+  margin-top: var(--space-4);
 }
 
 .donut-layout {
@@ -634,12 +711,32 @@ textarea {
 
 .donut-chart circle {
   fill: transparent;
-  stroke: #e8eeeb;
+  stroke: var(--color-donut-track);
   stroke-width: 7;
 }
 
 .donut-chart circle + circle {
   stroke-width: 7;
+}
+
+.donut-segment-0 {
+  stroke: var(--chart-1);
+}
+
+.donut-segment-1 {
+  stroke: var(--chart-2);
+}
+
+.donut-segment-2 {
+  stroke: var(--chart-3);
+}
+
+.donut-segment-3 {
+  stroke: var(--chart-4);
+}
+
+.donut-segment-4 {
+  stroke: var(--chart-5);
 }
 
 .donut-legend {
@@ -663,23 +760,23 @@ textarea {
 }
 
 .swatch-0 {
-  background: #0f7b6c;
+  background: var(--chart-1);
 }
 
 .swatch-1 {
-  background: #2d5bff;
+  background: var(--chart-2);
 }
 
 .swatch-2 {
-  background: #b75f00;
+  background: var(--chart-3);
 }
 
 .swatch-3 {
-  background: #7c3aed;
+  background: var(--chart-4);
 }
 
 .swatch-4 {
-  background: #b42318;
+  background: var(--chart-5);
 }
 
 @media (max-width: 860px) {
@@ -717,6 +814,10 @@ textarea {
   .dashboard-header,
   .section-heading {
     display: grid;
+    min-width: 0;
+  }
+
+  .dashboard-title-group {
     min-width: 0;
   }
 

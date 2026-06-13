@@ -12,6 +12,7 @@ import { DatasetsPage } from "../features/datasets/DatasetsPage";
 import { HomePage } from "../features/home/HomePage";
 import { IngestionPage } from "../features/ingestion/IngestionPage";
 import { QuantumPage } from "../features/quantum-config/QuantumPage";
+import { ThemeToggle } from "../shared/theme/ThemeToggle";
 
 const nav = [
   { to: "/", label: "Home", icon: Gauge },
@@ -26,8 +27,11 @@ export function App() {
     <div className="app-shell">
       <aside className="side-nav" aria-label="Principal">
         <div className="brand">
-          <BarChart3 aria-hidden="true" />
-          <span>SDS Quantum</span>
+          <div className="brand-lockup">
+            <BarChart3 aria-hidden="true" />
+            <span>SDS Quantum</span>
+          </div>
+          <ThemeToggle />
         </div>
         <nav>
           {nav.map((item) => {

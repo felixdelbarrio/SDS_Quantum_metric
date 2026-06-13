@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Save, ShieldCheck, Wifi } from "lucide-react";
+import { Palette, Save, ShieldCheck, Wifi } from "lucide-react";
 import { FormEvent, useState } from "react";
 import { apiGet, apiPost, apiPut } from "../../shared/api/client";
+import { ThemePreference, useAppStore } from "../../shared/state/appStore";
 
 type QuantumConfig = {
   browser: "chrome" | "edge" | "safari" | "firefox";
@@ -23,6 +24,8 @@ type ConnectionState = {
 
 export function QuantumPage() {
   const queryClient = useQueryClient();
+  const themePreference = useAppStore((state) => state.themePreference);
+  const setThemePreference = useAppStore((state) => state.setThemePreference);
   const config = useQuery({
     queryKey: ["quantum-config"],
     queryFn: () => apiGet<QuantumConfig>("/config/quantum"),
@@ -128,6 +131,29 @@ export function QuantumPage() {
             </select>
           </label>
         </div>
+        <section className="settings-section" aria-labelledby="appearance">
+          <div className="section-heading compact">
+            <div>
+              <h2 id="appearance" className="heading-with-icon">
+                <Palette size={18} aria-hidden="true" />
+                Apariencia
+              </h2>
+            </div>
+          </div>
+          <label className="field theme-select">
+            <span>Tema</span>
+            <select
+              value={themePreference}
+              onChange={(event) =>
+                setThemePreference(event.target.value as ThemePreference)
+              }
+            >
+              <option value="system">Sistema</option>
+              <option value="light">Claro</option>
+              <option value="dark">Oscuro</option>
+            </select>
+          </label>
+        </section>
         <label className="field">
           <span>Base URL</span>
           <input
@@ -167,7 +193,7 @@ export function QuantumPage() {
         </div>
       </form>
 
-      <section className="card" style={{ marginTop: 16 }}>
+      <section className="card quantum-status-card">
         <div className="toolbar">
           <ShieldCheck size={18} />
           <strong>{test.data?.message ?? "No probado"}</strong>

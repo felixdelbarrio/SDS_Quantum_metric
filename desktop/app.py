@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import sys
 import threading
 import time
 import urllib.request
+from pathlib import Path
+from typing import Any
 
 import uvicorn
 
@@ -24,7 +27,7 @@ def main() -> None:
     try:
         import webview
 
-        webview.create_window("SDS Quantum Metric", url, width=1320, height=900)
+        _create_window(webview, url)
         webview.start()
     except Exception:
         print(f"SDS Quantum Metric: {url}")
@@ -45,6 +48,29 @@ def _wait_for(url: str) -> None:
         except Exception:
             time.sleep(0.5)
     raise RuntimeError(f"Timed out waiting for {url}")
+
+
+def _create_window(webview: Any, url: str) -> object:
+    kwargs: dict[str, object] = {"width": 1320, "height": 900}
+    icon = _window_icon()
+    if icon:
+        kwargs["icon"] = icon
+    try:
+        return webview.create_window("SDS Quantum Metric", url, **kwargs)
+    except TypeError as exc:
+        if "icon" not in kwargs or "icon" not in str(exc):
+            raise
+        kwargs.pop("icon")
+        return webview.create_window("SDS Quantum Metric", url, **kwargs)
+
+
+def _window_icon() -> str | None:
+    source = Path("desktop/assets/icon.png").resolve()
+    if source.exists():
+        return str(source)
+    bundle_root = Path(getattr(sys, "_MEIPASS", Path.cwd()))
+    bundled = (bundle_root / "desktop" / "assets" / "icon.png").resolve()
+    return str(bundled) if bundled.exists() else None
 
 
 if __name__ == "__main__":
