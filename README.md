@@ -17,6 +17,16 @@ make kill
 
 `make run` levanta backend FastAPI, frontend Vite y un visor desktop PyWebView. Las pantallas principales consumen solo APIs locales respaldadas por Parquet; Quantum se llama exclusivamente desde Test de conexion e Ingesta.
 
+## Configuracion Quantum
+
+La app configura Quantum por pais. El usuario mantiene `base_url`, `dashboard_id`, `team_id` y
+`tab` en la pantalla Quantum; la URL completa de dashboard se deriva internamente para capturar
+las llamadas reales de `/analytics`.
+
+`.env.example` incluye Mexico. Para Espana, Colombia, Argentina o Peru se anade una fila en
+Quantum y, al guardar, la configuracion queda sincronizada en `QM_COUNTRY_CONFIGS` dentro de
+`.env`. Las cookies de navegador o manuales no se escriben en disco.
+
 ## Dashboard local
 
 Home muestra `Dashboard General {pais}` y consume solo endpoints locales:

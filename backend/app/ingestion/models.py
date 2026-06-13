@@ -10,7 +10,6 @@ from backend.app.quantum.schemas import Country
 
 class IngestionCreate(BaseModel):
     country: Country
-    dashboard_url: str | None = None
 
 
 class IngestionJob(BaseModel):

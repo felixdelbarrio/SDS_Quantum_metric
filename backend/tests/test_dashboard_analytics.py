@@ -35,8 +35,7 @@ def test_countries_without_data(client: TestClient) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["default_country"] == "MX"
-    assert [country["code"] for country in payload["countries"]] == ["ES", "MX", "PE", "CO", "AR"]
-    assert all(country["has_data"] is False for country in payload["countries"])
+    assert payload["countries"] == []
 
 
 def test_countries_with_one_and_multiple_data(tmp_path: Path) -> None:
@@ -45,11 +44,13 @@ def test_countries_with_one_and_multiple_data(tmp_path: Path) -> None:
 
     one_country = AnalyticsService(store).countries()
     assert one_country["default_country"] == "MX"
+    assert [country["code"] for country in one_country["countries"]] == ["MX"]
     assert _country(one_country, "MX")["has_data"] is True
 
     _write_sample_raw_calls(store, "ES", "es-1")
     multiple_countries = AnalyticsService(store).countries()
     assert multiple_countries["default_country"] == "ES"
+    assert [country["code"] for country in multiple_countries["countries"]] == ["ES", "MX"]
     assert _country(multiple_countries, "ES")["raw_calls"] == 1
 
 
@@ -147,6 +148,24 @@ def test_dimensions_and_segments_are_inferred_from_local_data(tmp_path: Path) ->
     assert "app_name:pagos" in segment_ids
     assert "browser:Safari" in segment_ids
     assert "error_state:with_error" in segment_ids
+
+
+def test_dataset_insights_use_business_view(tmp_path: Path) -> None:
+    store = ParquetStore(Settings(qm_data_dir=tmp_path))
+    _write_sample_raw_calls(store, "MX", "mx-1")
+
+    datasets = AnalyticsService(store).datasets()["datasets"]
+
+    assert len(datasets) == 1
+    dataset = datasets[0]
+    assert dataset["country"] == "MX"
+    assert dataset["label"] == "Mexico"
+    assert dataset["raw_calls"] == 1
+    assert dataset["rows"] == 2
+    assert dataset["cards"] == 1
+    assert {kpi["id"] for kpi in dataset["kpis"]} >= {"page_views", "sessions"}
+    assert dataset["top_apps"][0]["name"] == "portabilidad nomina"
+    assert dataset["top_errors"][0]["name"] == "portabilidad nomina"
 
 
 def test_analytics_endpoints_do_not_call_quantum_or_leak_secrets(

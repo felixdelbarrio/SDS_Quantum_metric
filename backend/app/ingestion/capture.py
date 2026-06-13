@@ -20,6 +20,7 @@ def capture_quantum_analytics(
     settings: Settings,
     cookies: list[BrowserCookie],
     country: str,
+    base_url: str,
     dashboard_url: str,
     wait_seconds: int,
     ingestion_id: str | None = None,
@@ -38,7 +39,7 @@ def capture_quantum_analytics(
         context = browser.new_context(ignore_https_errors=not settings.qm_verify_tls)
         context.add_cookies(cast(Any, [cookie.as_playwright() for cookie in cookies]))
         page = context.new_page()
-        quantum_host = urlparse(str(settings.qm_base_url)).hostname
+        quantum_host = urlparse(str(base_url)).hostname
 
         def is_quantum_analytics(url: str) -> bool:
             parsed = urlparse(url)

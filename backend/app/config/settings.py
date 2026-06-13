@@ -14,6 +14,10 @@ class Settings(BaseSettings):
     qm_country: str = "MX"
     qm_verify_tls: bool = True
     qm_data_dir: Path = Path("data")
+    qm_dashboard_id: str = ""
+    qm_team_id: str = ""
+    qm_dashboard_tab: int = 0
+    qm_country_configs: str = ""
     qm_default_dashboard_url: str = (
         "https://bbvamx.quantummetric.com/#/dashboard/"
         "8e53eb82-587c-4b92-a0fa-0f6283677e28"
