@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="SDS Quantum Metric app icon">
+  <defs>
+    <linearGradient id="surface" x1="192" y1="96" x2="832" y2="928" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0C6DFF" />
+      <stop offset="0.52" stop-color="#001391" />
+      <stop offset="1" stop-color="#070E46" />
+    </linearGradient>
+    <linearGradient id="panel" x1="264" y1="264" x2="760" y2="760" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.96" />
+      <stop offset="1" stop-color="#85C8FF" stop-opacity="0.82" />
+    </linearGradient>
+    <filter id="lift" x="118" y="104" width="788" height="836" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="42" stdDeviation="34" flood-color="#070E46" flood-opacity="0.34" />
+    </filter>
+  </defs>
+  <rect x="64" y="64" width="896" height="896" rx="212" fill="url(#surface)" />
+  <path d="M210 778V410c0-94 76-170 170-170h336c54 0 98 44 98 98v368c0 54-44 98-98 98H236c-14 0-26-12-26-26Z" fill="#FFFFFF" opacity="0.12" />
+  <g filter="url(#lift)">
+    <rect x="224" y="224" width="576" height="576" rx="112" fill="url(#panel)" />
+    <rect x="288" y="288" width="448" height="448" rx="72" fill="#070E46" opacity="0.08" />
+    <path d="M330 642h364" fill="none" stroke="#070E46" stroke-opacity="0.22" stroke-width="32" stroke-linecap="round" />
+    <path d="M330 514h364" fill="none" stroke="#070E46" stroke-opacity="0.16" stroke-width="32" stroke-linecap="round" />
+    <path d="M330 386h364" fill="none" stroke="#070E46" stroke-opacity="0.12" stroke-width="32" stroke-linecap="round" />
+    <path d="M330 650c62-112 118-168 168-168 60 0 78 94 128 94 34 0 64-34 96-102" fill="none" stroke="#0C6DFF" stroke-width="54" stroke-linecap="round" stroke-linejoin="round" />
+    <circle cx="330" cy="650" r="34" fill="#53A9EF" />
+    <circle cx="498" cy="482" r="34" fill="#FFFFFF" />
+    <circle cx="626" cy="576" r="34" fill="#53A9EF" />
+    <circle cx="722" cy="474" r="34" fill="#FFFFFF" />
+  </g>
+</svg>

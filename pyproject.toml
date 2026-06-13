@@ -28,10 +28,12 @@ dev = [
   "ruff>=0.6.0",
   "mypy>=1.11.0",
   "bandit>=1.7.9",
+  "Pillow>=10.4.0",
 ]
 desktop = [
   "pywebview>=5.2",
   "pyinstaller>=6.10.0",
+  "Pillow>=10.4.0",
 ]
 
 [tool.setuptools.packages.find]
