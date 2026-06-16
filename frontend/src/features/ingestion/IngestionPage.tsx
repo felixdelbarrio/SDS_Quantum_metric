@@ -12,6 +12,8 @@ type IngestionJob = {
     | "pending"
     | "running"
     | "planning_range"
+    | "planning_chunks"
+    | "capturing_chunk"
     | "capturing_day"
     | "capturing_required_cards"
     | "capturing_web"
@@ -33,6 +35,19 @@ type IngestionJob = {
   records_received: number;
   records_persisted: number;
   pages_processed: number;
+  planned_chunks: number;
+  completed_chunks: number;
+  current_chunk_start?: string | null;
+  current_chunk_end?: string | null;
+  mandatory_cards_total: number;
+  mandatory_cards_captured: number;
+  calls_captured: number;
+  rows_captured: number;
+  derived_datasets: number;
+  regression_status?: string | null;
+  progress_percent: number;
+  last_progress_at?: string | null;
+  message?: string | null;
   errors: string[];
   duration_seconds?: number;
   details: Record<string, unknown>;
@@ -155,71 +170,101 @@ export function IngestionPage() {
 
       <section className="card section-offset">
         {jobs.length ? (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>Pais</th>
-                <th>Estado</th>
-                <th>Calls</th>
-                <th>Filas</th>
-                <th>Cards</th>
-                <th>Obligatorias</th>
-                <th>Derivados</th>
-                <th>Regresion</th>
-                <th>Rango</th>
-                <th>Duracion</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {jobs.map((job) => (
-                <tr key={`${job.ingestion_id}-${job.status}`}>
-                  <td>{job.ingestion_id.slice(0, 8)}</td>
-                  <td>{job.country}</td>
-                  <td>
-                    <span
-                      className={`status ${job.status === "completed" ? "ok" : ""}`}
-                    >
-                      {job.status}
-                    </span>
-                  </td>
-                  <td>{job.records_persisted}</td>
-                  <td>{job.records_received}</td>
-                  <td>{String(job.details.cards_captured ?? "-")}</td>
-                  <td>
-                    {String(job.details.mandatory_cards_captured ?? "-")}/
-                    {String(job.details.mandatory_cards ?? "-")}
-                  </td>
-                  <td>{String(job.details.derived_datasets ?? "-")}</td>
-                  <td>{String(job.details.regression_status ?? "-")}</td>
-                  <td>{formatRange(job.details.range)}</td>
-                  <td>{job.duration_seconds ?? "-"}</td>
-                  <td>
-                    {![
-                      "completed",
-                      "failed",
-                      "failed_regression",
-                      "cancelled",
-                    ].includes(job.status) && (
-                      <button
-                        className="button danger"
-                        onClick={() => cancel.mutate(job.ingestion_id)}
-                      >
-                        <Square size={16} />
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="ingestion-list">
+            {jobs.map((job) => (
+              <article
+                className="ingestion-progress-card"
+                key={job.ingestion_id}
+              >
+                <header>
+                  <div>
+                    <strong>{job.ingestion_id.slice(0, 8)}</strong>
+                    <span>{job.country}</span>
+                  </div>
+                  <span
+                    className={`status ${job.status === "completed" ? "ok" : ""}`}
+                  >
+                    {job.status}
+                  </span>
+                </header>
+                <div
+                  className="progress-track"
+                  aria-label="Progreso de ingesta"
+                >
+                  <span
+                    style={{
+                      width: `${Math.max(0, Math.min(100, job.progress_percent ?? 0))}%`,
+                    }}
+                  />
+                </div>
+                <div className="dataset-facts compact">
+                  <span>
+                    {job.completed_chunks}/{job.planned_chunks} chunks
+                  </span>
+                  <span>
+                    {job.calls_captured || job.records_persisted} calls
+                  </span>
+                  <span>{job.rows_captured || job.records_received} filas</span>
+                  <span>
+                    {job.mandatory_cards_captured}/{job.mandatory_cards_total}{" "}
+                    obligatorias
+                  </span>
+                  <span>
+                    {job.derived_datasets ||
+                      String(job.details.derived_datasets ?? "-")}{" "}
+                    derivados
+                  </span>
+                  <span>
+                    {job.regression_status ??
+                      String(job.details.regression_status ?? "-")}
+                  </span>
+                </div>
+                <p className="page-subtitle">
+                  {job.message ?? formatRange(job.details.range)}
+                </p>
+                <p className="page-subtitle">
+                  Chunk: {job.current_chunk_start ?? "-"} -{" "}
+                  {job.current_chunk_end ?? "-"}
+                </p>
+                <p className="page-subtitle">
+                  Actualizado: {formatDate(job.last_progress_at)} · Duracion:{" "}
+                  {job.duration_seconds ?? "-"}
+                </p>
+                {!!job.errors.length && (
+                  <p className="warning-text">{job.errors.join(" · ")}</p>
+                )}
+                {![
+                  "completed",
+                  "failed",
+                  "failed_regression",
+                  "cancelled",
+                ].includes(job.status) && (
+                  <button
+                    className="button danger"
+                    onClick={() => cancel.mutate(job.ingestion_id)}
+                  >
+                    <Square size={16} /> Cancelar
+                  </button>
+                )}
+              </article>
+            ))}
+          </div>
         ) : (
           <div className="empty">Sin ingestas</div>
         )}
       </section>
     </>
   );
+}
+
+function formatDate(value?: string | null) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.valueOf())) return value;
+  return new Intl.DateTimeFormat("es", {
+    dateStyle: "medium",
+    timeStyle: "medium",
+  }).format(date);
 }
 
 function formatRange(value: unknown) {

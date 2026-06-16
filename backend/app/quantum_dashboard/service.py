@@ -582,6 +582,9 @@ def _widget_from_row(row: dict[str, Any]) -> dict[str, Any]:
             "series": _list(row.get("series")),
             "chart_payload": _with_period_label(row.get("chart_payload"), period),
             "comparison": row.get("comparison"),
+            "delta_percent": row.get("delta_percent"),
+            "semantic_state": row.get("semantic_state"),
+            "semantic_intent": row.get("semantic_intent"),
             "period": period,
         }
     return {
@@ -594,6 +597,9 @@ def _widget_from_row(row: dict[str, Any]) -> dict[str, Any]:
         "timeseries": _list(row.get("timeseries")),
         "chart_payload": _with_period_label(row.get("chart_payload"), period),
         "comparison": row.get("comparison"),
+        "delta_percent": row.get("delta_percent"),
+        "semantic_state": row.get("semantic_state"),
+        "semantic_intent": row.get("semantic_intent"),
         "missing_source_field": None,
         "period": period,
     }

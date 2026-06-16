@@ -17,6 +17,8 @@ make kill
 
 `make run` levanta backend FastAPI, frontend Vite y un visor desktop PyWebView. Las pantallas principales consumen solo APIs locales respaldadas por Parquet; Quantum se llama exclusivamente desde ingesta y descubrimiento interno.
 
+`make CI` tambien compila el frontend y ejecuta un smoke desktop preflight. `make build` valida el frontend empaquetado y el servidor local antes de generar el binario.
+
 ## Configuracion Quantum
 
 La app configura Quantum por pais con una pantalla funcional: browser, modo de sesion, pais activo,
@@ -55,7 +57,9 @@ accionable. La UI no rellena datos falsos ni oculta discrepancias.
 
 ## Datasets
 
-Datasets permite auditar entidades Parquet por pais: RAW calls, contratos visuales, snapshots, derivados, chart payloads y regresion. Las entidades se leen paginadas y pueden exportarse/importarse por ZIP. El borrado exige confirmacion.
+Datasets permite auditar entidades Parquet por pais: RAW calls, contratos visuales, snapshots, derivados, chart payloads y regresion. Las entidades se leen paginadas y pueden exportarse/importarse por ZIP. El borrado exige confirmacion exacta del pais.
+
+Por defecto los datos viven en la ruta persistente del usuario calculada con `platformdirs`. `QM_DATA_DIR` queda reservado como override explicito. Si se detecta `./data` legacy, Datasets muestra aviso y permite migrarlo.
 
 ## Seguridad
 
@@ -74,7 +78,10 @@ recarga Home: el dashboard debe seguir funcionando sobre Parquet local.
 - Datasets derivados en `docs/to-be/parquet-derived-datasets.md`.
 - Regresion en `docs/regression/latest-web-vs-local.md`.
 - Contrato grafico en `docs/to-be/chart-contract.md`.
+- Hardening desktop en `docs/to-be/desktop-packaging.md`.
+- Ruta persistente en `docs/to-be/persistent-data-dir.md`.
+- Progreso de ingesta en `docs/to-be/ingestion-progress.md`.
 - Entidades auditables en `docs/to-be/dataset-entities.md`.
 - Backend local versionado bajo `/api`.
-- Persistencia Parquet en `data/parquet/country=<pais>`.
-- Export/import ZIP en `data/exports`.
+- Persistencia Parquet en la ruta de usuario activa bajo `parquet/country=<pais>`.
+- Export/import ZIP en la ruta de usuario activa bajo `exports`.

@@ -4,12 +4,15 @@ import asyncio
 import time
 import uuid
 from datetime import UTC, datetime
+from typing import Any
 
 from backend.app.auth.browser_cookies import BrowserCookieProvider
 from backend.app.auth.session_store import secret_store
 from backend.app.config.settings import Settings
 from backend.app.ingestion.models import IngestionCreate, IngestionJob
+from backend.app.ingestion.planner import plan_ingestion_chunks
 from backend.app.ingestion.policy import build_ingestion_range
+from backend.app.ingestion.progress import update_progress
 from backend.app.observability.sanitizer import sanitize_error
 from backend.app.quantum.config_store import QuantumConfigStore
 from backend.app.quantum_dashboard.builder import build_derived_datasets
@@ -70,7 +73,7 @@ class IngestionService:
 
     async def _run(self, job: IngestionJob, request: IngestionCreate) -> None:
         started = time.perf_counter()
-        job.status = "running"
+        job.status = "planning_range"
         job.endpoint_current = "/analytics + /analytics/historical"
         config = self.config_store.read()
         try:
@@ -97,38 +100,81 @@ class IngestionService:
                 )
             else:
                 cookies = self.cookie_provider.load(config.browser.value, str(discovery.base_url))
-            job.status = "planning_range"
-            rows = await asyncio.to_thread(
-                capture_quantum_dashboard_cards,
-                settings=self.settings,
-                cookies=cookies,
-                country=request.country.value,
-                base_url=discovery.base_url,
-                dashboard_id=discovery.dashboard_id,
-                team_id=discovery.team_id,
-                summary_tab=discovery.summary_tab,
-                errors_tab=discovery.errors_tab,
-                ingestion_id=job.ingestion_id,
-                ingestion_range=ingestion_range,
+            chunks = plan_ingestion_chunks(
+                ingestion_range,
+                chunk_days=self.settings.quantum_ingestion_chunk_days,
             )
-            job.status = "persisting_raw"
+            job.planned_chunks = len(chunks)
+            update_progress(
+                job,
+                status="planning_chunks",
+                message=f"Planificados {len(chunks)} chunks.",
+            )
+            rows: list[dict[str, Any]] = []
+            for index, chunk in enumerate(chunks, start=1):
+                current_task = asyncio.current_task()
+                if current_task is not None and current_task.cancelled():
+                    raise asyncio.CancelledError
+                job.current_chunk_start = chunk.details()["start"]
+                job.current_chunk_end = chunk.details()["end"]
+                update_progress(
+                    job,
+                    status="capturing_chunk",
+                    completed_chunks=index - 1,
+                    message=f"Capturando chunk {index}/{len(chunks)} {chunk.label}.",
+                )
+                chunk_range = ingestion_range.__class__(
+                    mode=ingestion_range.mode,
+                    start=chunk.start,
+                    end=chunk.end,
+                    latest_source_end=ingestion_range.latest_source_end,
+                    lookback_days=ingestion_range.lookback_days,
+                )
+                captured = await asyncio.to_thread(
+                    capture_quantum_dashboard_cards,
+                    settings=self.settings,
+                    cookies=cookies,
+                    country=request.country.value,
+                    base_url=discovery.base_url,
+                    dashboard_id=discovery.dashboard_id,
+                    team_id=discovery.team_id,
+                    summary_tab=discovery.summary_tab,
+                    errors_tab=discovery.errors_tab,
+                    ingestion_id=job.ingestion_id,
+                    ingestion_range=chunk_range,
+                )
+                rows.extend(captured)
+                update_progress(
+                    job,
+                    completed_chunks=index,
+                    calls_captured=len(rows),
+                    rows_captured=sum(int(row.get("row_count") or 0) for row in rows),
+                    message=f"Chunk {index}/{len(chunks)} persistido en memoria.",
+                )
+            update_progress(job, status="persisting_raw", message="Persistiendo RAW Parquet.")
             merge = self.parquet_store.merge_raw_calls(request.country.value, rows)
             job.records_received = sum(int(row.get("row_count") or 0) for row in rows)
             job.records_persisted = merge.rows_captured
+            job.calls_captured = len(rows)
+            job.rows_captured = job.records_received
             job.pages_processed = 2
-            job.status = "building_derived_datasets"
+            update_progress(job, status="building_derived", message="Construyendo derivados.")
             build = build_derived_datasets(
                 self.parquet_store,
                 request.country.value,
                 raw_calls=rows,
                 ingestion_id=job.ingestion_id,
             )
-            job.status = "running_regression"
+            job.mandatory_cards_total = build.mandatory_cards
+            job.mandatory_cards_captured = build.mandatory_cards_captured
+            job.derived_datasets = build.derived_datasets
+            update_progress(job, status="running_regression", message="Ejecutando regresion.")
             report = run_regression(
                 self.parquet_store,
                 request.country.value,
                 ingestion_id=job.ingestion_id,
             )
+            job.regression_status = report.status
             job.details = {
                 "parquet_path": str(merge.path) if merge.path else None,
                 "raw_calls": len(rows),
@@ -152,6 +198,7 @@ class IngestionService:
                 job.status = "completed_with_warnings"
             else:
                 job.status = "completed"
+            update_progress(job, status=job.status, completed_chunks=job.planned_chunks)
         except asyncio.CancelledError:
             job.status = "cancelled"
             job.errors.append("Ingestion cancelled.")

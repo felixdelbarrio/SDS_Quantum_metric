@@ -236,6 +236,14 @@ def _compare_chart_contract(
     y_ticks = _list((payload.get("y_axis") or {}).get("ticks"))
     legends = _list(payload.get("legends"))
     series = _list(payload.get("series"))
+    if not payload.get("period_label"):
+        return _card_result(
+            spec.tab,
+            role,
+            spec.title,
+            "failed_period_label_mismatch",
+            details="Chart payload is missing period_label.",
+        )
     if payload.get("chart_type") != "donut" and (not x_ticks or not y_ticks):
         return _card_result(
             spec.tab,
