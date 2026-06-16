@@ -5,6 +5,7 @@ import { CountrySelector } from "./CountrySelector";
 type Props = {
   country: CountryCode;
   countries: AvailableCountry[];
+  countryStatus?: AvailableCountry;
   appliedDimension?: DashboardSelection | null;
   appliedSegment?: DashboardSelection | null;
   onCountryChange: (country: CountryCode) => void;
@@ -17,6 +18,7 @@ type Props = {
 export function DashboardHeader({
   country,
   countries,
+  countryStatus,
   appliedDimension,
   appliedSegment,
   onCountryChange,
@@ -37,6 +39,12 @@ export function DashboardHeader({
           <div className="dashboard-applied">
             <span>Dimension: {appliedDimension?.label ?? "sin dimension"}</span>
             <span>Segmento: {appliedSegment?.label ?? "sin segmento"}</span>
+          </div>
+          <div className="dataset-facts compact">
+            <span>{formatNumber(countryStatus?.raw_calls)} calls</span>
+            <span>{formatNumber(countryStatus?.rows)} filas</span>
+            <span>{formatNumber(countryStatus?.cards)} cards</span>
+            <span>{countryStatus?.regression_status ?? "sin regresion"}</span>
           </div>
         </div>
       </div>
@@ -65,4 +73,8 @@ export function DashboardHeader({
       </div>
     </header>
   );
+}
+
+function formatNumber(value?: number | null) {
+  return value == null ? "0" : value.toLocaleString();
 }

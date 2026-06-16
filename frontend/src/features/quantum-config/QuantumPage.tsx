@@ -1,5 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Palette, Plus, Save, ShieldCheck, Trash2, Wifi } from "lucide-react";
+import {
+  Palette,
+  Plus,
+  RefreshCcw,
+  Save,
+  ShieldCheck,
+  Trash2,
+  Wifi,
+} from "lucide-react";
 import { FormEvent, useState } from "react";
 import { apiGet, apiPost, apiPut } from "../../shared/api/client";
 import {
@@ -12,10 +20,8 @@ import { ThemePreference, useAppStore } from "../../shared/state/appStore";
 type QuantumCountryConfig = {
   country: CountryCode;
   base_url: string;
-  dashboard_id: string;
-  team_id: string;
-  tab: number;
   enabled: boolean;
+  dashboard_resolved?: boolean;
 };
 
 type QuantumConfig = {
@@ -33,6 +39,12 @@ type ConnectionState = {
   timestamp?: string;
   message: string;
   error?: string;
+};
+
+type DiscoveryState = {
+  status?: "ok" | "ko";
+  message: string;
+  source?: string;
 };
 
 export function QuantumPage() {
@@ -64,6 +76,14 @@ export function QuantumPage() {
 
   const test = useMutation({
     mutationFn: () => apiPost<ConnectionState>("/quantum/test-connection"),
+  });
+  const discover = useMutation({
+    mutationFn: () => apiPost<DiscoveryState>("/quantum/discover-dashboard"),
+    onSuccess: () =>
+      void queryClient.invalidateQueries({ queryKey: ["quantum-config"] }),
+  });
+  const validate = useMutation({
+    mutationFn: () => apiPost<DiscoveryState>("/quantum/validate-access"),
   });
 
   function update<K extends keyof QuantumConfig>(
@@ -233,9 +253,7 @@ export function QuantumPage() {
                   <tr>
                     <th>Pais</th>
                     <th>Base URL</th>
-                    <th>Dashboard ID</th>
-                    <th>Team ID</th>
-                    <th>Tab</th>
+                    <th>Dashboard</th>
                     <th>Activo</th>
                     <th></th>
                   </tr>
@@ -280,39 +298,11 @@ export function QuantumPage() {
                         />
                       </td>
                       <td>
-                        <input
-                          value={row.dashboard_id}
-                          aria-label={`Dashboard ID ${row.country}`}
-                          onChange={(event) =>
-                            updateCountryRow(index, {
-                              dashboard_id: event.target.value,
-                            })
-                          }
-                        />
-                      </td>
-                      <td>
-                        <input
-                          value={row.team_id}
-                          aria-label={`Team ID ${row.country}`}
-                          onChange={(event) =>
-                            updateCountryRow(index, {
-                              team_id: event.target.value,
-                            })
-                          }
-                        />
-                      </td>
-                      <td>
-                        <input
-                          min={0}
-                          type="number"
-                          value={row.tab}
-                          aria-label={`Tab ${row.country}`}
-                          onChange={(event) =>
-                            updateCountryRow(index, {
-                              tab: Number(event.target.value || 0),
-                            })
-                          }
-                        />
+                        <span
+                          className={`status ${row.dashboard_resolved ? "ok" : ""}`}
+                        >
+                          {row.dashboard_resolved ? "resuelto" : "pendiente"}
+                        </span>
                       </td>
                       <td>
                         <input
@@ -376,6 +366,22 @@ export function QuantumPage() {
           >
             <Wifi size={16} /> Test
           </button>
+          <button
+            className="button secondary"
+            type="button"
+            onClick={() => discover.mutate()}
+            disabled={discover.isPending || !countryRows.length}
+          >
+            <RefreshCcw size={16} /> Descubrir dashboard
+          </button>
+          <button
+            className="button secondary"
+            type="button"
+            onClick={() => validate.mutate()}
+            disabled={validate.isPending || !countryRows.length}
+          >
+            <ShieldCheck size={16} /> Validar acceso
+          </button>
         </div>
       </form>
 
@@ -387,6 +393,8 @@ export function QuantumPage() {
         {test.data?.endpoint_tested && <p>{test.data.endpoint_tested}</p>}
         {test.data?.latency_ms && <p>{test.data.latency_ms} ms</p>}
         {test.data?.error && <p>{test.data.error}</p>}
+        {discover.data?.message && <p>{discover.data.message}</p>}
+        {validate.data?.message && <p>{validate.data.message}</p>}
       </section>
     </>
   );
@@ -396,9 +404,7 @@ function emptyCountryConfig(country: CountryCode): QuantumCountryConfig {
   return {
     country,
     base_url: "",
-    dashboard_id: "",
-    team_id: "",
-    tab: 0,
     enabled: true,
+    dashboard_resolved: false,
   };
 }

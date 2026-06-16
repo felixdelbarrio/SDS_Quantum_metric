@@ -84,18 +84,29 @@ def capture_quantum_analytics(
                     "ingestion_ts": ingestion_ts,
                     "country": country,
                     "source_endpoint": parsed.path,
+                    "endpoint": parsed.path,
                     "http_method": request.method,
+                    "method": request.method,
                     "status_code": response.status,
                     "dashboard_id": metadata.get("dashboardId"),
                     "card_id": metadata.get("cardId"),
+                    "card_title": metadata.get("cardTitle") or metadata.get("title"),
+                    "card_role": metadata.get("cardRole") or metadata.get("visualRole"),
                     "card_type": metadata.get("cardType"),
                     "view_name": metadata.get("viewName"),
+                    "request_headers_sanitized": json.dumps(
+                        _sanitize_headers(request.headers),
+                        ensure_ascii=False,
+                    ),
                     "metric_ids": json.dumps(metric_ids, ensure_ascii=False),
                     "query_hash": hash_json(request_json),
                     "response_hash": hash_json(response_json),
                     "request_json": json.dumps(sanitize(request_json), ensure_ascii=False),
                     "response_json": json.dumps(sanitize(response_json), ensure_ascii=False),
                     "row_count": len(response_rows) if isinstance(response_rows, list) else 0,
+                    "parse_status": "pending",
+                    "parse_error": None,
+                    "captured_at": ingestion_ts,
                     "source_ts_start": (request_json.get("ts") or [None, None])[0]
                     if isinstance(request_json.get("ts"), list)
                     else None,
@@ -119,3 +130,12 @@ def _parse_json(raw: str) -> dict[str, Any]:
     except Exception:
         return {}
     return value if isinstance(value, dict) else {"value": value}
+
+
+def _sanitize_headers(headers: dict[str, str]) -> dict[str, str]:
+    blocked = {"cookie", "authorization", "x-csrf", "x-csrf-token", "x-xsrf-token"}
+    return {
+        key: value
+        for key, value in sanitize(headers).items()
+        if key.casefold() not in blocked and "token" not in key.casefold()
+    }

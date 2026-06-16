@@ -70,6 +70,7 @@ omit = [
   "backend/app/ingestion/service.py",
   "backend/app/main.py",
   "backend/app/quantum/client.py",
+  "backend/app/quantum_dashboard/capture.py",
 ]
 
 [tool.coverage.report]

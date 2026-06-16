@@ -24,30 +24,36 @@ type TableParams = DashboardParams & {
 };
 
 export function getCountries() {
-  return apiGet<CountriesResponse>("/analytics/countries");
+  return apiGet<CountriesResponse>("/local-dashboard/countries");
 }
 
 export function getSummary(params: DashboardParams) {
   return apiGet<SummaryDashboardResponse>(
-    `/analytics/dashboard/summary?${toQuery(params)}`,
+    `/local-dashboard/summary?${toQuery(params)}`,
   );
 }
 
 export function getSummaryTable(params: TableParams) {
   return apiGet<DetailTableResponse>(
-    `/analytics/dashboard/summary/table?${toQuery(params)}`,
+    `/local-dashboard/summary/table?${toQuery(params)}`,
   );
 }
 
 export function getErrors(params: DashboardParams) {
   return apiGet<ErrorsDashboardResponse>(
-    `/analytics/dashboard/errors?${toQuery(params)}`,
+    `/local-dashboard/errors?${toQuery(params)}`,
   );
 }
 
-export function getErrorsTable(params: TableParams) {
+export function getTopErrorsTable(params: TableParams) {
   return apiGet<ErrorTableResponse>(
-    `/analytics/dashboard/errors/table?${toQuery(params)}`,
+    `/local-dashboard/errors/top-errors?${toQuery(params)}`,
+  );
+}
+
+export function getErrorsAppNameTable(params: TableParams) {
+  return apiGet<ErrorTableResponse>(
+    `/local-dashboard/errors/app-name?${toQuery(params)}`,
   );
 }
 

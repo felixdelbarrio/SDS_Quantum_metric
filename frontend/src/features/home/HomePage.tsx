@@ -44,7 +44,7 @@ export function HomePage() {
     queryFn: getCountries,
   });
 
-  const hasDashboardData = Boolean(countries.data?.countries.length);
+  const hasDashboardData = Boolean(countries.data?.countries?.length);
   const selectedCountry = useMemo(() => {
     if (!countries.data?.countries.length) return country;
     if (countries.data.countries.some((item) => item.code === country)) {
@@ -55,6 +55,9 @@ export function HomePage() {
     );
     return defaultCountry?.code ?? countries.data.countries[0].code;
   }, [countries.data, country]);
+  const selectedCountryStatus = countries.data?.countries.find(
+    (item) => item.code === selectedCountry,
+  );
 
   useEffect(() => {
     if (!countries.data?.countries.length) return;
@@ -155,14 +158,14 @@ export function HomePage() {
     return (
       <div className="dashboard-page">
         <header className="page-header">
-          <h1>Dashboard General</h1>
+          <h1>Dashboard General {selectedCountry}</h1>
           <button className="command-button primary" onClick={refreshDashboard}>
             <RefreshCcw size={16} /> Actualizar
           </button>
         </header>
         <EmptyAnalyticsState
           title="Sin datos ingestados"
-          reason="No hay datos locales disponibles para ningun pais."
+          reason="No hay datos locales reproducibles. Ejecuta una ingesta o una regresion para capturar las cards obligatorias."
         />
       </div>
     );
@@ -173,6 +176,7 @@ export function HomePage() {
       <DashboardHeader
         country={selectedCountry}
         countries={countries.data.countries}
+        countryStatus={selectedCountryStatus}
         appliedDimension={appliedDimension}
         appliedSegment={appliedSegment}
         onCountryChange={setActiveCountry}

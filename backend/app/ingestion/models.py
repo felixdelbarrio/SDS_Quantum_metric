@@ -15,7 +15,22 @@ class IngestionCreate(BaseModel):
 class IngestionJob(BaseModel):
     ingestion_id: str
     country: str
-    status: Literal["queued", "running", "completed", "failed", "cancelled"]
+    status: Literal[
+        "pending",
+        "running",
+        "capturing_web",
+        "capturing_summary_tab",
+        "capturing_errors_tab",
+        "persisting_raw",
+        "building_contracts",
+        "building_derived_datasets",
+        "running_regression",
+        "completed",
+        "completed_with_warnings",
+        "failed",
+        "failed_regression",
+        "cancelled",
+    ]
     started_at: datetime
     finished_at: datetime | None = None
     endpoint_current: str | None = None

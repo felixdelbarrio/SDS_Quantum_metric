@@ -27,6 +27,7 @@ DEDUPLICATION_COLUMNS = (
     "response_hash",
 )
 COMPACTED_RAW_CALLS_FILE = "raw_api_calls.parquet"
+COMPACTED_DATASET_FILE = "part-000.parquet"
 
 
 @dataclass(frozen=True)
@@ -85,6 +86,41 @@ class ParquetStore:
             frame = new_frame
         frame.write_parquet(path)
         return path
+
+    def write_country_dataset(
+        self,
+        country: str,
+        dataset_path: str,
+        rows: list[dict[str, Any]],
+        *,
+        file_name: str = COMPACTED_DATASET_FILE,
+    ) -> Path | None:
+        target = self.settings.parquet_dir / f"country={country}" / dataset_path
+        target.mkdir(parents=True, exist_ok=True)
+        path = target / file_name
+        if not rows:
+            path.unlink(missing_ok=True)
+            return None
+        frame = pl.DataFrame([_parquet_safe_row(row) for row in rows])
+        temporary = path.with_suffix(".tmp.parquet")
+        frame.write_parquet(temporary)
+        for file in target.glob("*.parquet"):
+            if file != temporary:
+                file.unlink(missing_ok=True)
+        temporary.replace(path)
+        return path
+
+    def read_country_dataset(self, country: str, dataset_path: str) -> list[dict[str, Any]]:
+        target = self.settings.parquet_dir / f"country={country}" / dataset_path
+        files = sorted(target.glob("*.parquet")) if target.exists() else []
+        if not files:
+            return []
+        frame = self._read_parquet_files(files)
+        return [_parquet_rich_row(row) for row in frame.to_dicts()]
+
+    def country_dataset_exists(self, country: str, dataset_path: str) -> bool:
+        target = self.settings.parquet_dir / f"country={country}" / dataset_path
+        return target.exists() and any(target.glob("*.parquet"))
 
     def list_ingestions(self) -> list[dict[str, Any]]:
         path = self.settings.manifests_dir / "ingestion_manifest.parquet"
@@ -224,6 +260,29 @@ class ParquetStore:
 def hash_json(value: Any) -> str:
     payload = json.dumps(value, sort_keys=True, ensure_ascii=False, default=str)
     return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def _parquet_safe_row(row: dict[str, Any]) -> dict[str, Any]:
+    safe: dict[str, Any] = {}
+    for key, value in row.items():
+        if isinstance(value, (dict, list, tuple)):
+            safe[key] = json.dumps(sanitize(value), ensure_ascii=False, default=str)
+        else:
+            safe[key] = sanitize(value)
+    return safe
+
+
+def _parquet_rich_row(row: dict[str, Any]) -> dict[str, Any]:
+    rich: dict[str, Any] = {}
+    for key, value in row.items():
+        if isinstance(value, str) and value[:1] in {"{", "["}:
+            try:
+                rich[key] = json.loads(value)
+                continue
+            except json.JSONDecodeError:
+                pass
+        rich[key] = value
+    return rich
 
 
 def _source_bounds(rows: list[dict[str, Any]]) -> tuple[datetime, datetime] | None:
