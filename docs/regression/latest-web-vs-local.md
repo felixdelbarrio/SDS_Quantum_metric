@@ -5,8 +5,9 @@
 - Final verdict: PASSED
 - Regression status: passed
 - Country: MX
+- Range: latest
 - Ingestion ID: -
-- Generated at: 2026-06-16T17:43:13.487080+00:00
+- Generated at: 2026-06-16T21:10:08.183044+00:00
 - Tolerance: 0.1%
 
 ## Environment

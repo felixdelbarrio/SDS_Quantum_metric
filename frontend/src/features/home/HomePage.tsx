@@ -99,6 +99,7 @@ export function HomePage() {
         country: selectedCountry,
         dimension,
         segment,
+        range: dateRange.preset,
         startDate: dateRange.startDate,
         endDate: dateRange.endDate,
       }),
@@ -120,6 +121,7 @@ export function HomePage() {
         country: selectedCountry,
         dimension,
         segment,
+        range: dateRange.preset,
         startDate: dateRange.startDate,
         endDate: dateRange.endDate,
       }),
@@ -200,7 +202,7 @@ export function HomePage() {
         </header>
         <EmptyAnalyticsState
           title="Sin datos ingestados"
-          reason="No hay datos locales reproducibles. Ejecuta una ingesta o una regresion para capturar las cards obligatorias."
+          reason="No hay datos locales reproducibles. Ejecuta una ingesta para capturar las cards obligatorias y validar la regresion automaticamente."
         />
       </div>
     );

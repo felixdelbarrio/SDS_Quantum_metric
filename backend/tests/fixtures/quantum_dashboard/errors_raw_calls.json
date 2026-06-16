@@ -21,7 +21,7 @@
     "response_hash": "r-errors-evolution",
     "request_headers_sanitized": "{\"accept\":\"application/json\"}",
     "request_json": "{\"metadata\":{\"dashboardId\":\"dash-fixture\",\"teamID\":\"team-fixture\",\"cardId\":\"errors-evolution\",\"cardTitle\":\"Evolutivo - % Sesiones con Error\",\"cardRole\":\"errors.error_sessions_percentage_evolution\",\"cardType\":\"CHART\",\"metricIds\":[\"error_session_percent\"],\"timezone\":\"CST\"}}",
-    "response_json": "{\"value\":16.67,\"breakdown\":[{\"label\":\"Desktop\",\"value\":10},{\"label\":\"Mobile\",\"value\":20}],\"timeseries\":[{\"ts\":\"2026-06-01T00:00:00Z\",\"value\":10},{\"ts\":\"2026-06-02T00:00:00Z\",\"value\":23.34}]}",
+    "response_json": "{\"value\":16.67,\"breakdown\":[{\"label\":\"Desktop\",\"value\":10},{\"label\":\"Mobile\",\"value\":20}],\"series\":[{\"label\":\"Desktop\",\"points\":[{\"ts\":\"2026-06-01T00:00:00Z\",\"value\":4},{\"ts\":\"2026-06-02T00:00:00Z\",\"value\":6}]},{\"label\":\"Mobile\",\"points\":[{\"ts\":\"2026-06-01T00:00:00Z\",\"value\":6},{\"ts\":\"2026-06-02T00:00:00Z\",\"value\":17.34}]}],\"timeseries\":[{\"ts\":\"2026-06-01T00:00:00Z\",\"value\":10},{\"ts\":\"2026-06-02T00:00:00Z\",\"value\":23.34}]}",
     "row_count": 2,
     "parse_status": "pending",
     "parse_error": null,

@@ -46,6 +46,7 @@ export function SummaryTab({
         country,
         dimension,
         segment,
+        range: dateRange.preset,
         startDate: dateRange.startDate,
         endDate: dateRange.endDate,
         search,

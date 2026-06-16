@@ -109,10 +109,19 @@ def capture_quantum_analytics(
                     "parse_status": "pending",
                     "parse_error": None,
                     "captured_at": ingestion_ts,
-                    "source_ts_start": _iso(query_range.start) if query_range else None,
-                    "source_ts_end": _iso(query_range.end) if query_range else None,
+                    "source_ts_start": _iso(ingestion_range.start)
+                    if ingestion_range
+                    else _iso(query_range.start)
+                    if query_range
+                    else None,
+                    "source_ts_end": _iso(ingestion_range.end)
+                    if ingestion_range
+                    else _iso(query_range.end)
+                    if query_range
+                    else None,
                     "source_period_label": query_range.label if query_range else None,
                     "source_timezone": query_range.timezone if query_range else "CST",
+                    "capture_range_kind": ingestion_range.mode if ingestion_range else "custom",
                     "capture_chunk_start": _iso(ingestion_range.start) if ingestion_range else None,
                     "capture_chunk_end": _iso(ingestion_range.end) if ingestion_range else None,
                     "time_rewrite_status": "rewritten" if ingestion_range else "original",

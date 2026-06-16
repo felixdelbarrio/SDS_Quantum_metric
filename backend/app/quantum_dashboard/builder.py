@@ -116,14 +116,13 @@ def build_derived_datasets(
         [snapshot.model_dump(mode="json") for snapshot in snapshots],
         file_name="web_snapshots.parquet",
     )
-    if not validation_errors:
-        store.write_country_dataset(country, DATASET_SUMMARY_WIDGETS, summary_widgets)
-        store.write_country_dataset(country, DATASET_SUMMARY_TABLE, summary_rows)
-        store.write_country_dataset(country, DATASET_ERRORS_WIDGETS, errors_widgets)
-        store.write_country_dataset(country, DATASET_ERRORS_TOP_ERRORS, top_error_rows)
-        store.write_country_dataset(country, DATASET_ERRORS_APP_NAME, error_app_rows)
-        store.write_country_dataset(country, DATASET_TIMESERIES, timeseries_rows)
-        store.write_country_dataset(country, DATASET_CHART_PAYLOADS, chart_payload_rows)
+    store.write_country_dataset(country, DATASET_SUMMARY_WIDGETS, summary_widgets)
+    store.write_country_dataset(country, DATASET_SUMMARY_TABLE, summary_rows)
+    store.write_country_dataset(country, DATASET_ERRORS_WIDGETS, errors_widgets)
+    store.write_country_dataset(country, DATASET_ERRORS_TOP_ERRORS, top_error_rows)
+    store.write_country_dataset(country, DATASET_ERRORS_APP_NAME, error_app_rows)
+    store.write_country_dataset(country, DATASET_TIMESERIES, timeseries_rows)
+    store.write_country_dataset(country, DATASET_CHART_PAYLOADS, chart_payload_rows)
 
     missing = [role for role in required_roles() if role not in selected]
     mandatory_captured = len([role for role in required_roles() if role in selected])
@@ -369,6 +368,13 @@ def _append_derived_rows(
                     "ts": point.get("ts"),
                     "value": point.get("value"),
                     "unit": widget.get("unit"),
+                    "range_key": _range_key(contract),
+                    "period_start": contract.period.start,
+                    "period_end": contract.period.end,
+                    "period_label": _period_label(
+                        contract.period.start, contract.period.end, contract.period.timezone
+                    ),
+                    "timezone": contract.period.timezone,
                 }
             )
         chart_payload = widget.get("chart_payload")
@@ -382,6 +388,13 @@ def _append_derived_rows(
                 "card_role": role,
                 "card_title": contract.card_title,
                 "row_index": index,
+                "range_key": _range_key(contract),
+                "period_start": contract.period.start,
+                "period_end": contract.period.end,
+                "period_label": _period_label(
+                    contract.period.start, contract.period.end, contract.period.timezone
+                ),
+                "timezone": contract.period.timezone,
             }
             if role == "summary.detail_by_app_name_os":
                 summary_rows.append(row)
@@ -429,9 +442,11 @@ def _widget_row(contract: CardContract, widget: dict[str, Any]) -> dict[str, Any
         "delta_percent": delta_percent,
         "semantic_state": semantic_state(metric_id, _float_or_none(delta_percent)),
         "semantic_intent": semantic_intent(metric_id, _float_or_none(delta_percent)),
+        "range_key": _range_key(contract),
         "period_start": widget_period.get("start") or contract.period.start,
         "period_end": widget_period.get("end") or contract.period.end,
         "period_timezone": widget_period.get("timezone") or contract.period.timezone,
+        "timezone": widget_period.get("timezone") or contract.period.timezone,
         "period_label": period_label,
         "regression_source": "web_snapshot",
     }
@@ -463,6 +478,7 @@ def _chart_payload_row(
         "chart_payload": payload,
         "source_query_hash": contract.request_hash,
         "source_response_hash": contract.response_hash,
+        "range_key": _range_key(contract),
         "period_start": widget_period.get("start") or contract.period.start,
         "period_end": widget_period.get("end") or contract.period.end,
         "timezone": widget_period.get("timezone") or contract.period.timezone,
@@ -655,6 +671,36 @@ def _period_label(start: Any, end: Any, timezone: Any) -> str | None:
     if not start_text or not end_text:
         return None
     return f"{start_text} - {end_text} {tz}"
+
+
+def _range_key(contract: CardContract) -> str:
+    start = _parse_datetime(contract.period.start)
+    end = _parse_datetime(contract.period.end)
+    if not start or not end:
+        return "custom"
+    span_seconds = max(0.0, (end - start).total_seconds())
+    if span_seconds <= 90_000 and (
+        start.date() == end.date() or (end.hour, end.minute, end.second) == (0, 0, 0)
+    ):
+        return "today"
+    if 6 * 86_400 <= span_seconds <= 8 * 86_400:
+        return "last_7_days"
+    return "custom"
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    text = _text(value)
+    if not text:
+        return None
+    if text.isdigit():
+        timestamp = int(text)
+        if abs(timestamp) > 10_000_000_000:
+            timestamp = timestamp // 1000
+        return datetime.fromtimestamp(timestamp, UTC)
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).astimezone(UTC)
+    except ValueError:
+        return None
 
 
 def _float_or_none(value: Any) -> float | None:

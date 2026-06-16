@@ -1,11 +1,10 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Download, RefreshCcw, Trash2, Upload } from "lucide-react";
+import { Database, Download, RefreshCcw, Trash2, Upload } from "lucide-react";
 import { ChangeEvent, useMemo, useRef, useState } from "react";
 import {
   apiDelete,
   apiDownload,
   apiGet,
-  apiPost,
   apiUpload,
 } from "../../shared/api/client";
 import { countryLabel } from "../../shared/countries";
@@ -131,6 +130,7 @@ export function DatasetsPage() {
       setDeleteCountry(null);
       setDeleteConfirmation("");
       void datasets.refetch();
+      void entities.refetch();
     },
   });
 
@@ -153,16 +153,10 @@ export function DatasetsPage() {
       body.append("file", file);
       return apiUpload("/datasets/import", body);
     },
-    onSuccess: () => void datasets.refetch(),
-  });
-  const regenerate = useMutation({
-    mutationFn: (country: string) =>
-      apiPost(`/datasets/${country}/regenerate-derived`),
-    onSuccess: () => void datasets.refetch(),
-  });
-  const regression = useMutation({
-    mutationFn: (country: string) => apiPost(`/datasets/${country}/regression`),
-    onSuccess: () => void datasets.refetch(),
+    onSuccess: () => {
+      void datasets.refetch();
+      void entities.refetch();
+    },
   });
 
   function handleFile(event: ChangeEvent<HTMLInputElement>) {
@@ -226,11 +220,13 @@ export function DatasetsPage() {
                 </div>
                 <div className="command-group">
                   <button
-                    className="command-button"
+                    className="icon-button"
                     type="button"
+                    aria-label={`Ver entidades ${dataset.country}`}
+                    title={`Ver entidades ${dataset.country}`}
                     onClick={() => setSelectedCountry(dataset.country)}
                   >
-                    Auditar
+                    <Database size={16} />
                   </button>
                   <button
                     className="icon-button"
@@ -288,25 +284,6 @@ export function DatasetsPage() {
                 </span>
                 <span>derivados {formatNumber(dataset.derived_datasets)}</span>
               </div>
-              <div className="command-group section-offset compact">
-                <button
-                  className="command-button"
-                  type="button"
-                  disabled={regenerate.isPending}
-                  onClick={() => regenerate.mutate(dataset.country)}
-                >
-                  <RefreshCcw size={16} /> Regenerar derivados
-                </button>
-                <button
-                  className="command-button"
-                  type="button"
-                  disabled={regression.isPending}
-                  onClick={() => regression.mutate(dataset.country)}
-                >
-                  <RefreshCcw size={16} /> Ejecutar regresion
-                </button>
-              </div>
-
               {dataset.source_start && dataset.source_end && (
                 <div className="dataset-range">
                   {formatDate(dataset.source_start)} -{" "}
@@ -435,7 +412,7 @@ export function DatasetsPage() {
       <ConfirmDialog
         open={Boolean(deleteCountry)}
         title="Borrar dataset local"
-        message={`Escribe ${deleteCountry ?? ""} para borrar RAW, derivados y regresion.`}
+        message={`Se eliminaran datos RAW, derivados, contratos, regresiones e historico de ingestas de ${countryLabel(deleteCountry ?? "")}. Escribe ${deleteCountry ?? ""} para confirmar.`}
         confirmLabel="Borrar"
         confirmationValue={deleteCountry ?? undefined}
         confirmationInput={deleteConfirmation}

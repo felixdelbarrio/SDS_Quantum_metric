@@ -205,6 +205,7 @@ class RegressionCardResult(BaseModel):
 class RegressionReport(BaseModel):
     ingestion_id: str | None = None
     country: str
+    range_key: str | None = None
     dashboard_id: str | None = None
     team_id: str | None = None
     tabs: list[DashboardTab]

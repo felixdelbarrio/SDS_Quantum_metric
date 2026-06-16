@@ -34,6 +34,8 @@ def run_regression(
     country: str,
     *,
     ingestion_id: str | None = None,
+    range_key: str | None = None,
+    report_slug: str | None = None,
     tolerance_percent: float | None = None,
 ) -> RegressionReport:
     tolerance = (
@@ -59,7 +61,7 @@ def run_regression(
                 )
             )
             continue
-        local = _local_payload(store, country, spec.role)
+        local = _local_payload(store, country, spec.role, range_key)
         if not local:
             cards.append(
                 _card_result(
@@ -98,6 +100,7 @@ def run_regression(
     report = RegressionReport(
         ingestion_id=ingestion_id,
         country=country,
+        range_key=range_key,
         dashboard_id=_text(first_contract.get("dashboard_id")),
         team_id=_text(first_contract.get("team_id")),
         tabs=["summary", "errors"],
@@ -108,7 +111,7 @@ def run_regression(
         generated_at=generated_at,
     )
     _persist_report(store, report)
-    _write_docs_report(store.settings, report)
+    _write_docs_report(store.settings, report, report_slug=report_slug)
     return report
 
 
@@ -193,24 +196,39 @@ def _compare_card(
     )
 
 
-def _local_payload(store: ParquetStore, country: str, role: VisualRole) -> dict[str, Any] | None:
+def _local_payload(
+    store: ParquetStore,
+    country: str,
+    role: VisualRole,
+    range_key: str | None,
+) -> dict[str, Any] | None:
     if role.startswith("summary.") and role != "summary.detail_by_app_name_os":
-        rows = store.read_country_dataset(country, DATASET_SUMMARY_WIDGETS)
+        rows = _filter_range_rows(
+            store.read_country_dataset(country, DATASET_SUMMARY_WIDGETS), range_key
+        )
         return _first_role(rows, role)
     if role == "summary.detail_by_app_name_os":
-        rows = store.read_country_dataset(country, DATASET_SUMMARY_TABLE)
+        rows = _filter_range_rows(
+            store.read_country_dataset(country, DATASET_SUMMARY_TABLE), range_key
+        )
         return {"rows": [row for row in rows if row.get("card_role") == role]}
     if role in {
         "errors.error_sessions_percentage_evolution",
         "errors.error_sessions_by_app_name_comparison",
     }:
-        rows = store.read_country_dataset(country, DATASET_ERRORS_WIDGETS)
+        rows = _filter_range_rows(
+            store.read_country_dataset(country, DATASET_ERRORS_WIDGETS), range_key
+        )
         return _first_role(rows, role)
     if role == "errors.top_errors_by_error_name":
-        rows = store.read_country_dataset(country, DATASET_ERRORS_TOP_ERRORS)
+        rows = _filter_range_rows(
+            store.read_country_dataset(country, DATASET_ERRORS_TOP_ERRORS), range_key
+        )
         return {"rows": [row for row in rows if row.get("card_role") == role]}
     if role == "errors.error_session_percentage_by_app_name":
-        rows = store.read_country_dataset(country, DATASET_ERRORS_APP_NAME)
+        rows = _filter_range_rows(
+            store.read_country_dataset(country, DATASET_ERRORS_APP_NAME), range_key
+        )
         return {"rows": [row for row in rows if row.get("card_role") == role]}
     return None
 
@@ -288,6 +306,12 @@ def _first_role(rows: list[dict[str, Any]], role: VisualRole) -> dict[str, Any] 
     return next((row for row in rows if row.get("card_role") == role), None)
 
 
+def _filter_range_rows(rows: list[dict[str, Any]], range_key: str | None) -> list[dict[str, Any]]:
+    if not range_key:
+        return rows
+    return [row for row in rows if row.get("range_key") == range_key]
+
+
 def _overall_status(cards: list[RegressionCardResult]) -> RegressionStatus:
     statuses = {card.status for card in cards}
     failures = [status for status in statuses if not status.startswith("passed")]
@@ -306,6 +330,7 @@ def _persist_report(store: ParquetStore, report: RegressionReport) -> None:
                 **card.model_dump(mode="json"),
                 "country": report.country,
                 "ingestion_id": report.ingestion_id,
+                "range_key": report.range_key,
                 "generated_at": report.generated_at,
                 "verdict": report.verdict,
             }
@@ -325,13 +350,23 @@ def _persist_report(store: ParquetStore, report: RegressionReport) -> None:
     )
 
 
-def _write_docs_report(settings: Settings, report: RegressionReport) -> None:
+def _write_docs_report(
+    settings: Settings,
+    report: RegressionReport,
+    *,
+    report_slug: str | None,
+) -> None:
     docs_dir = Path("docs/regression")
     docs_dir.mkdir(parents=True, exist_ok=True)
     markdown_path = docs_dir / "latest-web-vs-local.md"
     json_path = docs_dir / "latest-web-vs-local.json"
     markdown_path.write_text(_markdown(report), encoding="utf-8")
     json_path.write_text(report.model_dump_json(indent=2), encoding="utf-8")
+    if report_slug:
+        (docs_dir / f"{report_slug}.md").write_text(_markdown(report), encoding="utf-8")
+        (docs_dir / f"{report_slug}.json").write_text(
+            report.model_dump_json(indent=2), encoding="utf-8"
+        )
     _ = settings
 
 
@@ -362,6 +397,7 @@ def _markdown(report: RegressionReport) -> str:
             f"- Final verdict: {report.verdict}",
             f"- Regression status: {report.status}",
             f"- Country: {report.country}",
+            f"- Range: {report.range_key or 'latest'}",
             f"- Ingestion ID: {report.ingestion_id or '-'}",
             f"- Generated at: {report.generated_at}",
             f"- Tolerance: {report.tolerance_percent}%",

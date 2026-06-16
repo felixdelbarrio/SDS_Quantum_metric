@@ -37,8 +37,19 @@ type IngestionJob = {
   pages_processed: number;
   planned_chunks: number;
   completed_chunks: number;
+  current_chunk_index?: number | null;
   current_chunk_start?: string | null;
   current_chunk_end?: string | null;
+  chunks?: Array<{
+    index: number;
+    start: string;
+    end: string;
+    label: string;
+    status: string;
+    completed_at?: string | null;
+  }>;
+  is_active?: boolean;
+  sort_index?: string | null;
   mandatory_cards_total: number;
   mandatory_cards_captured: number;
   calls_captured: number;
@@ -55,7 +66,7 @@ type IngestionJob = {
 
 type IngestionsResponse = {
   active: IngestionJob[];
-  persisted: IngestionJob[];
+  history: IngestionJob[];
 };
 
 type QuantumCountryConfig = {
@@ -121,10 +132,8 @@ export function IngestionPage() {
     create.mutate();
   }
 
-  const jobs = [
-    ...(ingestions.data?.active ?? []),
-    ...(ingestions.data?.persisted ?? []),
-  ];
+  const activeJobs = ingestions.data?.active ?? [];
+  const historyJobs = ingestions.data?.history ?? [];
 
   return (
     <>
@@ -168,92 +177,130 @@ export function IngestionPage() {
         </div>
       )}
 
-      <section className="card section-offset">
-        {jobs.length ? (
+      {!!activeJobs.length && (
+        <section className="card section-offset">
+          <div className="section-heading compact">
+            <h2>Ingesta activa</h2>
+            <span>{activeJobs.length} proceso activo</span>
+          </div>
           <div className="ingestion-list">
-            {jobs.map((job) => (
-              <article
-                className="ingestion-progress-card"
+            {activeJobs.map((job) => (
+              <IngestionCard
                 key={job.ingestion_id}
-              >
-                <header>
-                  <div>
-                    <strong>{job.ingestion_id.slice(0, 8)}</strong>
-                    <span>{job.country}</span>
-                  </div>
-                  <span
-                    className={`status ${job.status === "completed" ? "ok" : ""}`}
-                  >
-                    {job.status}
-                  </span>
-                </header>
-                <div
-                  className="progress-track"
-                  aria-label="Progreso de ingesta"
-                >
-                  <span
-                    style={{
-                      width: `${Math.max(0, Math.min(100, job.progress_percent ?? 0))}%`,
-                    }}
-                  />
-                </div>
-                <div className="dataset-facts compact">
-                  <span>
-                    {job.completed_chunks}/{job.planned_chunks} chunks
-                  </span>
-                  <span>
-                    {job.calls_captured || job.records_persisted} calls
-                  </span>
-                  <span>{job.rows_captured || job.records_received} filas</span>
-                  <span>
-                    {job.mandatory_cards_captured}/{job.mandatory_cards_total}{" "}
-                    obligatorias
-                  </span>
-                  <span>
-                    {job.derived_datasets ||
-                      String(job.details.derived_datasets ?? "-")}{" "}
-                    derivados
-                  </span>
-                  <span>
-                    {job.regression_status ??
-                      String(job.details.regression_status ?? "-")}
-                  </span>
-                </div>
-                <p className="page-subtitle">
-                  {job.message ?? formatRange(job.details.range)}
-                </p>
-                <p className="page-subtitle">
-                  Chunk: {job.current_chunk_start ?? "-"} -{" "}
-                  {job.current_chunk_end ?? "-"}
-                </p>
-                <p className="page-subtitle">
-                  Actualizado: {formatDate(job.last_progress_at)} · Duracion:{" "}
-                  {job.duration_seconds ?? "-"}
-                </p>
-                {!!job.errors.length && (
-                  <p className="warning-text">{job.errors.join(" · ")}</p>
-                )}
-                {![
-                  "completed",
-                  "failed",
-                  "failed_regression",
-                  "cancelled",
-                ].includes(job.status) && (
-                  <button
-                    className="button danger"
-                    onClick={() => cancel.mutate(job.ingestion_id)}
-                  >
-                    <Square size={16} /> Cancelar
-                  </button>
-                )}
-              </article>
+                job={job}
+                onCancel={cancel.mutate}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
+      <section className="card section-offset">
+        <div className="section-heading compact">
+          <h2>Historico</h2>
+          <span>{historyJobs.length} ingestas</span>
+        </div>
+        {historyJobs.length ? (
+          <div className="ingestion-list">
+            {historyJobs.map((job) => (
+              <IngestionCard key={job.ingestion_id} job={job} />
             ))}
           </div>
         ) : (
-          <div className="empty">Sin ingestas</div>
+          <div className="empty">Sin ingestas completadas</div>
         )}
       </section>
     </>
+  );
+}
+
+function IngestionCard({
+  job,
+  onCancel,
+}: {
+  job: IngestionJob;
+  onCancel?: (id: string) => void;
+}) {
+  const chunks = [...(job.chunks ?? [])].sort((left, right) =>
+    left.start.localeCompare(right.start),
+  );
+  const isTerminal = [
+    "completed",
+    "failed",
+    "failed_regression",
+    "cancelled",
+  ].includes(job.status);
+  return (
+    <article className="ingestion-progress-card">
+      <header>
+        <div>
+          <strong>{job.ingestion_id.slice(0, 8)}</strong>
+          <span>{job.country}</span>
+        </div>
+        <span className={`status ${job.status === "completed" ? "ok" : ""}`}>
+          {job.status}
+        </span>
+      </header>
+      <div className="progress-track" aria-label="Progreso de ingesta">
+        <span
+          style={{
+            width: `${Math.max(0, Math.min(100, job.progress_percent ?? 0))}%`,
+          }}
+        />
+      </div>
+      <div className="dataset-facts compact">
+        <span>
+          {job.completed_chunks}/{job.planned_chunks} chunks
+        </span>
+        <span>{job.calls_captured || job.records_persisted} calls</span>
+        <span>{job.rows_captured || job.records_received} filas</span>
+        <span>
+          {job.mandatory_cards_captured}/{job.mandatory_cards_total}{" "}
+          obligatorias
+        </span>
+        <span>
+          {job.derived_datasets || String(job.details.derived_datasets ?? "-")}{" "}
+          derivados
+        </span>
+        <span>
+          {job.regression_status ??
+            String(job.details.regression_status ?? "-")}
+        </span>
+      </div>
+      <p className="page-subtitle">
+        {job.message ?? formatRange(job.details.range)}
+      </p>
+      <p className="page-subtitle">
+        Chunk actual: {job.current_chunk_index ?? "-"} ·{" "}
+        {job.current_chunk_start ?? "-"} - {job.current_chunk_end ?? "-"}
+      </p>
+      <p className="page-subtitle">
+        Actualizado: {formatDate(job.last_progress_at)} · Duracion:{" "}
+        {job.duration_seconds ?? "-"}
+      </p>
+      {!!chunks.length && (
+        <ol className="ingestion-chunks">
+          {chunks.map((chunk) => (
+            <li key={chunk.index}>
+              <span>{chunk.index}</span>
+              <strong>{chunk.label}</strong>
+              <em>{chunk.status}</em>
+            </li>
+          ))}
+        </ol>
+      )}
+      {!!job.errors.length && (
+        <p className="warning-text">{job.errors.join(" · ")}</p>
+      )}
+      {onCancel && !isTerminal && (
+        <button
+          className="button danger"
+          onClick={() => onCancel(job.ingestion_id)}
+        >
+          <Square size={16} /> Cancelar
+        </button>
+      )}
+    </article>
   );
 }
 

@@ -43,8 +43,10 @@ El motor lee solo `data/parquet/country=<pais>/raw_api_calls/*.parquet`. No usa
 5. Se capturan respuestas reales de `/analytics` y `/analytics/historical`.
 6. Se guardan raw calls y manifests en Parquet particionado por pais dentro de la ruta persistente.
 7. Se generan contratos visuales, snapshots web, datasets derivados y `derived/chart_payloads`.
-8. Se ejecuta regresion Web vs Local.
-9. La ingesta solo termina `completed` si la regresion pasa.
+8. Se ejecuta regresion Web vs Local para Today y ultimos 7 dias.
+9. La ingesta solo termina `completed` si ambos reportes pasan.
+
+`GET /api/ingestions` separa `active` e `history`. Los chunks se exponen en orden cronologico ascendente dentro de cada job.
 
 La politica de rango usa `QUANTUM_INGESTION_DEPTH_DAYS`, `QUANTUM_INCREMENTAL_REPROCESS_DAYS` y `QUANTUM_INGESTION_CHUNK_DAYS`. El planner divide ventanas largas en chunks y el rewriter aplica el rango activo a payloads Quantum antes de persistir.
 
@@ -63,6 +65,8 @@ Las cards graficas no se renderizan desde agregados. Backend persiste `ChartPayl
 ## Datasets Auditables
 
 Datasets expone entidades Parquet por pais mediante `/api/datasets/{country}/entities` y `/api/datasets/{country}/entities/{entity}`. Las respuestas son paginadas; RAW completo solo se lee bajo demanda.
+
+`DELETE /api/datasets/{country}?confirm={country}` borra RAW, derivados, contratos, snapshots, regresion e historico de ingestas del pais. La UI no expone botones para regenerar derivados, ejecutar regresion o auditar manualmente.
 
 ## Offline
 

@@ -1,0 +1,9 @@
+{
+  "country": "MX",
+  "range_key": "last_7_days",
+  "verdict": "FAILED",
+  "status": "failed_missing_api_response",
+  "generated_at": null,
+  "cards": [],
+  "details": "Live Quantum Web ingestion/regression has not been executed in this environment."
+}

@@ -666,6 +666,13 @@ textarea:focus-visible {
   line-height: 1;
 }
 
+.widget-period {
+  color: var(--color-muted);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
 .delta {
   font-size: 12px;
 }
@@ -1496,6 +1503,43 @@ textarea:focus-visible {
   display: flex;
   align-items: baseline;
   gap: var(--space-2);
+}
+
+.ingestion-chunks {
+  display: grid;
+  gap: var(--space-2);
+  max-height: 220px;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.ingestion-chunks li {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) minmax(72px, auto);
+  gap: var(--space-2);
+  align-items: center;
+  min-height: 34px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-3);
+  background: var(--color-chip-bg);
+}
+
+.ingestion-chunks span,
+.ingestion-chunks em {
+  color: var(--color-muted);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.ingestion-chunks strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .progress-track {

@@ -30,7 +30,8 @@ La UI muestra chunks planificados/completados, rango temporal activo, llamadas, 
 
 1. Revisar Home para Summary y Errores.
 2. Revisar Datasets para RAW, derivados, `chart_payloads` y regresion.
-3. Abrir `docs/regression/latest-web-vs-local.md`.
-4. Si una grafica aparece como fallo contractual, regenerar derivados o repetir ingesta antes de aceptar el resultado.
+3. Abrir `docs/regression/today-web-vs-local.md`.
+4. Abrir `docs/regression/last-7-days-web-vs-local.md`.
+5. Si una grafica aparece como fallo contractual, revisar Datasets para localizar el RAW/contrato afectado y repetir la ingesta despues de corregir parser o rango.
 
 No hay reproduccion local de sesiones ni rutas de video.

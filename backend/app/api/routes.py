@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -177,11 +177,8 @@ async def create_ingestion(
 @router.get("/ingestions")
 def list_ingestions(
     service: Annotated[IngestionService, Depends(ingestion_service_dep)],
-    store: Annotated[ParquetStore, Depends(parquet_store_dep)],
-) -> dict[str, object]:
-    active = [job.model_dump(mode="json") for job in service.list()]
-    persisted = store.list_ingestions()
-    return {"active": active, "persisted": persisted}
+) -> dict[str, Any]:
+    return service.list_payload()
 
 
 @router.get("/ingestions/{ingestion_id}")
@@ -247,6 +244,7 @@ def run_dataset_regression(
 def delete_dataset(
     country: str,
     store: Annotated[ParquetStore, Depends(parquet_store_dep)],
+    service: Annotated[IngestionService, Depends(ingestion_service_dep)],
     confirm: str | None = None,
 ) -> dict[str, object]:
     if confirm != country:
@@ -254,7 +252,12 @@ def delete_dataset(
             status_code=400,
             detail="Dataset deletion requires confirm=<country>.",
         )
-    return {"deleted": store.delete_country(country)}
+    try:
+        result = store.delete_country_all(country, confirm=confirm)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    service.purge_country(country)
+    return result.__dict__
 
 
 @router.get("/datasets/{country}/entities")
@@ -454,6 +457,7 @@ def local_dashboard_summary(
     country: str = "MX",
     dimension: str | None = None,
     segment: str | None = None,
+    range: str | None = None,  # noqa: A002
     start_date: str | None = None,
     end_date: str | None = None,
 ) -> dict[str, object]:
@@ -461,6 +465,7 @@ def local_dashboard_summary(
         country,
         dimension=dimension,
         segment=segment,
+        range_key=range,
         start_date=start_date,
         end_date=end_date,
     )
@@ -475,6 +480,7 @@ def local_dashboard_summary_table(
     direction: SortDirection = "desc",
     dimension: str | None = None,
     segment: str | None = None,
+    range: str | None = None,  # noqa: A002
     start_date: str | None = None,
     end_date: str | None = None,
 ) -> dict[str, object]:
@@ -485,6 +491,7 @@ def local_dashboard_summary_table(
         direction=direction,
         dimension=dimension,
         segment=segment,
+        range_key=range,
         start_date=start_date,
         end_date=end_date,
     )
@@ -496,6 +503,7 @@ def local_dashboard_errors(
     country: str = "MX",
     dimension: str | None = None,
     segment: str | None = None,
+    range: str | None = None,  # noqa: A002
     start_date: str | None = None,
     end_date: str | None = None,
 ) -> dict[str, object]:
@@ -503,6 +511,7 @@ def local_dashboard_errors(
         country,
         dimension=dimension,
         segment=segment,
+        range_key=range,
         start_date=start_date,
         end_date=end_date,
     )
@@ -517,6 +526,7 @@ def local_dashboard_top_errors(
     direction: SortDirection = "desc",
     dimension: str | None = None,
     segment: str | None = None,
+    range: str | None = None,  # noqa: A002
     start_date: str | None = None,
     end_date: str | None = None,
 ) -> dict[str, object]:
@@ -527,6 +537,7 @@ def local_dashboard_top_errors(
         direction=direction,
         dimension=dimension,
         segment=segment,
+        range_key=range,
         start_date=start_date,
         end_date=end_date,
     )
@@ -541,6 +552,7 @@ def local_dashboard_error_app_name(
     direction: SortDirection = "desc",
     dimension: str | None = None,
     segment: str | None = None,
+    range: str | None = None,  # noqa: A002
     start_date: str | None = None,
     end_date: str | None = None,
 ) -> dict[str, object]:
@@ -551,6 +563,7 @@ def local_dashboard_error_app_name(
         direction=direction,
         dimension=dimension,
         segment=segment,
+        range_key=range,
         start_date=start_date,
         end_date=end_date,
     )
@@ -561,11 +574,12 @@ def local_dashboard_card_detail(
     card_role: str,
     store: Annotated[ParquetStore, Depends(parquet_store_dep)],
     country: str = "MX",
+    range: str | None = None,  # noqa: A002
     start_date: str | None = None,
     end_date: str | None = None,
 ) -> dict[str, object]:
     return LocalDashboardService(store).card_detail(
-        country, card_role, start_date=start_date, end_date=end_date
+        country, card_role, range_key=range, start_date=start_date, end_date=end_date
     )
 
 

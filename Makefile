@@ -46,6 +46,7 @@ CI:
 	npm run lint
 	npm run typecheck
 	npm test
+	npm audit --audit-level=high
 	npm run build
 	. .venv/bin/activate && python scripts/scan_no_secrets.py
 	. .venv/bin/activate && bandit -q -c bandit.yml -x backend/tests -r backend desktop scripts

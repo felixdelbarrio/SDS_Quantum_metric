@@ -46,7 +46,7 @@ describe("HomePage local dashboard", () => {
     expect(await screen.findByText("Dashboard General MX")).toBeInTheDocument();
     expect(
       await screen.findByText(
-        "No hay datos locales reproducibles. Ejecuta una ingesta o una regresion para capturar las cards obligatorias.",
+        "No hay datos locales reproducibles. Ejecuta una ingesta para capturar las cards obligatorias y validar la regresion automaticamente.",
       ),
     ).toBeInTheDocument();
   });

@@ -1,6 +1,7 @@
 {
   "ingestion_id": null,
   "country": "MX",
+  "range_key": null,
   "dashboard_id": "dash-fixture",
   "team_id": "team-fixture",
   "tabs": [
@@ -102,5 +103,5 @@
   "verdict": "PASSED",
   "status": "passed",
   "tolerance_percent": 0.1,
-  "generated_at": "2026-06-16T17:43:13.487080+00:00"
+  "generated_at": "2026-06-16T21:10:08.183044+00:00"
 }

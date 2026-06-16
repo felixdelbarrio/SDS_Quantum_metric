@@ -36,9 +36,7 @@ export function QuantumChart({
     return (
       <div className="quantum-chart-empty contract-failure" role="alert">
         <strong>Fallo contractual de grafica local</strong>
-        <span>
-          Regenera derivados, ejecuta regresion o lanza una nueva ingesta.
-        </span>
+        <span>La ultima ingesta no produjo un chart_payload valido.</span>
       </div>
     );
   }

@@ -15,6 +15,7 @@ type DashboardParams = {
   country: CountryCode;
   dimension?: string | null;
   segment?: string | null;
+  range?: string | null;
   startDate?: string | null;
   endDate?: string | null;
 };

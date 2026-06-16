@@ -129,6 +129,47 @@ def test_time_rewriter_handles_nested_predicates_and_metadata() -> None:
     assert extracted.end == chunk.end
 
 
+def test_time_rewriter_handles_quantum_arguments_path_predicates() -> None:
+    chunk = plan_ingestion_chunks(
+        IngestionRange(
+            mode="incremental",
+            start=datetime(2026, 6, 15, tzinfo=UTC),
+            end=datetime(2026, 6, 16, tzinfo=UTC),
+            latest_source_end=datetime(2026, 6, 15, tzinfo=UTC),
+        )
+    )[0]
+    payload = {
+        "query": {
+            "filters": [
+                {
+                    "predicateFnNamespace": ["qm", "default", "predicates", "gte"],
+                    "arguments": [
+                        {"path": ["session", "ts"], "namespace": [], "metadata": {}},
+                        1000,
+                    ],
+                },
+                {
+                    "predicateFnNamespace": ["qm", "default", "predicates", "lt"],
+                    "arguments": [
+                        {"path": ["session", "ts"], "namespace": [], "metadata": {}},
+                        2000,
+                    ],
+                },
+            ]
+        }
+    }
+
+    result = rewrite_query_time_range(payload, chunk)
+    extracted = extract_query_time_range(result.payload)
+
+    assert result.changed is True
+    assert result.payload["query"]["filters"][0]["arguments"][1] == 1781481600
+    assert result.payload["query"]["filters"][1]["arguments"][1] == 1781568000
+    assert extracted is not None
+    assert extracted.start == chunk.start
+    assert extracted.end == chunk.end
+
+
 def test_time_rewriter_handles_top_level_window_string_epoch_and_offset() -> None:
     chunk = plan_ingestion_chunks(
         IngestionRange(
@@ -253,3 +294,57 @@ def test_dataset_entities_are_paged_and_delete_requires_confirm(tmp_path: Path) 
     assert page["total"] == 5
     assert len(page["rows"]) == 2
     assert rejected.status_code == 400
+
+
+def test_delete_country_all_removes_parquet_and_ingestion_history(tmp_path: Path) -> None:
+    settings = Settings(qm_data_dir=tmp_path)
+    store = ParquetStore(settings)
+    store.merge_raw_calls(
+        "MX",
+        [
+            {
+                "country": "MX",
+                "source_endpoint": "/analytics",
+                "dashboard_id": "dash",
+                "card_id": "card",
+                "card_type": "CHART",
+                "view_name": "coreMetrics",
+                "metric_ids": "[]",
+                "query_hash": "q",
+                "response_hash": "r",
+                "source_ts_start": "2026-06-15T00:00:00Z",
+                "source_ts_end": "2026-06-16T00:00:00Z",
+                "row_count": 1,
+            }
+        ],
+    )
+    store.append_manifest(
+        {
+            "ingestion_id": "mx-1",
+            "country": "MX",
+            "status": "completed",
+            "started_at": "2026-06-16T00:00:00Z",
+        }
+    )
+    store.append_manifest(
+        {
+            "ingestion_id": "es-1",
+            "country": "ES",
+            "status": "completed",
+            "started_at": "2026-06-16T00:00:00Z",
+        }
+    )
+    settings.runtime_dir.mkdir(parents=True, exist_ok=True)
+    settings.exports_dir.mkdir(parents=True, exist_ok=True)
+    (settings.runtime_dir / "cache-MX.json").write_text("{}", encoding="utf-8")
+    (settings.exports_dir / "quantum_export_MX_fixture.zip").write_bytes(b"zip")
+
+    result = store.delete_country_all("MX", confirm="MX")
+
+    assert result.status == "deleted"
+    assert result.deleted_ingestions == 1
+    assert result.deleted_files >= 3
+    assert not (settings.parquet_dir / "country=MX").exists()
+    assert not (settings.runtime_dir / "cache-MX.json").exists()
+    assert not (settings.exports_dir / "quantum_export_MX_fixture.zip").exists()
+    assert [row["ingestion_id"] for row in store.list_ingestions()] == ["es-1"]

@@ -47,8 +47,8 @@ Home muestra `Dashboard General {pais}` y consume solo endpoints locales:
 - `GET /api/local-dashboard/cards/{card_role}/points`
 
 La ingesta captura tabs `Resumen` y `Errores`, persiste raw API calls, construye contratos visuales,
-snapshots web, datasets derivados y ejecuta regresion Web vs Local. Home solo pinta datos derivados
-con regresion `passed` o `passed_with_tolerance`.
+snapshots web, datasets derivados y ejecuta regresion Web vs Local automaticamente para Today y
+ultimos 7 dias. Home solo pinta datos derivados con regresion `passed` o `passed_with_tolerance`.
 
 Las graficas se renderizan desde `chart_payload`: ejes, leyenda, series Mobile/Desktop, bandas y periodo salen del backend y se persisten en `derived/chart_payloads`. React no fabrica curvas desde agregados.
 
@@ -57,7 +57,9 @@ accionable. La UI no rellena datos falsos ni oculta discrepancias.
 
 ## Datasets
 
-Datasets permite auditar entidades Parquet por pais: RAW calls, contratos visuales, snapshots, derivados, chart payloads y regresion. Las entidades se leen paginadas y pueden exportarse/importarse por ZIP. El borrado exige confirmacion exacta del pais.
+Datasets permite auditar entidades Parquet por pais: RAW calls, contratos visuales, snapshots, derivados, chart payloads y regresion. Las entidades se leen paginadas y pueden exportarse/importarse por ZIP. El borrado exige confirmacion exacta del pais y elimina tambien el historico de ingestas asociado.
+
+Datasets no expone acciones manuales de regenerar derivados, ejecutar regresion o auditar. Esas tareas son parte del pipeline automatico de ingesta/import/borrado.
 
 Por defecto los datos viven en la ruta persistente del usuario calculada con `platformdirs`. `QM_DATA_DIR` queda reservado como override explicito. Si se detecta `./data` legacy, Datasets muestra aviso y permite migrarlo.
 
@@ -76,7 +78,7 @@ recarga Home: el dashboard debe seguir funcionando sobre Parquet local.
 - As-Is documentado en `docs/as-is`.
 - Contratos de dashboard en `docs/to-be/local-dashboard-contract.md`.
 - Datasets derivados en `docs/to-be/parquet-derived-datasets.md`.
-- Regresion en `docs/regression/latest-web-vs-local.md`.
+- Regresion en `docs/regression/today-web-vs-local.md` y `docs/regression/last-7-days-web-vs-local.md`.
 - Contrato grafico en `docs/to-be/chart-contract.md`.
 - Hardening desktop en `docs/to-be/desktop-packaging.md`.
 - Ruta persistente en `docs/to-be/persistent-data-dir.md`.

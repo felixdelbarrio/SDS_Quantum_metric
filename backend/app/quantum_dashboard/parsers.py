@@ -594,12 +594,9 @@ def _line_chart_payload(
         for point in points
         if point.get("ts") is not None and _to_number(point.get("value")) is not None
     ]
-    desktop_points: list[dict[str, Any]] = []
-    return {
-        "chart_type": "line",
-        "x_axis": {"ticks": x_ticks, "label": "Periodo"},
-        "y_axis": {"min": y_min, "max": y_max, "unit": unit, "ticks": y_ticks, "label": title},
-        "series": [
+    series = _structured_line_series(response_json, role)
+    if not series:
+        series = [
             {
                 "id": f"{role}.mobile",
                 "label": "Mobile",
@@ -607,25 +604,82 @@ def _line_chart_payload(
                 "device": "mobile",
                 "points": primary_points,
                 "visible": True,
-            },
-            {
-                "id": f"{role}.desktop",
-                "label": "Desktop",
-                "kind": "line",
-                "device": "desktop",
-                "points": desktop_points,
-                "visible": True,
-            },
-        ],
+            }
+        ]
+    return {
+        "chart_type": "line",
+        "x_axis": {"ticks": x_ticks, "label": "Periodo"},
+        "y_axis": {"min": y_min, "max": y_max, "unit": unit, "ticks": y_ticks, "label": title},
+        "series": series,
         "bands": _bands(response_json),
         "legends": [
-            {"id": "mobile", "label": "Mobile", "device": "mobile"},
-            {"id": "desktop", "label": "Desktop", "device": "desktop"},
+            {
+                "id": str(item.get("id") or item.get("device") or item.get("label")),
+                "label": str(item.get("label")),
+                "device": item.get("device"),
+            }
+            for item in series
         ],
         "period_label": None,
         "granularity": _granularity(points),
         "timezone": _timezone(response_json),
     }
+
+
+def _structured_line_series(
+    response_json: dict[str, Any],
+    role: VisualRole,
+) -> list[dict[str, Any]]:
+    candidates = response_json.get("series")
+    if not isinstance(candidates, list):
+        return []
+    parsed: list[dict[str, Any]] = []
+    for index, item in enumerate(candidates):
+        if not isinstance(item, dict):
+            continue
+        raw_points = item.get("points")
+        if not isinstance(raw_points, list):
+            continue
+        points = []
+        for point in raw_points:
+            if not isinstance(point, dict):
+                continue
+            value = _to_number(point.get("value"))
+            ts = point.get("ts") or point.get("timestamp") or point.get("x")
+            if value is None or ts is None:
+                continue
+            points.append(
+                {
+                    "ts": str(ts),
+                    "label": str(point.get("label") or _short_ts_label(ts)),
+                    "value": value,
+                    "raw_value": value,
+                }
+            )
+        if not points:
+            continue
+        label = str(item.get("label") or item.get("name") or f"Series {index + 1}")
+        device = _device_from_label(label)
+        parsed.append(
+            {
+                "id": str(item.get("id") or f"{role}.{device or index}"),
+                "label": label,
+                "kind": "line",
+                "device": device or "unknown",
+                "points": points,
+                "visible": item.get("visible") is not False,
+            }
+        )
+    return parsed
+
+
+def _device_from_label(label: str) -> str | None:
+    normalized = canonicalize_key(label)
+    if "desktop" in normalized:
+        return "desktop"
+    if "mobile" in normalized:
+        return "mobile"
+    return None
 
 
 def _donut_chart_payload(

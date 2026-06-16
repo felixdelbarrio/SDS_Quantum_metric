@@ -403,6 +403,40 @@ def test_parsers_support_real_quantum_rows_and_results_shapes() -> None:
         {"ts": "1781593200", "value": 12.0},
     ]
 
+    structured = parse_card(
+        _parser_call(
+            response_json={
+                "value": 22,
+                "timeseries": [
+                    {"ts": "2026-06-16T00:00:00Z", "value": 10},
+                    {"ts": "2026-06-16T01:00:00Z", "value": 12},
+                ],
+                "series": [
+                    {
+                        "label": "Desktop",
+                        "points": [
+                            {"ts": "2026-06-16T00:00:00Z", "value": 4},
+                            {"ts": "2026-06-16T01:00:00Z", "value": 5},
+                        ],
+                    },
+                    {
+                        "label": "Mobile",
+                        "points": [
+                            {"ts": "2026-06-16T00:00:00Z", "value": 6},
+                            {"ts": "2026-06-16T01:00:00Z", "value": 7},
+                        ],
+                    },
+                ],
+            }
+        ),
+        "summary.sessions",
+    )
+
+    assert structured.status == "ok"
+    payload = structured.data["widget"]["chart_payload"]
+    assert [series["label"] for series in payload["series"]] == ["Desktop", "Mobile"]
+    assert {series["device"] for series in payload["series"]} == {"desktop", "mobile"}
+
 
 def _store_with_fixtures(tmp_path: Path) -> ParquetStore:
     store = ParquetStore(Settings(qm_data_dir=tmp_path))

@@ -39,6 +39,16 @@ class RawCallMergeResult:
     rows_after: int
 
 
+@dataclass(frozen=True)
+class DeleteCountryResult:
+    country: str
+    deleted_datasets: list[str]
+    deleted_ingestions: int
+    deleted_files: int
+    deleted_bytes: int
+    status: str
+
+
 class ParquetStore:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -232,6 +242,57 @@ class ParquetStore:
         shutil.rmtree(target)
         return True
 
+    def delete_country_all(self, country: str, *, confirm: str) -> DeleteCountryResult:
+        if confirm != country:
+            raise ValueError("Country deletion confirmation does not match country.")
+
+        target = self.settings.parquet_dir / f"country={country}"
+        deleted_datasets: list[str] = []
+        deleted_files = 0
+        deleted_bytes = 0
+        if target.exists():
+            for file in target.rglob("*"):
+                if file.is_file():
+                    deleted_files += 1
+                    deleted_bytes += file.stat().st_size
+                    if file.suffix == ".parquet":
+                        deleted_datasets.append(str(file.parent.relative_to(target)))
+            shutil.rmtree(target)
+
+        deleted_ingestions = self.delete_country_ingestions(country)
+        runtime_files, runtime_bytes = self._delete_country_runtime(country)
+        export_files, export_bytes = self._delete_country_exports(country)
+        deleted_files += runtime_files + export_files
+        deleted_bytes += runtime_bytes + export_bytes
+
+        return DeleteCountryResult(
+            country=country,
+            deleted_datasets=sorted(set(deleted_datasets)),
+            deleted_ingestions=deleted_ingestions,
+            deleted_files=deleted_files,
+            deleted_bytes=deleted_bytes,
+            status="deleted",
+        )
+
+    def delete_country_ingestions(self, country: str) -> int:
+        path = self.settings.manifests_dir / "ingestion_manifest.parquet"
+        if not path.exists():
+            return 0
+        frame = pl.read_parquet(path)
+        if "country" not in frame.columns:
+            return 0
+        keep = frame.filter(pl.col("country").cast(pl.Utf8) != country)
+        deleted = frame.height - keep.height
+        if deleted <= 0:
+            return 0
+        if keep.is_empty():
+            path.unlink(missing_ok=True)
+            return deleted
+        temporary = path.with_suffix(".tmp.parquet")
+        keep.write_parquet(temporary)
+        temporary.replace(path)
+        return deleted
+
     def export_countries(self, countries: list[str]) -> Path:
         timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
         safe_countries = "_".join(sorted(countries)) or "all"
@@ -392,6 +453,37 @@ class ParquetStore:
         if kept:
             return pl.DataFrame(kept), replaced
         return pl.DataFrame(schema=frame.schema), replaced
+
+    def _delete_country_runtime(self, country: str) -> tuple[int, int]:
+        return self._delete_country_scoped_files(self.settings.runtime_dir, country)
+
+    def _delete_country_exports(self, country: str) -> tuple[int, int]:
+        return self._delete_country_scoped_files(self.settings.exports_dir, country)
+
+    def _delete_country_scoped_files(self, root: Path, country: str) -> tuple[int, int]:
+        if not root.exists():
+            return 0, 0
+        deleted_files = 0
+        deleted_bytes = 0
+        country_tokens = {
+            country,
+            country.lower(),
+            f"country={country}",
+            f"country={country.lower()}",
+        }
+        for path in sorted(root.rglob("*"), reverse=True):
+            if not any(token in path.name for token in country_tokens):
+                continue
+            if path.is_file():
+                deleted_files += 1
+                deleted_bytes += path.stat().st_size
+                path.unlink(missing_ok=True)
+            elif path.is_dir():
+                nested_files = [item for item in path.rglob("*") if item.is_file()]
+                deleted_files += len(nested_files)
+                deleted_bytes += sum(item.stat().st_size for item in nested_files)
+                shutil.rmtree(path, ignore_errors=True)
+        return deleted_files, deleted_bytes
 
 
 def hash_json(value: Any) -> str:

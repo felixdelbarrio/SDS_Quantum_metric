@@ -34,6 +34,9 @@ export function KpiWidget({ widget }: Props) {
           "-"
         )}
       </strong>
+      {widget.period?.label && (
+        <span className="widget-period">{widget.period.label}</span>
+      )}
       {hasValue ? (
         <>
           <QuantumChart payload={widget.chart_payload} title={widget.title} />
