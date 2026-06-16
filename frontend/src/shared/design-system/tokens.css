@@ -28,6 +28,7 @@
   --motion-duration-fast: 160ms;
   --motion-duration-standard: 240ms;
   --motion-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --chart-band-opacity: 0.18;
 }
 
 :root,
@@ -71,6 +72,28 @@
   --chart-3: var(--bbva-serene-dark);
   --chart-4: var(--bbva-royal-dark);
   --chart-5: var(--bbva-serene);
+  --surface-dashboard: var(--color-bg);
+  --surface-dashboard-elevated: var(--color-panel);
+  --surface-dashboard-muted: var(--color-panel-alt);
+  --border-dashboard: var(--color-border);
+  --shadow-dashboard-card: var(--shadow-soft);
+  --shadow-dashboard-modal: 0 28px 80px rgba(7, 14, 70, 0.28);
+  --chart-mobile: #5f5cc8;
+  --chart-desktop: #dd2f72;
+  --chart-grid: var(--color-border);
+  --chart-axis: var(--color-muted);
+  --chart-band: var(--bbva-grey-300);
+  --chart-donut-1: var(--chart-1);
+  --chart-donut-2: var(--chart-2);
+  --chart-donut-3: var(--chart-3);
+  --chart-donut-4: var(--chart-4);
+  --chart-donut-5: var(--chart-5);
+  --semantic-positive: #20764b;
+  --semantic-positive-soft: #dff3e8;
+  --semantic-negative: #b92d5d;
+  --semantic-negative-soft: #f7dce6;
+  --semantic-neutral: var(--color-muted);
+  --semantic-warning: #ad6b00;
   --shadow-soft: 0 14px 42px rgba(7, 14, 70, 0.1);
   --shadow-panel: -18px 0 48px rgba(7, 14, 70, 0.18);
 }
@@ -115,6 +138,28 @@
   --chart-3: var(--bbva-serene);
   --chart-4: var(--bbva-royal-dark);
   --chart-5: var(--bbva-white);
+  --surface-dashboard: var(--color-bg);
+  --surface-dashboard-elevated: var(--color-panel);
+  --surface-dashboard-muted: var(--color-panel-alt);
+  --border-dashboard: var(--color-border);
+  --shadow-dashboard-card: var(--shadow-soft);
+  --shadow-dashboard-modal: 0 28px 80px rgba(0, 0, 0, 0.46);
+  --chart-mobile: var(--bbva-serene-dark);
+  --chart-desktop: #ef5791;
+  --chart-grid: var(--color-border);
+  --chart-axis: var(--color-muted);
+  --chart-band: var(--bbva-royal-dark);
+  --chart-donut-1: var(--chart-1);
+  --chart-donut-2: var(--chart-2);
+  --chart-donut-3: var(--chart-3);
+  --chart-donut-4: var(--chart-4);
+  --chart-donut-5: var(--chart-5);
+  --semantic-positive: #8fd8ad;
+  --semantic-positive-soft: rgba(143, 216, 173, 0.16);
+  --semantic-negative: #ff8bb5;
+  --semantic-negative-soft: rgba(255, 139, 181, 0.16);
+  --semantic-neutral: var(--color-muted);
+  --semantic-warning: #ffd27a;
   --shadow-soft: 0 14px 42px rgba(0, 0, 0, 0.28);
   --shadow-panel: -18px 0 48px rgba(0, 0, 0, 0.34);
 }

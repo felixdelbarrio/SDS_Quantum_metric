@@ -82,10 +82,11 @@ def test_builder_persists_contracts_snapshots_derived_and_no_cookies(tmp_path: P
 
     assert result.regression_status == "passed"
     assert result.mandatory_cards_captured == 9
-    assert result.derived_datasets == 6
+    assert result.derived_datasets == 7
     contracts = store.read_country_dataset("MX", "visual_contracts")
     snapshots = store.read_country_dataset("MX", "web_snapshots")
     summary = store.read_country_dataset("MX", "derived/summary_widgets")
+    chart_payloads = store.read_country_dataset("MX", "derived/chart_payloads")
     detail = store.read_country_dataset("MX", "derived/summary_detail_table")
     assert {row["visual_role"] for row in contracts} >= {
         "summary.page_views",
@@ -93,7 +94,10 @@ def test_builder_persists_contracts_snapshots_derived_and_no_cookies(tmp_path: P
     }
     assert snapshots[0]["card_role"]
     assert next(row for row in summary if row["id"] == "page_views")["value"] == 150
+    assert next(row for row in summary if row["id"] == "page_views")["chart_payload"]["series"]
+    assert chart_payloads
     assert detail[0]["app_name"] == "portabilidad nomina"
+    assert any(row.get("parent_row_id") for row in detail)
     all_payload = json.dumps(
         {
             "contracts": contracts,
@@ -166,6 +170,61 @@ def test_local_dashboard_apis_read_derived_data_offline(tmp_path: Path) -> None:
     }
     assert top_errors["rows"][0]["name"] == "TypeError"
     assert app_name["rows"][0]["name"] == "pagos"
+
+
+def test_local_dashboard_card_detail_breakdown_and_points(tmp_path: Path) -> None:
+    store = _store_with_fixtures(tmp_path)
+    build_derived_datasets(store, "MX")
+    run_regression(store, "MX")
+    service = LocalDashboardService(store)
+
+    detail = service.card_detail("MX", "summary.page_views")
+    breakdown = service.card_breakdown("MX", "summary.page_views")
+    points = service.card_points("MX", "summary.page_views")
+
+    assert detail["status"] == "ok"
+    assert (
+        detail["video_notice"] == "La reproduccion de sesiones solo esta disponible en Quantum Web."
+    )
+    assert detail["points"]
+    assert breakdown["breakdown"]
+    assert points["points"]
+
+
+def test_dataset_entity_endpoints_are_paged_and_schema_is_available(tmp_path: Path) -> None:
+    store = _store_with_fixtures(tmp_path)
+    build_derived_datasets(store, "MX")
+    run_regression(store, "MX")
+    app.dependency_overrides[settings_dep] = lambda: store.settings
+    app.dependency_overrides[config_store_dep] = lambda: QuantumConfigStore(store.settings)
+    app.dependency_overrides[parquet_store_dep] = lambda: store
+    client = TestClient(app)
+    try:
+        entities = client.get("/api/datasets/MX/entities").json()
+        rows = client.get("/api/datasets/MX/entities/derived/chart_payloads?limit=1").json()
+        schema = client.get("/api/datasets/MX/entities/derived/chart_payloads/schema").json()
+    finally:
+        app.dependency_overrides.clear()
+
+    assert any(entity["id"] == "derived/chart_payloads" for entity in entities["entities"])
+    assert rows["limit"] == 1
+    assert rows["rows"]
+    assert "chart_payload" in schema["schema"]
+
+
+def test_regression_fails_when_chart_payload_is_missing(tmp_path: Path) -> None:
+    store = _store_with_fixtures(tmp_path)
+    build_derived_datasets(store, "MX")
+    rows = store.read_country_dataset("MX", "derived/summary_widgets")
+    for row in rows:
+        if row.get("card_role") == "summary.page_views":
+            row["chart_payload"] = None
+    store.write_country_dataset("MX", "derived/summary_widgets", rows)
+
+    report = run_regression(store, "MX")
+
+    assert report.verdict == "FAILED"
+    assert any(card.status == "failed_chart_contract_incomplete" for card in report.cards)
 
 
 def test_local_dashboard_endpoints_do_not_call_quantum(

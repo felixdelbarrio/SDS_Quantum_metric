@@ -1,6 +1,6 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Download, RefreshCcw, Trash2, Upload } from "lucide-react";
-import { ChangeEvent, useRef } from "react";
+import { ChangeEvent, useMemo, useRef, useState } from "react";
 import {
   apiDelete,
   apiDownload,
@@ -9,6 +9,12 @@ import {
   apiUpload,
 } from "../../shared/api/client";
 import { countryLabel } from "../../shared/countries";
+import { ConfirmDialog } from "../../shared/components/ConfirmDialog";
+import { DataGrid } from "../../shared/components/DataGrid";
+import { EntityTabs } from "../../shared/components/EntityTabs";
+import { EmptyState } from "../../shared/components/EmptyState";
+import { MetricBadge } from "../../shared/components/MetricBadge";
+import { StatusPill } from "../../shared/components/StatusPill";
 
 type DatasetKpi = {
   id: string;
@@ -62,16 +68,66 @@ type DatasetsResponse = {
   datasets: Dataset[];
 };
 
+type DatasetEntity = {
+  id: string;
+  label: string;
+  rows: number;
+  files: number;
+  bytes: number;
+};
+
+type DatasetEntitiesResponse = {
+  country: string;
+  entities: DatasetEntity[];
+};
+
+type DatasetEntityRowsResponse = {
+  country: string;
+  entity: string;
+  rows: Array<Record<string, unknown>>;
+  columns: string[];
+  total: number;
+};
+
 export function DatasetsPage() {
   const fileInput = useRef<HTMLInputElement | null>(null);
+  const [selectedCountry, setSelectedCountry] = useState<string | null>(null);
+  const [selectedEntity, setSelectedEntity] = useState("raw_api_calls");
+  const [deleteCountry, setDeleteCountry] = useState<string | null>(null);
   const datasets = useQuery({
     queryKey: ["datasets"],
     queryFn: () => apiGet<DatasetsResponse>("/datasets"),
   });
+  const rows = datasets.data?.datasets ?? [];
+  const activeCountry = selectedCountry ?? rows[0]?.country ?? "";
+  const entities = useQuery({
+    queryKey: ["datasets", activeCountry, "entities"],
+    queryFn: () =>
+      apiGet<DatasetEntitiesResponse>(`/datasets/${activeCountry}/entities`),
+    enabled: Boolean(activeCountry),
+  });
+  const activeEntity = useMemo(() => {
+    const available = entities.data?.entities ?? [];
+    if (available.some((entity) => entity.id === selectedEntity))
+      return selectedEntity;
+    return available[0]?.id ?? selectedEntity;
+  }, [entities.data?.entities, selectedEntity]);
+  const entityRows = useQuery({
+    queryKey: ["datasets", activeCountry, "entity", activeEntity],
+    queryFn: () =>
+      apiGet<DatasetEntityRowsResponse>(
+        `/datasets/${activeCountry}/entities/${activeEntity}?limit=100`,
+      ),
+    enabled: Boolean(activeCountry && activeEntity),
+  });
 
   const remove = useMutation({
-    mutationFn: (country: string) => apiDelete(`/datasets/${country}`),
-    onSuccess: () => void datasets.refetch(),
+    mutationFn: (country: string) =>
+      apiDelete(`/datasets/${country}?confirm=${country}`),
+    onSuccess: () => {
+      setDeleteCountry(null);
+      void datasets.refetch();
+    },
   });
 
   const exportData = useMutation({
@@ -112,8 +168,6 @@ export function DatasetsPage() {
       importData.mutate(file);
     }
   }
-
-  const rows = datasets.data?.datasets ?? [];
 
   return (
     <>
@@ -157,6 +211,13 @@ export function DatasetsPage() {
                 </div>
                 <div className="command-group">
                   <button
+                    className="command-button"
+                    type="button"
+                    onClick={() => setSelectedCountry(dataset.country)}
+                  >
+                    Auditar
+                  </button>
+                  <button
                     className="icon-button"
                     type="button"
                     aria-label={`Exportar ${dataset.country}`}
@@ -170,7 +231,7 @@ export function DatasetsPage() {
                     type="button"
                     aria-label={`Eliminar ${dataset.country}`}
                     title={`Eliminar ${dataset.country}`}
-                    onClick={() => remove.mutate(dataset.country)}
+                    onClick={() => setDeleteCountry(dataset.country)}
                   >
                     <Trash2 size={16} />
                   </button>
@@ -178,11 +239,23 @@ export function DatasetsPage() {
               </header>
 
               <div className="dataset-facts">
-                <span>{formatNumber(dataset.raw_calls)} llamadas</span>
-                <span>{formatNumber(dataset.rows)} filas</span>
-                <span>{formatNumber(dataset.cards)} tarjetas</span>
-                <span>{dataset.regression_status ?? "sin regresion"}</span>
-                <span>{formatBytes(dataset.bytes)}</span>
+                <MetricBadge
+                  label="RAW calls"
+                  value={formatNumber(dataset.raw_calls)}
+                />
+                <MetricBadge
+                  label="Filas RAW"
+                  value={formatNumber(dataset.rows)}
+                />
+                <MetricBadge
+                  label="Cards"
+                  value={formatNumber(dataset.cards)}
+                />
+                <StatusPill status={dataset.regression_status} />
+                <MetricBadge
+                  label="Tamano"
+                  value={formatBytes(dataset.bytes)}
+                />
               </div>
               <div className="dataset-facts compact">
                 <span>
@@ -310,6 +383,45 @@ export function DatasetsPage() {
       ) : (
         <div className="empty">Sin datos ingestados</div>
       )}
+
+      {activeCountry && (
+        <section className="dataset-card section-offset">
+          <div className="section-heading">
+            <div>
+              <h2>Auditoria Parquet {activeCountry}</h2>
+              <span>{entityRows.data?.total ?? 0} filas</span>
+            </div>
+          </div>
+          {entities.data?.entities.length ? (
+            <>
+              <EntityTabs
+                tabs={entities.data.entities.map((entity) => ({
+                  id: entity.id,
+                  label: entity.id,
+                  rows: entity.rows,
+                }))}
+                active={activeEntity}
+                onChange={setSelectedEntity}
+              />
+              <DataGrid
+                columns={entityRows.data?.columns ?? []}
+                rows={entityRows.data?.rows ?? []}
+              />
+            </>
+          ) : (
+            <EmptyState title="Sin entidades Parquet" />
+          )}
+        </section>
+      )}
+
+      <ConfirmDialog
+        open={Boolean(deleteCountry)}
+        title="Borrar dataset local"
+        message={`Se eliminara RAW, derivados y regresion de ${deleteCountry ?? ""}.`}
+        confirmLabel="Borrar"
+        onCancel={() => setDeleteCountry(null)}
+        onConfirm={() => deleteCountry && remove.mutate(deleteCountry)}
+      />
     </>
   );
 }

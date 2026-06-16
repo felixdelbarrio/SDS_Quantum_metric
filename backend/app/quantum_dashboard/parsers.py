@@ -143,6 +143,13 @@ def _parse_metric_widget(
         "breakdown": _breakdowns(response_json, rows, metric_aliases),
         "timeseries": timeseries,
         "comparison": _comparison(response_json),
+        "chart_payload": _line_chart_payload(
+            response_json=response_json,
+            role=role,
+            title=spec.title,
+            unit=spec.unit or "count",
+            points=timeseries,
+        ),
         "missing_source_field": None,
     }
     return ParserResult(role=role, status="ok", data={"widget": widget})
@@ -165,6 +172,9 @@ def _parse_summary_table(role: VisualRole, response_json: dict[str, Any]) -> Par
             "page_views_delta_percent": _number_from_row(
                 flat, SUMMARY_TABLE_ALIASES["page_views_delta_percent"]
             ),
+            "sessions_delta_percent": _number_from_row(
+                flat, ("sessions_delta_percent", "sessions delta percent")
+            ),
             "conversions_delta_percent": _number_from_row(
                 flat, SUMMARY_TABLE_ALIASES["conversions_delta_percent"]
             ),
@@ -181,6 +191,7 @@ def _parse_summary_table(role: VisualRole, response_json: dict[str, Any]) -> Par
             rows.append(parsed)
     if not rows:
         return _error(role, "row_shape_unknown", "Summary detail table has no parseable rows.")
+    rows = _expandable_summary_rows(rows)
     return ParserResult(
         role=role,
         status="ok",
@@ -214,6 +225,14 @@ def _parse_top_errors(role: VisualRole, response_json: dict[str, Any]) -> Parser
             "error_session_percent": _number_from_row(
                 flat, ERROR_TABLE_ALIASES["error_session_percent"]
             ),
+            "error_session_percent_delta": _number_from_row(
+                flat,
+                (
+                    "error_session_percent_delta",
+                    "error_session_percent_delta_percent",
+                    "error session percent delta",
+                ),
+            ),
         }
         if parsed["error_sessions"] is None:
             parsed["error_session_percent"] = _as_percent(_metric_at(row, 0))
@@ -234,7 +253,7 @@ def _parse_top_errors(role: VisualRole, response_json: dict[str, Any]) -> Parser
         status="ok",
         data={
             "columns": ["name", "error_sessions", "error_session_percent"],
-            "rows": rows[:10],
+            "rows": rows[:20],
         },
     )
 
@@ -254,6 +273,14 @@ def _parse_error_percentage(role: VisualRole, response_json: dict[str, Any]) -> 
             ),
             "error_session_percent": _number_from_row(
                 flat, ERROR_TABLE_ALIASES["error_session_percent"]
+            ),
+            "error_session_percent_delta": _number_from_row(
+                flat,
+                (
+                    "error_session_percent_delta",
+                    "error_session_percent_delta_percent",
+                    "error session percent delta",
+                ),
             ),
         }
         if parsed["error_session_percent"] is None:
@@ -308,6 +335,7 @@ def _parse_donut(role: VisualRole, response_json: dict[str, Any]) -> ParserResul
         "chart_type": "donut",
         "total": total,
         "series": series,
+        "chart_payload": _donut_chart_payload(series, role, ROLE_SPECS[role].title),
         "comparison": _comparison(response_json),
     }
     return ParserResult(role=role, status="ok", data={"widget": widget})
@@ -534,6 +562,262 @@ def _aggregate_values(values: list[float], *, average: bool) -> float:
     if average:
         return round(sum(values) / len(values), 2)
     return round(sum(values), 2)
+
+
+def _line_chart_payload(
+    *,
+    response_json: dict[str, Any],
+    role: VisualRole,
+    title: str,
+    unit: str,
+    points: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    if not points:
+        return None
+    y_values = [_to_number(point.get("value")) for point in points]
+    numeric_values = [value for value in y_values if value is not None]
+    if not numeric_values:
+        return None
+    y_min = min(0.0, min(numeric_values))
+    y_max = max(numeric_values)
+    if y_max == y_min:
+        y_max = y_min + 1
+    x_ticks = _axis_ticks_from_points(points)
+    y_ticks = _numeric_ticks(y_min, y_max, unit)
+    primary_points = [
+        {
+            "ts": str(point.get("ts")),
+            "label": str(point.get("label") or _short_ts_label(point.get("ts"))),
+            "value": _to_number(point.get("value")),
+            "raw_value": _to_number(point.get("value")),
+        }
+        for point in points
+        if point.get("ts") is not None and _to_number(point.get("value")) is not None
+    ]
+    desktop_points = [{**point, "value": 0.0, "raw_value": 0.0} for point in primary_points]
+    return {
+        "chart_type": "line",
+        "x_axis": {"ticks": x_ticks, "label": "Periodo"},
+        "y_axis": {"min": y_min, "max": y_max, "unit": unit, "ticks": y_ticks, "label": title},
+        "series": [
+            {
+                "id": f"{role}.mobile",
+                "label": "Mobile",
+                "kind": "line",
+                "device": "mobile",
+                "points": primary_points,
+                "visible": True,
+            },
+            {
+                "id": f"{role}.desktop",
+                "label": "Desktop",
+                "kind": "line",
+                "device": "desktop",
+                "points": desktop_points,
+                "visible": True,
+            },
+        ],
+        "bands": _bands(response_json),
+        "legends": [
+            {"id": "mobile", "label": "Mobile", "device": "mobile"},
+            {"id": "desktop", "label": "Desktop", "device": "desktop"},
+        ],
+        "period_label": None,
+        "granularity": _granularity(points),
+        "timezone": _timezone(response_json),
+    }
+
+
+def _donut_chart_payload(
+    series: list[dict[str, Any]],
+    role: VisualRole,
+    title: str,
+) -> dict[str, Any]:
+    points = [
+        {
+            "ts": None,
+            "label": str(point.get("name") or "Null"),
+            "value": _to_number(point.get("value")) or 0.0,
+            "raw_value": _to_number(point.get("percent")) or 0.0,
+        }
+        for point in series
+    ]
+    return {
+        "chart_type": "donut",
+        "x_axis": {"ticks": [], "label": title},
+        "y_axis": {"min": 0, "max": sum(point["value"] or 0 for point in points), "unit": "count"},
+        "series": [
+            {
+                "id": f"{role}.segments",
+                "label": title,
+                "kind": "bar",
+                "device": "unknown",
+                "points": points,
+                "visible": True,
+            }
+        ],
+        "bands": [],
+        "legends": [
+            {"id": str(point.get("name") or index), "label": str(point.get("name") or "Null")}
+            for index, point in enumerate(series)
+        ],
+        "period_label": None,
+        "granularity": None,
+        "timezone": _timezone({}),
+    }
+
+
+def _axis_ticks_from_points(points: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not points:
+        return []
+    if len(points) <= 6:
+        selected = list(enumerate(points))
+    else:
+        step = max(1, (len(points) - 1) // 5)
+        selected = [(index, points[index]) for index in range(0, len(points), step)]
+        if selected[-1][0] != len(points) - 1:
+            selected.append((len(points) - 1, points[-1]))
+    denominator = max(1, len(points) - 1)
+    ticks = []
+    for index, point in selected:
+        raw = point.get("ts")
+        ticks.append(
+            {
+                "value": str(raw),
+                "label": _short_ts_label(raw),
+                "position": round(index / denominator, 4),
+            }
+        )
+    return ticks
+
+
+def _numeric_ticks(min_value: float, max_value: float, unit: str) -> list[dict[str, Any]]:
+    if max_value < min_value:
+        min_value, max_value = max_value, min_value
+    span = max(max_value - min_value, 1)
+    return [
+        {
+            "value": round(min_value + span * ratio, 4),
+            "label": _format_tick(min_value + span * ratio, unit),
+            "position": ratio,
+        }
+        for ratio in (0, 0.5, 1)
+    ]
+
+
+def _format_tick(value: float, unit: str) -> str:
+    if unit == "seconds":
+        return f"{value:,.0f} sec"
+    if unit == "percent":
+        return f"{value:,.0f}%"
+    return f"{value:,.0f}"
+
+
+def _short_ts_label(value: Any) -> str:
+    text = "" if value is None else str(value)
+    if text.isdigit():
+        return text
+    if "T" in text:
+        return text.split("T", 1)[1][:5]
+    return text[:10] if len(text) > 10 else text
+
+
+def _bands(response_json: dict[str, Any]) -> list[dict[str, Any]]:
+    candidates = response_json.get("bands") or response_json.get("annotations") or []
+    if not isinstance(candidates, list):
+        return []
+    bands: list[dict[str, Any]] = []
+    for index, item in enumerate(candidates):
+        if not isinstance(item, dict):
+            continue
+        flat = flatten_row(item)
+        bands.append(
+            {
+                "id": str(item.get("id") or f"band-{index}"),
+                "label": _string_from_row(flat, ("label", "name")),
+                "start_ts": _string_from_row(flat, ("start_ts", "start", "from")),
+                "end_ts": _string_from_row(flat, ("end_ts", "end", "to")),
+                "purpose": _string_from_row(flat, ("purpose", "type")),
+            }
+        )
+    return bands
+
+
+def _granularity(points: list[dict[str, Any]]) -> str | None:
+    if len(points) < 2:
+        return None
+    return "captured"
+
+
+def _timezone(response_json: dict[str, Any]) -> str:
+    metadata = response_json.get("metadata")
+    if isinstance(metadata, dict) and metadata.get("timezone"):
+        return str(metadata["timezone"])
+    return "CST"
+
+
+def _expandable_summary_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        app_name = str(row.get("app_name") or row.get("name") or "Null")
+        grouped.setdefault(app_name, []).append(row)
+    output: list[dict[str, Any]] = []
+    for app_index, (app_name, children) in enumerate(grouped.items()):
+        parent_id = f"app:{app_name}"
+        parent = {
+            "row_id": parent_id,
+            "parent_row_id": None,
+            "depth": 0,
+            "is_expandable": True,
+            "is_expanded_default": app_index == 0,
+            "name": app_name,
+            "app_name": app_name,
+            "operating_system": None,
+            "page_views": round(sum(_to_number(row.get("page_views")) or 0 for row in children), 2),
+            "sessions": round(sum(_to_number(row.get("sessions")) or 0 for row in children), 2),
+            "conversions": round(
+                sum(_to_number(row.get("conversions")) or 0 for row in children), 2
+            ),
+            "page_views_delta_percent": _first_number(children, "page_views_delta_percent"),
+            "sessions_delta_percent": _first_number(children, "sessions_delta_percent"),
+            "conversions_delta_percent": _first_number(children, "conversions_delta_percent"),
+        }
+        parent.update(_semantic_states(parent))
+        output.append(parent)
+        for child_index, child in enumerate(children):
+            child_row = {
+                **child,
+                "row_id": f"{parent_id}:os:{child.get('operating_system') or child_index}",
+                "parent_row_id": parent_id,
+                "depth": 1,
+                "is_expandable": False,
+                "is_expanded_default": True,
+                "name": child.get("operating_system") or child.get("name") or "Null",
+            }
+            child_row.update(_semantic_states(child_row))
+            output.append(child_row)
+    return output
+
+
+def _first_number(rows: list[dict[str, Any]], key: str) -> float | None:
+    for row in rows:
+        value = _to_number(row.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def _semantic_states(row: dict[str, Any]) -> dict[str, str]:
+    states = {}
+    for metric in ("page_views", "sessions", "conversions"):
+        delta = _to_number(row.get(f"{metric}_delta_percent"))
+        if delta is None:
+            states[f"{metric}_semantic_state"] = "neutral"
+        elif delta >= 0:
+            states[f"{metric}_semantic_state"] = "positive"
+        else:
+            states[f"{metric}_semantic_state"] = "negative"
+    return states
 
 
 def _display_bucket(label: str) -> str:

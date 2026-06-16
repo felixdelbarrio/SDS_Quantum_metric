@@ -23,24 +23,16 @@ El motor lee solo `data/parquet/country=<pais>/raw_api_calls/*.parquet`. No usa
 
 ## Dashboard Quantum por cards
 
-`backend/app/quantum_dashboard` implementa la capa de Iteracion 4:
+`backend/app/quantum_dashboard` implementa la capa canonica RAW -> contrato visual -> derivados:
 
 - `catalog.py`: catalogo obligatorio de nueve roles visuales para Resumen y Errores.
 - `discovery.py`: resolucion interna de dashboard, team y tabs desde `.env`, config o URL.
 - `capture.py`: captura guiada de tabs Resumen y Errores.
 - `card_mapper.py`: asociacion de llamadas Quantum a roles visuales.
-- `parsers.py`: estrategias por tipo de card, con errores accionables.
-- `builder.py`: raw calls -> visual contracts -> web snapshots -> derived Parquet.
+- `parsers.py`: estrategias por rol visual, con `chart_payload` cuando la respuesta trae puntos.
+- `builder.py`: raw calls -> visual contracts -> web snapshots -> derived Parquet -> chart payloads.
 - `service.py`: endpoints `/api/local-dashboard/*` desde derivados.
-- `regression.py`: comparacion Web vs Local y reporte Markdown/JSON.
-
-## Flujo de conexion
-
-1. El usuario abre Quantum > Test de conexion.
-2. El backend lee la configuracion no sensible.
-3. La cookie se obtiene en memoria desde navegador o modo manual.
-4. Se llama `GET /data/init`, `GET /auth-token` y `POST /query`.
-5. Se devuelve estado OK/KO con error sanitizado.
+- `regression.py`: comparacion Web vs Local de valores, ejes, leyendas, series y tablas.
 
 ## Flujo de ingesta
 
@@ -50,9 +42,11 @@ El motor lee solo `data/parquet/country=<pais>/raw_api_calls/*.parquet`. No usa
 4. Se navega `Resumen` y `Errores`.
 5. Se capturan respuestas reales de `/analytics` y `/analytics/historical`.
 6. Se guardan raw calls y manifests en Parquet particionado por pais.
-7. Se generan contratos visuales, snapshots web y datasets derivados.
+7. Se generan contratos visuales, snapshots web, datasets derivados y `derived/chart_payloads`.
 8. Se ejecuta regresion Web vs Local.
 9. La ingesta solo termina `completed` si la regresion pasa.
+
+La politica de rango usa `QUANTUM_INGESTION_DEPTH_DAYS`, `QUANTUM_INCREMENTAL_REPROCESS_DAYS` y `QUANTUM_INGESTION_CHUNK_DAYS`.
 
 ## Flujo del dashboard offline
 
@@ -62,6 +56,16 @@ El motor lee solo `data/parquet/country=<pais>/raw_api_calls/*.parquet`. No usa
 4. Search y sort operan sobre Parquet derivado local.
 5. Si falta una card obligatoria o falla regresion, se devuelve error accionable.
 
+## Contrato grafico
+
+Las cards graficas no se renderizan desde agregados. Backend persiste `ChartPayload` con ejes, ticks, series, leyenda, bandas y periodo. Frontend pinta ese payload con SVG. Si falta el contrato, se muestra estado vacio y regresion falla con estados especificos.
+
+## Datasets Auditables
+
+Datasets expone entidades Parquet por pais mediante `/api/datasets/{country}/entities` y `/api/datasets/{country}/entities/{entity}`. Las respuestas son paginadas; RAW completo solo se lee bajo demanda.
+
 ## Offline
 
 Home, Dashboards, Datasets y Analytics no importan modulos Quantum ni llaman URLs externas. El backend expone datos calculados desde Parquet.
+
+La app local excluye videos de sesiones: no hay rutas `/video`, componentes de reproduccion, enlaces ni persistencia de URLs de video.

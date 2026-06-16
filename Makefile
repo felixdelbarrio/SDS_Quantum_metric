@@ -55,7 +55,7 @@ codeql:
 	. .venv/bin/activate && python scripts/setup_codeql.py --version "$(CODEQL_VERSION)" --home "$(CODEQL_HOME)"
 	rm -rf "$(CODEQL_PYTHON_DB)" "$(CODEQL_TS_DB)" "$(CODEQL_SOURCE_DIR)" codeql-results-python.sarif codeql-results-javascript-typescript.sarif
 	mkdir -p "$(CODEQL_DB_DIR)" "$(CODEQL_SOURCE_DIR)"
-	git ls-files -z --cached --others --exclude-standard | rsync -a --files-from=- --from0 ./ "$(CODEQL_SOURCE_DIR)"
+	git ls-files -z --cached --others --exclude-standard | perl -0ne 'print if -e $$_' | rsync -a --files-from=- --from0 ./ "$(CODEQL_SOURCE_DIR)"
 	"$(CODEQL)" database create "$(CODEQL_PYTHON_DB)" --language=python --source-root="$(CODEQL_SOURCE_DIR)" --overwrite
 	"$(CODEQL)" database analyze "$(CODEQL_PYTHON_DB)" codeql/python-queries --format=sarif-latest --output=codeql-results-python.sarif
 	"$(CODEQL)" database create "$(CODEQL_TS_DB)" --language=javascript-typescript --source-root="$(CODEQL_SOURCE_DIR)" --overwrite

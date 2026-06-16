@@ -11,10 +11,14 @@ type IngestionJob = {
   status:
     | "pending"
     | "running"
+    | "planning_range"
+    | "capturing_day"
+    | "capturing_required_cards"
     | "capturing_web"
     | "capturing_summary_tab"
     | "capturing_errors_tab"
     | "persisting_raw"
+    | "building_derived"
     | "building_contracts"
     | "building_derived_datasets"
     | "running_regression"
@@ -163,6 +167,7 @@ export function IngestionPage() {
                 <th>Obligatorias</th>
                 <th>Derivados</th>
                 <th>Regresion</th>
+                <th>Rango</th>
                 <th>Duracion</th>
                 <th></th>
               </tr>
@@ -188,6 +193,7 @@ export function IngestionPage() {
                   </td>
                   <td>{String(job.details.derived_datasets ?? "-")}</td>
                   <td>{String(job.details.regression_status ?? "-")}</td>
+                  <td>{formatRange(job.details.range)}</td>
                   <td>{job.duration_seconds ?? "-"}</td>
                   <td>
                     {![
@@ -214,4 +220,10 @@ export function IngestionPage() {
       </section>
     </>
   );
+}
+
+function formatRange(value: unknown) {
+  if (!value || typeof value !== "object") return "-";
+  const range = value as { start?: string; end?: string; mode?: string };
+  return `${range.mode ?? "range"} ${range.start ?? "-"} -> ${range.end ?? "-"}`;
 }

@@ -6,8 +6,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 CAPTURE_WAIT_SECONDS = 35
-INCREMENTAL_LOOKBACK_DAYS = 7
-FULL_BACKFILL_START = datetime(1970, 1, 1, tzinfo=UTC)
+DEFAULT_INGESTION_DEPTH_DAYS = 365
+DEFAULT_INCREMENTAL_REPROCESS_DAYS = 1
 
 
 @dataclass(frozen=True)
@@ -16,7 +16,7 @@ class IngestionRange:
     start: datetime
     end: datetime
     latest_source_end: datetime | None
-    lookback_days: int = INCREMENTAL_LOOKBACK_DAYS
+    lookback_days: int = DEFAULT_INCREMENTAL_REPROCESS_DAYS
 
     def details(self) -> dict[str, str | int | None]:
         return {
@@ -32,18 +32,25 @@ def build_ingestion_range(
     latest_source_end: datetime | None,
     *,
     now: datetime | None = None,
+    depth_days: int = DEFAULT_INGESTION_DEPTH_DAYS,
+    incremental_reprocess_days: int = DEFAULT_INCREMENTAL_REPROCESS_DAYS,
 ) -> IngestionRange:
     end = _as_utc(now or datetime.now(UTC))
+    bounded_depth = max(1, depth_days)
+    bounded_reprocess = max(0, incremental_reprocess_days)
     if latest_source_end is None:
         return IngestionRange(
             mode="backfill",
-            start=FULL_BACKFILL_START,
+            start=end - timedelta(days=bounded_depth),
             end=end,
             latest_source_end=None,
+            lookback_days=bounded_depth,
         )
 
     latest = _as_utc(latest_source_end)
-    start = max(FULL_BACKFILL_START, latest - timedelta(days=INCREMENTAL_LOOKBACK_DAYS))
+    target_floor = end - timedelta(days=bounded_depth)
+    reprocess_start = min(latest, end) - timedelta(days=bounded_reprocess)
+    start = max(target_floor, reprocess_start)
     if end < start:
         end = start
     return IngestionRange(
@@ -51,6 +58,7 @@ def build_ingestion_range(
         start=start,
         end=end,
         latest_source_end=latest,
+        lookback_days=bounded_reprocess,
     )
 
 

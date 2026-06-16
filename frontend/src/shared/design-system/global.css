@@ -618,10 +618,10 @@ textarea:focus-visible {
 }
 
 .dashboard-card {
-  background: var(--color-panel);
-  border: 1px solid var(--color-border);
+  background: var(--surface-dashboard-elevated);
+  border: 1px solid var(--border-dashboard);
   border-radius: var(--radius-md);
-  box-shadow: var(--shadow-soft);
+  box-shadow: var(--shadow-dashboard-card);
   padding: var(--space-5);
 }
 
@@ -678,20 +678,258 @@ textarea:focus-visible {
   color: var(--color-danger);
 }
 
-.mini-timeseries {
-  width: 100%;
-  height: 116px;
+.quantum-chart {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
 }
 
-.mini-timeseries path {
+.quantum-chart svg {
+  width: 100%;
+  height: auto;
+  min-height: 150px;
+}
+
+.quantum-chart-expanded svg {
+  min-height: 320px;
+}
+
+.quantum-chart-axis line {
+  stroke: var(--chart-axis);
+  stroke-width: 1;
+}
+
+.quantum-chart-axis text {
+  fill: var(--chart-axis);
+  font-size: 10px;
+  font-weight: 700;
+  text-anchor: middle;
+}
+
+.quantum-chart-axis-y text {
+  text-anchor: end;
+}
+
+.quantum-chart-grid {
+  stroke: var(--chart-grid);
+  stroke-dasharray: 2 4;
+}
+
+.quantum-chart-bands rect {
+  fill: var(--chart-band);
+  opacity: var(--chart-band-opacity);
+}
+
+.quantum-chart-series,
+.quantum-donut-segment {
   fill: none;
-  stroke: var(--color-accent-2);
   stroke-width: 2.5;
 }
 
-.mini-timeseries line {
-  stroke: var(--color-border);
-  stroke-width: 1;
+.quantum-chart-series-0,
+.chart-swatch-0 {
+  stroke: var(--chart-mobile);
+  background: var(--chart-mobile);
+}
+
+.quantum-chart-series-1,
+.chart-swatch-1 {
+  stroke: var(--chart-desktop);
+  background: var(--chart-desktop);
+}
+
+.quantum-chart-series-2,
+.chart-swatch-2 {
+  stroke: var(--chart-donut-3);
+  background: var(--chart-donut-3);
+}
+
+.quantum-chart-series-3,
+.chart-swatch-3 {
+  stroke: var(--chart-donut-4);
+  background: var(--chart-donut-4);
+}
+
+.quantum-chart-series-4,
+.chart-swatch-4 {
+  stroke: var(--chart-donut-5);
+  background: var(--chart-donut-5);
+}
+
+.quantum-donut-track {
+  fill: none;
+  stroke: var(--color-donut-track);
+  stroke-width: 5;
+}
+
+.quantum-donut-segment {
+  stroke-width: 5;
+  transform: rotate(-90deg);
+  transform-origin: center;
+}
+
+.quantum-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-2);
+  color: var(--color-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.quantum-chart-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.chart-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: var(--radius-pill);
+}
+
+.quantum-chart figcaption {
+  color: var(--color-text);
+  font-size: 13px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.quantum-chart-empty {
+  display: grid;
+  place-items: center;
+  min-height: 150px;
+  border: 1px dashed var(--border-dashboard);
+  border-radius: var(--radius-sm);
+  color: var(--color-muted);
+  text-align: center;
+}
+
+.interactive-card {
+  position: relative;
+}
+
+.card-open-button {
+  justify-self: start;
+  border: 0;
+  background: transparent;
+  color: var(--color-accent-strong);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 0;
+}
+
+.errors-widget-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+.tree-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.tree-cell.depth-1 {
+  padding-left: var(--space-5);
+}
+
+.tree-toggle {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--border-dashboard);
+  border-radius: var(--radius-sm);
+  background: var(--color-input-bg);
+  color: var(--color-input-text);
+  cursor: pointer;
+}
+
+.tree-spacer {
+  width: 22px;
+}
+
+.table-row-child td:first-child {
+  color: var(--color-muted);
+}
+
+.metric-delta {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  border-radius: var(--radius-pill);
+  padding: 0 var(--space-2);
+  font-weight: 800;
+}
+
+.semantic-positive {
+  background: var(--semantic-positive-soft);
+  color: var(--semantic-positive);
+}
+
+.semantic-negative {
+  background: var(--semantic-negative-soft);
+  color: var(--semantic-negative);
+}
+
+.semantic-neutral {
+  color: var(--semantic-neutral);
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--color-bg) 74%, transparent);
+  padding: var(--space-5);
+}
+
+.card-explorer-modal {
+  display: grid;
+  gap: var(--space-4);
+  width: min(980px, 96vw);
+  max-height: 92vh;
+  overflow: auto;
+  border: 1px solid var(--border-dashboard);
+  border-radius: var(--radius-md);
+  background: var(--surface-dashboard-elevated);
+  box-shadow: var(--shadow-dashboard-modal);
+  padding: var(--space-5);
+}
+
+.modal-header,
+.modal-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.modal-header h2 {
+  margin: 0;
+}
+
+.video-notice {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
 }
 
 .chart-date {
@@ -1105,6 +1343,80 @@ textarea:focus-visible {
   gap: var(--space-2);
 }
 
+.metric-badge {
+  display: inline-grid;
+  gap: var(--space-1);
+  min-width: 104px;
+  border: 1px solid var(--border-dashboard);
+  border-radius: var(--radius-sm);
+  background: var(--color-chip-bg);
+  padding: var(--space-2) var(--space-3);
+}
+
+.metric-badge span {
+  color: var(--color-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.metric-badge strong {
+  color: var(--color-text);
+  font-size: 15px;
+}
+
+.entity-tabs {
+  display: flex;
+  gap: var(--space-2);
+  overflow-x: auto;
+  padding-bottom: var(--space-2);
+}
+
+.entity-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 36px;
+  flex: 0 0 auto;
+  border: 1px solid var(--border-dashboard);
+  border-radius: var(--radius-sm);
+  background: var(--color-input-bg);
+  color: var(--color-text);
+  cursor: pointer;
+  padding: 0 var(--space-3);
+  font-weight: 800;
+}
+
+.entity-tabs button.active {
+  background: var(--color-accent);
+  color: var(--color-on-action);
+}
+
+.entity-tabs span {
+  color: inherit;
+  opacity: 0.82;
+}
+
+.data-grid {
+  max-height: 520px;
+  overflow: auto;
+}
+
+.confirm-dialog {
+  display: grid;
+  gap: var(--space-4);
+  width: min(440px, 94vw);
+  border: 1px solid var(--border-dashboard);
+  border-radius: var(--radius-md);
+  background: var(--surface-dashboard-elevated);
+  box-shadow: var(--shadow-dashboard-modal);
+  padding: var(--space-5);
+}
+
+.confirm-dialog h2,
+.confirm-dialog p {
+  margin: 0;
+}
+
 .dataset-facts span {
   display: inline-flex;
   align-items: center;
@@ -1258,6 +1570,7 @@ textarea:focus-visible {
   }
 
   .dashboard-widget-grid,
+  .errors-widget-grid,
   .dataset-kpi-grid,
   .dataset-business-grid,
   .donut-layout {

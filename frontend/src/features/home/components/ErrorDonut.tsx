@@ -1,17 +1,21 @@
+import { useState } from "react";
 import { ErrorComparisonWidget } from "../types";
+import { CardExplorerModal } from "./CardExplorerModal";
+import { QuantumChart } from "./charts/QuantumChart";
 
 type Props = {
   widget: ErrorComparisonWidget;
 };
 
-const COLOR_COUNT = 5;
-
 export function ErrorDonut({ widget }: Props) {
+  const [expanded, setExpanded] = useState(false);
   const total = widget.series.reduce((sum, point) => sum + point.value, 0);
-  let offset = 25;
 
   return (
-    <article className="dashboard-card error-donut-card">
+    <article
+      className="dashboard-card error-donut-card interactive-card"
+      onDoubleClick={() => setExpanded(true)}
+    >
       <div className="section-heading">
         <div>
           <h2>{widget.title}</h2>
@@ -20,35 +24,7 @@ export function ErrorDonut({ widget }: Props) {
       </div>
 
       {total > 0 ? (
-        <div className="donut-layout">
-          <svg viewBox="0 0 42 42" className="donut-chart" role="img">
-            <circle cx="21" cy="21" r="15.915" />
-            {widget.series.map((point, index) => {
-              const dash = (point.value / total) * 100;
-              const segment = (
-                <circle
-                  key={point.name}
-                  cx="21"
-                  cy="21"
-                  r="15.915"
-                  className={`donut-segment-${index % COLOR_COUNT}`}
-                  strokeDasharray={`${dash} ${100 - dash}`}
-                  strokeDashoffset={offset}
-                />
-              );
-              offset -= dash;
-              return segment;
-            })}
-          </svg>
-          <div className="donut-legend">
-            {widget.series.slice(0, 6).map((point, index) => (
-              <span key={point.name}>
-                <i className={`legend-swatch swatch-${index % COLOR_COUNT}`} />
-                {point.name}: {point.percent.toFixed(2)}%
-              </span>
-            ))}
-          </div>
-        </div>
+        <QuantumChart payload={widget.chart_payload} title={widget.title} />
       ) : (
         <div className="analytics-empty compact">
           Sin sesiones con error calculables
@@ -57,6 +33,18 @@ export function ErrorDonut({ widget }: Props) {
       {widget.period?.label && (
         <span className="chart-date">{widget.period.label}</span>
       )}
+      <button
+        className="card-open-button"
+        type="button"
+        onClick={() => setExpanded(true)}
+      >
+        Abrir detalle
+      </button>
+      <CardExplorerModal
+        widget={widget}
+        open={expanded}
+        onClose={() => setExpanded(false)}
+      />
     </article>
   );
 }
