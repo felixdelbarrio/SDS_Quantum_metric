@@ -9,6 +9,7 @@ import {
   getSummary,
 } from "./api";
 import { DashboardHeader } from "./components/DashboardHeader";
+import { DateRange } from "./components/DashboardHeader";
 import { DashboardTabs } from "./components/DashboardTabs";
 import { DimensionPicker } from "./components/DimensionPicker";
 import { EmptyAnalyticsState } from "./components/EmptyAnalyticsState";
@@ -36,6 +37,10 @@ export function HomePage() {
   const [activeTab, setActiveTab] = useState<DashboardTab>("summary");
   const [dimension, setDimension] = useState<string | null>(null);
   const [segment, setSegment] = useState<string | null>(null);
+  const [dateRange, setDateRange] = useState<DateRange>(() => {
+    const today = todayInMexico();
+    return { preset: "today", startDate: today, endDate: today };
+  });
   const [dimensionPanelOpen, setDimensionPanelOpen] = useState(false);
   const [segmentPanelOpen, setSegmentPanelOpen] = useState(false);
 
@@ -44,7 +49,7 @@ export function HomePage() {
     queryFn: getCountries,
   });
 
-  const hasDashboardData = Boolean(countries.data?.countries.length);
+  const hasDashboardData = Boolean(countries.data?.countries?.length);
   const selectedCountry = useMemo(() => {
     if (!countries.data?.countries.length) return country;
     if (countries.data.countries.some((item) => item.code === country)) {
@@ -55,6 +60,9 @@ export function HomePage() {
     );
     return defaultCountry?.code ?? countries.data.countries[0].code;
   }, [countries.data, country]);
+  const selectedCountryStatus = countries.data?.countries.find(
+    (item) => item.code === selectedCountry,
+  );
 
   useEffect(() => {
     if (!countries.data?.countries.length) return;
@@ -77,14 +85,44 @@ export function HomePage() {
   }, [selectedCountry]);
 
   const summary = useQuery({
-    queryKey: ["dashboard", "summary", selectedCountry, dimension, segment],
-    queryFn: () => getSummary({ country: selectedCountry, dimension, segment }),
+    queryKey: [
+      "dashboard",
+      "summary",
+      selectedCountry,
+      dimension,
+      segment,
+      dateRange.startDate,
+      dateRange.endDate,
+    ],
+    queryFn: () =>
+      getSummary({
+        country: selectedCountry,
+        dimension,
+        segment,
+        startDate: dateRange.startDate,
+        endDate: dateRange.endDate,
+      }),
     enabled: hasDashboardData,
   });
 
   const errors = useQuery({
-    queryKey: ["dashboard", "errors", selectedCountry, dimension, segment],
-    queryFn: () => getErrors({ country: selectedCountry, dimension, segment }),
+    queryKey: [
+      "dashboard",
+      "errors",
+      selectedCountry,
+      dimension,
+      segment,
+      dateRange.startDate,
+      dateRange.endDate,
+    ],
+    queryFn: () =>
+      getErrors({
+        country: selectedCountry,
+        dimension,
+        segment,
+        startDate: dateRange.startDate,
+        endDate: dateRange.endDate,
+      }),
     enabled: activeTab === "errors" && hasDashboardData,
   });
 
@@ -155,14 +193,14 @@ export function HomePage() {
     return (
       <div className="dashboard-page">
         <header className="page-header">
-          <h1>Dashboard General</h1>
+          <h1>Dashboard General {selectedCountry}</h1>
           <button className="command-button primary" onClick={refreshDashboard}>
             <RefreshCcw size={16} /> Actualizar
           </button>
         </header>
         <EmptyAnalyticsState
           title="Sin datos ingestados"
-          reason="No hay datos locales disponibles para ningun pais."
+          reason="No hay datos locales reproducibles. Ejecuta una ingesta o una regresion para capturar las cards obligatorias."
         />
       </div>
     );
@@ -173,9 +211,12 @@ export function HomePage() {
       <DashboardHeader
         country={selectedCountry}
         countries={countries.data.countries}
+        countryStatus={selectedCountryStatus}
         appliedDimension={appliedDimension}
         appliedSegment={appliedSegment}
+        dateRange={dateRange}
         onCountryChange={setActiveCountry}
+        onDateRangeChange={setDateRange}
         onOpenDimensions={() => setDimensionPanelOpen(true)}
         onOpenSegments={() => setSegmentPanelOpen(true)}
         onRefresh={refreshDashboard}
@@ -189,6 +230,7 @@ export function HomePage() {
           country={selectedCountry}
           dimension={dimension}
           segment={segment}
+          dateRange={dateRange}
           response={summary.data}
           isLoading={summary.isLoading}
         />
@@ -197,6 +239,7 @@ export function HomePage() {
           country={selectedCountry}
           dimension={dimension}
           segment={segment}
+          dateRange={dateRange}
           response={errors.data}
           isLoading={errors.isLoading}
         />
@@ -223,6 +266,19 @@ export function HomePage() {
       />
     </div>
   );
+}
+
+function todayInMexico() {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Mexico_City",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const value = Object.fromEntries(
+    parts.map((part) => [part.type, part.value]),
+  );
+  return `${value.year}-${value.month}-${value.day}`;
 }
 
 function asCountryCode(value: string): CountryCode {

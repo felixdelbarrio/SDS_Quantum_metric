@@ -43,10 +43,10 @@ describe("HomePage local dashboard", () => {
     mockFetch({ empty: true });
     renderHome();
 
-    expect(await screen.findByText("Dashboard General")).toBeInTheDocument();
+    expect(await screen.findByText("Dashboard General MX")).toBeInTheDocument();
     expect(
       await screen.findByText(
-        "No hay datos locales disponibles para ningun pais.",
+        "No hay datos locales reproducibles. Ejecuta una ingesta o una regresion para capturar las cards obligatorias.",
       ),
     ).toBeInTheDocument();
   });
@@ -88,6 +88,16 @@ describe("HomePage local dashboard", () => {
 
     expect(await screen.findByText("Paginas vistas")).toBeInTheDocument();
     expect(await screen.findByText("150")).toBeInTheDocument();
+    expect(await screen.findAllByText("Jun 16, 2026 (CST)")).not.toHaveLength(
+      0,
+    );
+    expect(
+      requests.some(
+        (request) =>
+          request.includes("start_date=2026-06-16") &&
+          request.includes("end_date=2026-06-16"),
+      ),
+    ).toBe(true);
     expect(
       await screen.findByText("Detalle por App Name y Sistema operativo"),
     ).toBeInTheDocument();
@@ -125,7 +135,7 @@ describe("HomePage local dashboard", () => {
       expect(
         requests.some(
           (request) =>
-            request.includes("/analytics/dashboard/summary/table") &&
+            request.includes("/local-dashboard/summary/table") &&
             request.includes("sort=page_views"),
         ),
       ).toBe(true);
@@ -138,6 +148,12 @@ describe("HomePage local dashboard", () => {
 
     fireEvent.click(await screen.findByRole("tab", { name: "Errores" }));
 
+    expect(
+      await screen.findByText("Evolutivo - % Sesiones con Error"),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByText("Top 10 Errores por nombre del error"),
+    ).toBeInTheDocument();
     expect(
       await screen.findByText("Comparativa de sesiones con error por App Name"),
     ).toBeInTheDocument();
@@ -238,7 +254,7 @@ function mockFetch(options: MockOptions = {}) {
 function responseFor(url: URL, options: MockOptions) {
   const country =
     url.searchParams.get("country") ?? options.defaultCountry ?? "MX";
-  if (url.pathname.endsWith("/analytics/countries")) {
+  if (url.pathname.endsWith("/local-dashboard/countries")) {
     if (options.empty) {
       return {
         default_country: options.defaultCountry ?? "MX",
@@ -282,7 +298,7 @@ function responseFor(url: URL, options: MockOptions) {
     };
   }
   if (options.empty) return emptyPayload(country);
-  if (url.pathname.endsWith("/analytics/dashboard/summary/table")) {
+  if (url.pathname.endsWith("/local-dashboard/summary/table")) {
     return {
       status: "ok",
       country,
@@ -308,7 +324,7 @@ function responseFor(url: URL, options: MockOptions) {
       available_datasets: ["country=MX/raw_api_calls"],
     };
   }
-  if (url.pathname.endsWith("/analytics/dashboard/errors/table")) {
+  if (url.pathname.endsWith("/local-dashboard/errors/app-name")) {
     return {
       status: "ok",
       country,
@@ -338,18 +354,60 @@ function responseFor(url: URL, options: MockOptions) {
       available_datasets: ["country=MX/raw_api_calls"],
     };
   }
-  if (url.pathname.endsWith("/analytics/dashboard/errors")) {
+  if (url.pathname.endsWith("/local-dashboard/errors/top-errors")) {
+    return {
+      status: "ok",
+      country,
+      source: "parquet",
+      columns: [
+        { key: "name", label: "Error Name", sortable: true },
+        {
+          key: "error_sessions",
+          label: "General - Sesiones con error",
+          sortable: true,
+        },
+        {
+          key: "error_session_percent",
+          label: "General - % Sesiones con error",
+          sortable: true,
+        },
+      ],
+      rows: [
+        {
+          name: "TypeError",
+          error_name: "TypeError",
+          error_sessions: 4,
+          error_session_percent: 20,
+        },
+      ],
+      available_datasets: ["country=MX/derived/errors_top_errors_table"],
+    };
+  }
+  if (url.pathname.endsWith("/local-dashboard/errors")) {
     return {
       status: "ok",
       country,
       source: "parquet",
       widgets: [
         {
+          id: "error_sessions_percentage_evolution",
+          title: "Evolutivo - % Sesiones con Error",
+          value: 20,
+          unit: "percent",
+          breakdown: [{ label: "Mobile", value: 20 }],
+          timeseries: [
+            { ts: "2026-06-16T00:00:00Z", value: 20 },
+            { ts: "2026-06-16T01:00:00Z", value: 21 },
+          ],
+          period: { label: "Jun 16, 2026 (CST)" },
+        },
+        {
           id: "error_sessions_by_app_name",
           title: "Comparativa de sesiones con error por App Name",
           chart_type: "donut",
           total: 5,
           series: [{ name: "portabilidad nomina", value: 4, percent: 80 }],
+          period: { label: "Jun 16, 2026 (CST)" },
         },
         {
           id: "error_session_percentage_by_app_name",
@@ -358,7 +416,7 @@ function responseFor(url: URL, options: MockOptions) {
           rows: [{ name: "portabilidad nomina", error_session_percent: 20 }],
         },
       ],
-      available_datasets: ["country=MX/raw_api_calls"],
+      available_datasets: ["country=MX/derived/errors_widgets"],
     };
   }
   return {
@@ -379,9 +437,10 @@ function responseFor(url: URL, options: MockOptions) {
         unit: "count",
         breakdown: [{ label: "Mobile", value: 150 }],
         timeseries: [
-          { ts: "2026-06-01T00:00:00Z", value: 80 },
-          { ts: "2026-06-02T00:00:00Z", value: 70 },
+          { ts: "2026-06-16T00:00:00Z", value: 80 },
+          { ts: "2026-06-16T01:00:00Z", value: 70 },
         ],
+        period: { label: "Jun 16, 2026 (CST)" },
       },
       {
         id: "sessions",
@@ -390,6 +449,7 @@ function responseFor(url: URL, options: MockOptions) {
         unit: "count",
         breakdown: [],
         timeseries: [],
+        period: { label: "Jun 16, 2026 (CST)" },
       },
     ],
     available_datasets: ["country=MX/raw_api_calls"],

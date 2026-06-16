@@ -19,9 +19,11 @@ make kill
 
 ## Configuracion Quantum
 
-La app configura Quantum por pais. El usuario mantiene `base_url`, `dashboard_id`, `team_id` y
-`tab` en la pantalla Quantum; la URL completa de dashboard se deriva internamente para capturar
-las llamadas reales de `/analytics`.
+La app configura Quantum por pais con una pantalla funcional: browser, modo de sesion, pais activo,
+Base URL, apariencia y acciones de guardar, test, descubrir dashboard y validar acceso.
+
+Dashboard ID, Team ID, tabs, card IDs y hashes no se muestran al usuario. Se resuelven internamente
+desde `.env`, configuracion local o URL de Quantum Web cuando es posible.
 
 `.env.example` incluye Mexico. Para Espana, Colombia, Argentina o Peru se anade una fila en
 Quantum y, al guardar, la configuracion queda sincronizada en `QM_COUNTRY_CONFIGS` dentro de
@@ -31,26 +33,20 @@ Quantum y, al guardar, la configuracion queda sincronizada en `QM_COUNTRY_CONFIG
 
 Home muestra `Dashboard General {pais}` y consume solo endpoints locales:
 
-- `GET /api/analytics/countries`
-- `GET /api/analytics/dashboard/summary`
-- `GET /api/analytics/dashboard/summary/table`
-- `GET /api/analytics/dashboard/errors`
-- `GET /api/analytics/dashboard/errors/table`
-- `GET /api/analytics/dimensions`
-- `GET /api/analytics/segments`
+- `GET /api/local-dashboard/countries`
+- `GET /api/local-dashboard/status`
+- `GET /api/local-dashboard/summary`
+- `GET /api/local-dashboard/summary/table`
+- `GET /api/local-dashboard/errors`
+- `GET /api/local-dashboard/errors/top-errors`
+- `GET /api/local-dashboard/errors/app-name`
 
-Los widgets de Resumen se calculan desde `response_json.rows` en
-`data/parquet/country=<pais>/raw_api_calls/*.parquet`. Se reconocen campos y aliases para
-page views, sessions, converted sessions y average session duration. La tabla agrupa por
-`app_name` y `operating_system`, o por la dimension activa cuando se selecciona una. Errores
-agrega `sessions_with_error` y calcula `% sesiones con error` solo cuando existen sesiones o
-porcentajes fuente.
+La ingesta captura tabs `Resumen` y `Errores`, persiste raw API calls, construye contratos visuales,
+snapshots web, datasets derivados y ejecuta regresion Web vs Local. Home solo pinta datos derivados
+con regresion `passed` o `passed_with_tolerance`.
 
-Si faltan Parquet, filas parseables o campos de metrica, la API devuelve `status: "empty"` o
-valores `null`; la UI no rellena datos falsos. Las dimensiones se infieren de
-`request_json.dimensions`, `dimensionFills`, `metadata` y claves de filas. Los segmentos se
-infieren de valores locales como app name, browser, operating system, plataforma, error y
-conversion.
+Si hay raw calls pero faltan cards obligatorias, derivados o regresion, la API devuelve un motivo
+accionable. La UI no rellena datos falsos ni oculta discrepancias.
 
 ## Seguridad
 
@@ -63,6 +59,9 @@ recarga Home: el dashboard debe seguir funcionando sobre Parquet local.
 ## Estado
 
 - As-Is documentado en `docs/as-is`.
+- Contratos de dashboard en `docs/to-be/local-dashboard-contract.md`.
+- Datasets derivados en `docs/to-be/parquet-derived-datasets.md`.
+- Regresion en `docs/regression/latest-web-vs-local.md`.
 - Backend local versionado bajo `/api`.
 - Persistencia Parquet en `data/parquet/country=<pais>`.
 - Export/import ZIP en `data/exports`.

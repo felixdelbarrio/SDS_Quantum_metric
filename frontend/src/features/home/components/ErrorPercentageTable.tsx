@@ -10,6 +10,9 @@ import { EmptyAnalyticsState } from "./EmptyAnalyticsState";
 type Props = {
   response?: ErrorTableResponse;
   isLoading: boolean;
+  title?: string;
+  searchLabel?: string;
+  loadingLabel?: string;
   search: string;
   sort: string;
   direction: SortDirection;
@@ -20,6 +23,9 @@ type Props = {
 export function ErrorPercentageTable({
   response,
   isLoading,
+  title = "% Sesiones con Error por App Name",
+  searchLabel = "Buscar errores",
+  loadingLabel = "Cargando errores",
   search,
   sort,
   direction,
@@ -30,7 +36,7 @@ export function ErrorPercentageTable({
     <section className="dashboard-card table-card">
       <div className="section-heading">
         <div>
-          <h2>% Sesiones con Error por App Name</h2>
+          <h2>{title}</h2>
           <span>{response?.rows.length ?? 0} filas</span>
         </div>
         <label className="search-field compact">
@@ -39,13 +45,13 @@ export function ErrorPercentageTable({
             value={search}
             onChange={(event) => onSearchChange(event.target.value)}
             placeholder="Buscar"
-            aria-label="Buscar errores"
+            aria-label={searchLabel}
           />
         </label>
       </div>
 
       {isLoading ? (
-        <div className="analytics-loading">Cargando errores</div>
+        <div className="analytics-loading">{loadingLabel}</div>
       ) : response?.status === "ok" && response.rows.length ? (
         <div className="table-scroll">
           <table className="table dashboard-table">
@@ -95,7 +101,7 @@ function renderCell(row: ErrorPercentRow, column: TableColumn) {
   const value = row[column.key as keyof ErrorPercentRow];
   if (value === null || value === undefined || value === "") return "-";
   if (typeof value === "number") {
-    const suffix = column.key === "error_session_percent" ? "%" : "";
+    const suffix = column.key.includes("percent") ? "%" : "";
     return `${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}${suffix}`;
   }
   return value;

@@ -60,9 +60,12 @@ class QuantumConfigStore:
                 pass
 
         dashboard_parts: dict[str, str | int] = {
-            "dashboard_id": self.settings.qm_dashboard_id,
-            "team_id": self.settings.qm_team_id,
-            "tab": self.settings.qm_dashboard_tab,
+            "dashboard_id": self.settings.qm_dashboard_id
+            or self.settings.quantum_default_dashboard_id,
+            "team_id": self.settings.qm_team_id or self.settings.quantum_default_team_id,
+            "tab": self.settings.qm_dashboard_tab
+            if self.settings.qm_dashboard_tab
+            else self.settings.quantum_default_summary_tab,
         }
         if not dashboard_parts["dashboard_id"] and self.settings.qm_default_dashboard_url:
             dashboard_parts = _dashboard_parts(self.settings.qm_default_dashboard_url)
@@ -70,7 +73,7 @@ class QuantumConfigStore:
         return [
             QuantumCountryConfig(
                 country=Country(self.settings.qm_country),
-                base_url=self.settings.qm_base_url,
+                base_url=self.settings.qm_base_url or self.settings.quantum_default_base_url,
                 dashboard_id=str(dashboard_parts["dashboard_id"]),
                 team_id=str(dashboard_parts["team_id"]),
                 tab=int(dashboard_parts["tab"]),

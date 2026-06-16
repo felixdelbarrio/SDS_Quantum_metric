@@ -15,6 +15,8 @@ type DashboardParams = {
   country: CountryCode;
   dimension?: string | null;
   segment?: string | null;
+  startDate?: string | null;
+  endDate?: string | null;
 };
 
 type TableParams = DashboardParams & {
@@ -24,30 +26,36 @@ type TableParams = DashboardParams & {
 };
 
 export function getCountries() {
-  return apiGet<CountriesResponse>("/analytics/countries");
+  return apiGet<CountriesResponse>("/local-dashboard/countries");
 }
 
 export function getSummary(params: DashboardParams) {
   return apiGet<SummaryDashboardResponse>(
-    `/analytics/dashboard/summary?${toQuery(params)}`,
+    `/local-dashboard/summary?${toQuery(params)}`,
   );
 }
 
 export function getSummaryTable(params: TableParams) {
   return apiGet<DetailTableResponse>(
-    `/analytics/dashboard/summary/table?${toQuery(params)}`,
+    `/local-dashboard/summary/table?${toQuery(params)}`,
   );
 }
 
 export function getErrors(params: DashboardParams) {
   return apiGet<ErrorsDashboardResponse>(
-    `/analytics/dashboard/errors?${toQuery(params)}`,
+    `/local-dashboard/errors?${toQuery(params)}`,
   );
 }
 
-export function getErrorsTable(params: TableParams) {
+export function getTopErrorsTable(params: TableParams) {
   return apiGet<ErrorTableResponse>(
-    `/analytics/dashboard/errors/table?${toQuery(params)}`,
+    `/local-dashboard/errors/top-errors?${toQuery(params)}`,
+  );
+}
+
+export function getErrorsAppNameTable(params: TableParams) {
+  return apiGet<ErrorTableResponse>(
+    `/local-dashboard/errors/app-name?${toQuery(params)}`,
   );
 }
 
@@ -67,8 +75,12 @@ function toQuery(values: Record<string, string | null | undefined>) {
   const params = new URLSearchParams();
   Object.entries(values).forEach(([key, value]) => {
     if (value !== undefined && value !== null && value !== "") {
-      params.set(key, value);
+      params.set(toSnakeCase(key), value);
     }
   });
   return params.toString();
+}
+
+function toSnakeCase(value: string) {
+  return value.replace(/[A-Z]/g, (match) => `_${match.toLowerCase()}`);
 }

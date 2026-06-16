@@ -1,0 +1,106 @@
+{
+  "ingestion_id": null,
+  "country": "MX",
+  "dashboard_id": "dash-fixture",
+  "team_id": "team-fixture",
+  "tabs": [
+    "summary",
+    "errors"
+  ],
+  "cards": [
+    {
+      "tab": "summary",
+      "card_role": "summary.page_views",
+      "card_title": "Paginas vistas",
+      "web_value": 150.0,
+      "local_value": 150.0,
+      "status": "passed",
+      "difference": 0.0,
+      "details": null
+    },
+    {
+      "tab": "summary",
+      "card_role": "summary.sessions",
+      "card_title": "Sesiones",
+      "web_value": 30.0,
+      "local_value": 30.0,
+      "status": "passed",
+      "difference": 0.0,
+      "details": null
+    },
+    {
+      "tab": "summary",
+      "card_role": "summary.converted_sessions",
+      "card_title": "Sesiones con conversion",
+      "web_value": 3.0,
+      "local_value": 3.0,
+      "status": "passed",
+      "difference": 0.0,
+      "details": null
+    },
+    {
+      "tab": "summary",
+      "card_role": "summary.avg_session_duration",
+      "card_title": "Tiempo medio de sesion",
+      "web_value": 86.67,
+      "local_value": 86.67,
+      "status": "passed",
+      "difference": 0.0,
+      "details": null
+    },
+    {
+      "tab": "summary",
+      "card_role": "summary.detail_by_app_name_os",
+      "card_title": "Detalle por APP Name y Sistema operativo",
+      "web_value": 2.0,
+      "local_value": 2.0,
+      "status": "passed",
+      "difference": null,
+      "details": null
+    },
+    {
+      "tab": "errors",
+      "card_role": "errors.error_sessions_percentage_evolution",
+      "card_title": "Evolutivo - % Sesiones con Error",
+      "web_value": 16.67,
+      "local_value": 16.67,
+      "status": "passed",
+      "difference": 0.0,
+      "details": null
+    },
+    {
+      "tab": "errors",
+      "card_role": "errors.top_errors_by_error_name",
+      "card_title": "Top 10 Errores por nombre del error",
+      "web_value": 2.0,
+      "local_value": 2.0,
+      "status": "passed",
+      "difference": null,
+      "details": null
+    },
+    {
+      "tab": "errors",
+      "card_role": "errors.error_sessions_by_app_name_comparison",
+      "card_title": "Comparativa de sesiones con error por App Name",
+      "web_value": 5.0,
+      "local_value": 5.0,
+      "status": "passed",
+      "difference": 0.0,
+      "details": null
+    },
+    {
+      "tab": "errors",
+      "card_role": "errors.error_session_percentage_by_app_name",
+      "card_title": "% Sesiones con Error por App Name",
+      "web_value": 2.0,
+      "local_value": 2.0,
+      "status": "passed",
+      "difference": null,
+      "details": null
+    }
+  ],
+  "verdict": "PASSED",
+  "status": "passed",
+  "tolerance_percent": 0.1,
+  "generated_at": "2026-06-16T14:05:18.401639+00:00"
+}

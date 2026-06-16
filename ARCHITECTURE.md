@@ -21,6 +21,19 @@ La capa `backend/app/analytics` centraliza el dashboard offline:
 El motor lee solo `data/parquet/country=<pais>/raw_api_calls/*.parquet`. No usa
 `QuantumClient`, Playwright ni clientes HTTP externos.
 
+## Dashboard Quantum por cards
+
+`backend/app/quantum_dashboard` implementa la capa de Iteracion 4:
+
+- `catalog.py`: catalogo obligatorio de nueve roles visuales para Resumen y Errores.
+- `discovery.py`: resolucion interna de dashboard, team y tabs desde `.env`, config o URL.
+- `capture.py`: captura guiada de tabs Resumen y Errores.
+- `card_mapper.py`: asociacion de llamadas Quantum a roles visuales.
+- `parsers.py`: estrategias por tipo de card, con errores accionables.
+- `builder.py`: raw calls -> visual contracts -> web snapshots -> derived Parquet.
+- `service.py`: endpoints `/api/local-dashboard/*` desde derivados.
+- `regression.py`: comparacion Web vs Local y reporte Markdown/JSON.
+
 ## Flujo de conexion
 
 1. El usuario abre Quantum > Test de conexion.
@@ -33,19 +46,21 @@ El motor lee solo `data/parquet/country=<pais>/raw_api_calls/*.parquet`. No usa
 
 1. El usuario lanza una ingesta desde la seccion Ingesta.
 2. Se abre un contexto Playwright efimero con cookies en memoria.
-3. Se navega el dashboard configurado.
-4. Se capturan respuestas reales de `/analytics` y `/analytics/historical`.
-5. Se guardan raw calls y manifests en Parquet particionado por pais.
-6. Las vistas offline leen de APIs locales.
+3. Se resuelve dashboard/team/tabs internamente.
+4. Se navega `Resumen` y `Errores`.
+5. Se capturan respuestas reales de `/analytics` y `/analytics/historical`.
+6. Se guardan raw calls y manifests en Parquet particionado por pais.
+7. Se generan contratos visuales, snapshots web y datasets derivados.
+8. Se ejecuta regresion Web vs Local.
+9. La ingesta solo termina `completed` si la regresion pasa.
 
 ## Flujo del dashboard offline
 
-1. Home llama `/api/analytics/countries` para elegir pais por defecto.
-2. El backend lee raw calls Parquet del pais seleccionado.
-3. `normalizer.py` extrae dimensiones, metricas, periodos y metadatos desde JSON local.
-4. `query_engine.py` aplica segmento, dimension, search y sort.
-5. Se devuelven widgets Resumen, tabla por App Name/Sistema operativo y vistas de Errores.
-6. Si falta un campo fuente, el resultado se marca como empty o `null`; no se sintetizan datos.
+1. Home llama `/api/local-dashboard/countries` para elegir pais por defecto.
+2. El backend comprueba contratos, derivados y regresion.
+3. Summary y Errors se sirven desde `derived/*`.
+4. Search y sort operan sobre Parquet derivado local.
+5. Si falta una card obligatoria o falla regresion, se devuelve error accionable.
 
 ## Offline
 
