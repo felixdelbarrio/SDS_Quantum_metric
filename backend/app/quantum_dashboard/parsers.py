@@ -350,11 +350,38 @@ def _timeseries(response_json: dict[str, Any], aliases: tuple[str, ...]) -> list
     points_by_row: list[dict[str, Any]] = []
     for row in _rows(response_json):
         flat = flatten_row(row)
-        ts = _string_from_row(flat, ("ts", "timestamp", "date", "time"))
+        ts = _string_from_row(flat, ("ts", "timestamp", "date", "time")) or _dimension_at(row, 0)
         value = _number_from_row(flat, aliases)
+        if value is None:
+            value = _metric_at(row, 0)
         if ts and value is not None:
             points_by_row.append({"ts": ts, "value": value})
-    return points_by_row
+    if points_by_row:
+        return points_by_row
+    return _timeseries_from_results(response_json)
+
+
+def _timeseries_from_results(response_json: dict[str, Any]) -> list[dict[str, Any]]:
+    results = response_json.get("results")
+    if not isinstance(results, list):
+        return []
+    points = []
+    for item in results:
+        if not isinstance(item, list) or len(item) < 2:
+            continue
+        dimensions = item[0]
+        ts = dimensions[0] if isinstance(dimensions, list) and dimensions else None
+        metrics = item[1]
+        value = None
+        if isinstance(metrics, list) and metrics:
+            metric_value = metrics[0]
+            if isinstance(metric_value, list):
+                value = _to_number(metric_value[-1] if metric_value else None)
+            else:
+                value = _to_number(metric_value)
+        if ts is not None and value is not None:
+            points.append({"ts": str(ts), "value": value})
+    return points
 
 
 def _breakdowns(

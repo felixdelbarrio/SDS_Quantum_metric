@@ -41,6 +41,7 @@ def build_derived_datasets(
 ) -> DerivedBuildResult:
     calls = raw_calls if raw_calls is not None else _read_raw_calls(store, country)
     selected = _latest_call_by_role(calls)
+    timeseries_by_role = _timeseries_call_by_role(calls)
     now = datetime.now(UTC).isoformat()
     contracts: list[CardContract] = []
     snapshots: list[WebSnapshot] = []
@@ -65,6 +66,8 @@ def build_derived_datasets(
                 }
             )
             continue
+
+        result = _with_related_timeseries(result, timeseries_by_role.get(role), role)
 
         contracts.append(contract)
         snapshots.append(_snapshot_from_result(country, contract, result, call, now))
@@ -152,6 +155,61 @@ def _latest_call_by_role(calls: list[dict[str, Any]]) -> dict[VisualRole, dict[s
     return selected
 
 
+def _timeseries_call_by_role(calls: list[dict[str, Any]]) -> dict[VisualRole, dict[str, Any]]:
+    selected: dict[VisualRole, dict[str, Any]] = {}
+    scores: dict[VisualRole, int] = {}
+    last_role_by_card: dict[str, VisualRole] = {}
+    for call in calls:
+        role = map_card_role(call)
+        card_id = _text(call.get("card_id"))
+        view_name = str(call.get("view_name") or "")
+        if role is not None and card_id:
+            last_role_by_card[card_id] = role
+        if "timeSeriesQuery" not in view_name:
+            continue
+        inferred_role = role
+        if inferred_role is None and card_id:
+            inferred_role = last_role_by_card.get(card_id)
+        if inferred_role is None:
+            continue
+        score = _timeseries_score(call)
+        if inferred_role not in selected or score >= scores[inferred_role]:
+            selected[inferred_role] = {**call, "card_role": inferred_role}
+            scores[inferred_role] = score
+    return selected
+
+
+def _timeseries_score(call: dict[str, Any]) -> int:
+    view_name = str(call.get("view_name") or "")
+    score = int(call.get("row_count") or 0)
+    if "ComparisonSegment" in view_name:
+        score += 200
+    if ":historical" not in view_name:
+        score += 100
+    return score
+
+
+def _with_related_timeseries(
+    result: ParserResult,
+    timeseries_call: dict[str, Any] | None,
+    role: VisualRole,
+) -> ParserResult:
+    if timeseries_call is None:
+        return result
+    parsed = parse_card(timeseries_call, role)
+    widget = result.data.get("widget")
+    timeseries_widget = parsed.data.get("widget") if parsed.status == "ok" else None
+    if not isinstance(widget, dict) or not isinstance(timeseries_widget, dict):
+        return result
+    timeseries = timeseries_widget.get("timeseries")
+    if isinstance(timeseries, list) and timeseries:
+        widget["timeseries"] = timeseries
+    period = _period_from_call(timeseries_call)
+    if period:
+        widget["period"] = period
+    return ParserResult(role=result.role, status=result.status, data=result.data)
+
+
 def _call_score(role: VisualRole, call: dict[str, Any]) -> int:
     view_name = str(call.get("view_name") or "")
     score = int(call.get("row_count") or 0)
@@ -190,6 +248,7 @@ def _contract_from_call(
     metadata = _metadata(request_json)
     metric_ids = _metric_ids(call.get("metric_ids"), metadata.get("metricIds"))
     dimensions = _query_dimensions(request_json)
+    period = _period_from_call(call)
     return CardContract(
         country=country,
         dashboard_id=_text(call.get("dashboard_id") or metadata.get("dashboardId")),
@@ -206,9 +265,11 @@ def _contract_from_call(
         metric_ids=metric_ids,
         dimensions=dimensions,
         period=DashboardPeriod(
-            start=_text(call.get("source_ts_start")),
-            end=_text(call.get("source_ts_end")),
-            timezone=_text(metadata.get("timezone")) or "CST",
+            start=period.get("start") if period else _text(call.get("source_ts_start")),
+            end=period.get("end") if period else _text(call.get("source_ts_end")),
+            timezone=(period.get("timezone") if period else None)
+            or _text(metadata.get("timezone"))
+            or "CST",
         ),
         parse_strategy=spec.parse_strategy,
         chart_type=spec.card_type,
@@ -301,6 +362,8 @@ def _append_derived_rows(
 
 
 def _widget_row(contract: CardContract, widget: dict[str, Any]) -> dict[str, Any]:
+    raw_widget_period = widget.get("period")
+    widget_period: dict[str, Any] = raw_widget_period if isinstance(raw_widget_period, dict) else {}
     return {
         "country": contract.country,
         "card_role": contract.visual_role,
@@ -315,8 +378,9 @@ def _widget_row(contract: CardContract, widget: dict[str, Any]) -> dict[str, Any
         "series": widget.get("series", []),
         "timeseries": widget.get("timeseries", []),
         "comparison": widget.get("comparison"),
-        "period_start": contract.period.start,
-        "period_end": contract.period.end,
+        "period_start": widget_period.get("start") or contract.period.start,
+        "period_end": widget_period.get("end") or contract.period.end,
+        "period_timezone": widget_period.get("timezone") or contract.period.timezone,
         "regression_source": "web_snapshot",
     }
 
@@ -388,6 +452,59 @@ def _query_dimensions(request_json: dict[str, Any]) -> list[str]:
                     if raw:
                         values.add(canonicalize_key(str(raw)))
     return sorted(values)
+
+
+def _period_from_call(call: dict[str, Any]) -> dict[str, str] | None:
+    start = _text(call.get("source_ts_start"))
+    end = _text(call.get("source_ts_end"))
+    timezone = "CST"
+    request_json = parse_json_object(call.get("request_json"))
+    query = request_json.get("query")
+    container = query if isinstance(query, dict) else request_json
+    dimension_fills = container.get("dimensionFills") if isinstance(container, dict) else None
+    fills = dimension_fills.get("dimensionFills") if isinstance(dimension_fills, dict) else None
+    if isinstance(fills, list):
+        for item in fills:
+            if not isinstance(item, dict):
+                continue
+            namespace = item.get("namespace")
+            arguments = item.get("arguments")
+            if (
+                isinstance(namespace, list)
+                and namespace[-1:] == ["ts"]
+                and isinstance(arguments, list)
+                and len(arguments) >= 2
+            ):
+                start = start or _text(arguments[0])
+                end = end or _text(arguments[1])
+                if len(arguments) >= 4:
+                    timezone = _timezone_from_offset(arguments[3]) or timezone
+    dimensions = container.get("dimensions") if isinstance(container, dict) else None
+    dimension_items = dimensions.get("dimensions") if isinstance(dimensions, dict) else None
+    if isinstance(dimension_items, list):
+        for item in dimension_items:
+            if not isinstance(item, dict):
+                continue
+            metadata = item.get("metadata")
+            if not isinstance(metadata, dict):
+                continue
+            start = start or _text(metadata.get("baseTs"))
+            end = end or _text(metadata.get("endTs"))
+            timezone = _timezone_from_offset(metadata.get("utcOffset")) or timezone
+    if start or end:
+        return {"start": start or "", "end": end or "", "timezone": timezone}
+    return None
+
+
+def _timezone_from_offset(value: Any) -> str | None:
+    try:
+        offset = int(value)
+    except (TypeError, ValueError):
+        return None
+    if offset == -21600:
+        return "CST"
+    hours = offset // 3600
+    return f"UTC{hours:+03d}:00"
 
 
 def _response_columns(response_json: dict[str, Any]) -> list[str]:

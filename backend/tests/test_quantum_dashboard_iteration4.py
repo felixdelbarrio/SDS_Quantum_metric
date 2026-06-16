@@ -155,6 +155,11 @@ def test_local_dashboard_apis_read_derived_data_offline(tmp_path: Path) -> None:
         "avg_session_duration",
     ]
     assert summary_table["rows"][0]["app_name"] == "portabilidad nomina"
+    segmented = service.summary_table("MX", segment="app_name:portabilidad nomina")
+    assert segmented["applied_segment"]["label"] == "App Name: portabilidad nomina"
+    assert {row["app_name"] for row in segmented["rows"]} == {"portabilidad nomina"}
+    outside_range = service.summary("MX", start_date="2030-01-01", end_date="2030-01-01")
+    assert outside_range["status"] == "empty"
     assert {widget["id"] for widget in errors["widgets"]} >= {
         "error_sessions_percentage_evolution",
         "error_sessions_by_app_name",
@@ -321,6 +326,23 @@ def test_parsers_support_real_quantum_rows_and_results_shapes() -> None:
     )
     assert historical.status == "ok"
     assert historical.data["widget"]["value"] == 76.5
+
+    timeseries = parse_card(
+        _parser_call(
+            response_json={
+                "rows": [
+                    {"dimensions": [1781589600], "metrics": [10]},
+                    {"dimensions": [1781593200], "metrics": [12]},
+                ]
+            }
+        ),
+        "summary.sessions",
+    )
+    assert timeseries.status == "ok"
+    assert timeseries.data["widget"]["timeseries"] == [
+        {"ts": "1781589600", "value": 10.0},
+        {"ts": "1781593200", "value": 12.0},
+    ]
 
 
 def _store_with_fixtures(tmp_path: Path) -> ParquetStore:

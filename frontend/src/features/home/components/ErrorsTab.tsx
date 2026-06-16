@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { getErrorsAppNameTable, getTopErrorsTable } from "../api";
+import { DateRange } from "./DashboardHeader";
 import {
   CountryCode,
   ErrorComparisonWidget,
@@ -18,6 +19,7 @@ type Props = {
   country: CountryCode;
   dimension?: string | null;
   segment?: string | null;
+  dateRange: DateRange;
   response?: ErrorsDashboardResponse;
   isLoading: boolean;
 };
@@ -26,6 +28,7 @@ export function ErrorsTab({
   country,
   dimension,
   segment,
+  dateRange,
   response,
   isLoading,
 }: Props) {
@@ -43,6 +46,8 @@ export function ErrorsTab({
       country,
       dimension,
       segment,
+      dateRange.startDate,
+      dateRange.endDate,
       topSearch,
       topSort,
       topDirection,
@@ -52,6 +57,8 @@ export function ErrorsTab({
         country,
         dimension,
         segment,
+        startDate: dateRange.startDate,
+        endDate: dateRange.endDate,
         search: topSearch,
         sort: topSort,
         direction: topDirection,
@@ -65,6 +72,8 @@ export function ErrorsTab({
       country,
       dimension,
       segment,
+      dateRange.startDate,
+      dateRange.endDate,
       search,
       sort,
       direction,
@@ -74,6 +83,8 @@ export function ErrorsTab({
         country,
         dimension,
         segment,
+        startDate: dateRange.startDate,
+        endDate: dateRange.endDate,
         search,
         sort,
         direction,

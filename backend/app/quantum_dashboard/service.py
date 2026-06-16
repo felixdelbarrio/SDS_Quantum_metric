@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any, Literal
+from zoneinfo import ZoneInfo
 
 import polars as pl
 
 from backend.app.analytics.models import TableColumn
+from backend.app.analytics.normalizer import humanize_key
+from backend.app.analytics.segments import parse_segment
 from backend.app.quantum.schemas import COUNTRY_LABELS, COUNTRY_ORDER, Country
 from backend.app.quantum_dashboard.builder import (
     DATASET_ERRORS_APP_NAME,
@@ -126,14 +130,35 @@ class LocalDashboardService:
             "regression_report": "docs/regression/latest-web-vs-local.md" if regression else None,
         }
 
-    def summary(self, country: str) -> dict[str, Any]:
+    def summary(
+        self,
+        country: str,
+        *,
+        dimension: str | None = None,
+        segment: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> dict[str, Any]:
         status = self.status(country)
         if not status["summary_ready"] or not _regression_usable(status["regression_status"]):
             return self._empty_response(country, status, required_dataset="derived/summary")
+        period = self._period(country)
+        if not _period_matches(period, start_date, end_date):
+            return self._empty_response(
+                country,
+                {**status, "reason": "No hay ingesta local para el rango de fechas seleccionado."},
+                required_dataset="derived/summary",
+            )
         widgets = [
             _widget_from_row(row)
             for row in self.store.read_country_dataset(country, DATASET_SUMMARY_WIDGETS)
         ]
+        if segment:
+            widgets = _summary_widgets_for_segment(
+                widgets,
+                self.store.read_country_dataset(country, DATASET_SUMMARY_TABLE),
+                segment,
+            )
         order = {card.local_id: index for index, card in enumerate(MANDATORY_CARDS)}
         widgets.sort(key=lambda item: order.get(str(item["id"]), 99))
         return {
@@ -143,8 +168,10 @@ class LocalDashboardService:
             "last_ingestion_at": status["last_ingestion_at"],
             "dashboard_title": f"Dashboard General {country}",
             "description": "Este dashboard es un resumen de sesiones y errores.",
+            "applied_dimension": _selection(dimension),
+            "applied_segment": _segment_selection(segment),
             "widgets": widgets,
-            "period": self._period(country),
+            "period": period,
             "regression": self._regression_metadata(status),
             "available_datasets": self._available_dataset_names(country),
         }
@@ -156,13 +183,26 @@ class LocalDashboardService:
         search: str | None = None,
         sort: str = "page_views",
         direction: Literal["asc", "desc"] = "desc",
+        dimension: str | None = None,
+        segment: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
     ) -> dict[str, Any]:
         status = self.status(country)
         if not status["summary_ready"] or not _regression_usable(status["regression_status"]):
             return self._empty_table(
                 country, SUMMARY_COLUMNS, status, "derived/summary_detail_table"
             )
+        period = self._period(country)
+        if not _period_matches(period, start_date, end_date):
+            return self._empty_table(
+                country,
+                SUMMARY_COLUMNS,
+                {**status, "reason": "No hay ingesta local para el rango de fechas seleccionado."},
+                "derived/summary_detail_table",
+            )
         rows = self.store.read_country_dataset(country, DATASET_SUMMARY_TABLE)
+        rows = _apply_segment(rows, segment)
         rows = _filter_rows(rows, search, ("name", "app_name", "operating_system"))
         rows = _sort_rows(
             rows, sort, direction, {column.key for column in SUMMARY_COLUMNS}, "page_views"
@@ -173,25 +213,50 @@ class LocalDashboardService:
             "columns": [column.model_dump(mode="json") for column in SUMMARY_COLUMNS],
             "rows": rows,
             "source": "parquet",
+            "applied_dimension": _selection(dimension),
+            "applied_segment": _segment_selection(segment),
             "reason": None if rows else "No local summary rows match the selected filters.",
             "available_datasets": self._available_dataset_names(country),
         }
 
-    def errors(self, country: str) -> dict[str, Any]:
+    def errors(
+        self,
+        country: str,
+        *,
+        dimension: str | None = None,
+        segment: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> dict[str, Any]:
         status = self.status(country)
         if not status["errors_ready"] or not _regression_usable(status["regression_status"]):
             return self._empty_response(country, status, required_dataset="derived/errors")
+        period = self._period(country)
+        if not _period_matches(period, start_date, end_date):
+            return self._empty_response(
+                country,
+                {**status, "reason": "No hay ingesta local para el rango de fechas seleccionado."},
+                required_dataset="derived/errors",
+            )
         widgets = [
             _widget_from_row(row)
             for row in self.store.read_country_dataset(country, DATASET_ERRORS_WIDGETS)
         ]
+        if segment:
+            widgets = _error_widgets_for_segment(
+                widgets,
+                self.store.read_country_dataset(country, DATASET_ERRORS_APP_NAME),
+                segment,
+            )
         return {
             "status": "ok",
             "country": country,
             "source": "parquet",
             "last_ingestion_at": status["last_ingestion_at"],
+            "applied_dimension": _selection(dimension),
+            "applied_segment": _segment_selection(segment),
             "widgets": widgets,
-            "period": self._period(country),
+            "period": period,
             "regression": self._regression_metadata(status),
             "available_datasets": self._available_dataset_names(country),
         }
@@ -203,6 +268,10 @@ class LocalDashboardService:
         search: str | None = None,
         sort: str = "error_sessions",
         direction: Literal["asc", "desc"] = "desc",
+        dimension: str | None = None,
+        segment: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
     ) -> dict[str, Any]:
         return self._error_table(
             country,
@@ -213,6 +282,10 @@ class LocalDashboardService:
             sort=sort,
             direction=direction,
             default_sort="error_sessions",
+            dimension=dimension,
+            segment=segment,
+            start_date=start_date,
+            end_date=end_date,
         )
 
     def app_name_error_table(
@@ -222,6 +295,10 @@ class LocalDashboardService:
         search: str | None = None,
         sort: str = "error_session_percent",
         direction: Literal["asc", "desc"] = "desc",
+        dimension: str | None = None,
+        segment: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
     ) -> dict[str, Any]:
         return self._error_table(
             country,
@@ -232,6 +309,10 @@ class LocalDashboardService:
             sort=sort,
             direction=direction,
             default_sort="error_session_percent",
+            dimension=dimension,
+            segment=segment,
+            start_date=start_date,
+            end_date=end_date,
         )
 
     def _error_table(
@@ -245,11 +326,24 @@ class LocalDashboardService:
         sort: str,
         direction: Literal["asc", "desc"],
         default_sort: str,
+        dimension: str | None,
+        segment: str | None,
+        start_date: str | None,
+        end_date: str | None,
     ) -> dict[str, Any]:
         status = self.status(country)
         if not status["errors_ready"] or not _regression_usable(status["regression_status"]):
             return self._empty_table(country, columns, status, required_dataset)
+        period = self._period(country)
+        if not _period_matches(period, start_date, end_date):
+            return self._empty_table(
+                country,
+                columns,
+                {**status, "reason": "No hay ingesta local para el rango de fechas seleccionado."},
+                required_dataset,
+            )
         rows = self.store.read_country_dataset(country, dataset)
+        rows = _apply_segment(rows, segment)
         rows = _filter_rows(rows, search, ("name", "error_name", "app_name"))
         rows = _sort_rows(rows, sort, direction, {column.key for column in columns}, default_sort)
         return {
@@ -258,6 +352,8 @@ class LocalDashboardService:
             "columns": [column.model_dump(mode="json") for column in columns],
             "rows": rows,
             "source": "parquet",
+            "applied_dimension": _selection(dimension),
+            "applied_segment": _segment_selection(segment),
             "reason": None if rows else "No local error rows match the selected filters.",
             "available_datasets": self._available_dataset_names(country),
         }
@@ -336,22 +432,28 @@ class LocalDashboardService:
         return str(value) if value is not None else None
 
     def _period(self, country: str) -> dict[str, str | None]:
-        contracts = self.store.read_country_dataset(country, DATASET_VISUAL_CONTRACTS)
-        starts = []
-        ends = []
-        timezone = None
-        for contract in contracts:
-            period = contract.get("period")
+        rows = [
+            *self.store.read_country_dataset(country, DATASET_VISUAL_CONTRACTS),
+            *self.store.read_country_dataset(country, DATASET_SUMMARY_WIDGETS),
+            *self.store.read_country_dataset(country, DATASET_ERRORS_WIDGETS),
+        ]
+        starts: list[str] = []
+        ends: list[str] = []
+        timezone: object | None = None
+        for row in rows:
+            period = row.get("period")
             if isinstance(period, dict):
-                if period.get("start"):
-                    starts.append(str(period["start"]))
-                if period.get("end"):
-                    ends.append(str(period["end"]))
+                _append_period_values(period, starts, ends)
                 timezone = timezone or period.get("timezone")
+            _append_period_values(row, starts, ends)
+            timezone = timezone or row.get("period_timezone")
+        start = min(starts) if starts else None
+        end = max(ends) if ends else None
         return {
-            "start": min(starts) if starts else None,
-            "end": max(ends) if ends else None,
+            "start": start,
+            "end": end,
             "timezone": str(timezone) if timezone else None,
+            "label": _period_label(start, end, str(timezone) if timezone else "CST"),
         }
 
     def _available_dataset_names(self, country: str) -> list[str]:
@@ -374,6 +476,12 @@ class LocalDashboardService:
 
 
 def _widget_from_row(row: dict[str, Any]) -> dict[str, Any]:
+    period = {
+        "start": _text(row.get("period_start")),
+        "end": _text(row.get("period_end")),
+        "timezone": _text(row.get("period_timezone")) or "CST",
+    }
+    period["label"] = _period_label(period["start"], period["end"], period["timezone"])
     if row.get("chart_type") == "donut":
         return {
             "id": row.get("id"),
@@ -383,6 +491,7 @@ def _widget_from_row(row: dict[str, Any]) -> dict[str, Any]:
             "total": row.get("total"),
             "series": _list(row.get("series")),
             "comparison": row.get("comparison"),
+            "period": period,
         }
     return {
         "id": row.get("id"),
@@ -394,6 +503,7 @@ def _widget_from_row(row: dict[str, Any]) -> dict[str, Any]:
         "timeseries": _list(row.get("timeseries")),
         "comparison": row.get("comparison"),
         "missing_source_field": None,
+        "period": period,
     }
 
 
@@ -441,6 +551,188 @@ def _sort_value(value: Any) -> tuple[int, Any]:
 
 def _list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
+
+
+def _apply_segment(rows: list[dict[str, Any]], segment: str | None) -> list[dict[str, Any]]:
+    parsed = parse_segment(segment)
+    if not parsed:
+        return rows
+    field, value = parsed
+    if field == "error_state":
+        return [
+            row
+            for row in rows
+            if _metric_state(row.get("sessions_with_error") or row.get("error_sessions")) == value
+        ]
+    if field == "conversion_state":
+        return [
+            row
+            for row in rows
+            if ("converted" if _number(row.get("conversions")) > 0 else "not_converted") == value
+        ]
+    return [row for row in rows if str(row.get(field) or row.get("name") or "") == value]
+
+
+def _metric_state(value: Any) -> str:
+    parsed = value if isinstance(value, (int, float)) else None
+    return "with_error" if parsed and parsed > 0 else "without_error"
+
+
+def _selection(value: str | None) -> dict[str, str] | None:
+    if not value:
+        return None
+    return {"id": value, "label": humanize_key(value)}
+
+
+def _segment_selection(segment: str | None) -> dict[str, str] | None:
+    parsed = parse_segment(segment)
+    if not parsed:
+        return None
+    field, value = parsed
+    return {"id": segment or "", "label": f"{humanize_key(field)}: {value}"}
+
+
+def _summary_widgets_for_segment(
+    widgets: list[dict[str, Any]],
+    rows: list[dict[str, Any]],
+    segment: str,
+) -> list[dict[str, Any]]:
+    filtered = _apply_segment(rows, segment)
+    totals = {
+        "page_views": sum(_number(row.get("page_views")) for row in filtered),
+        "sessions": sum(_number(row.get("sessions")) for row in filtered),
+        "converted_sessions": sum(_number(row.get("conversions")) for row in filtered),
+    }
+    next_widgets = []
+    for widget in widgets:
+        next_widget = {**widget}
+        if next_widget.get("id") in totals:
+            next_widget["value"] = round(totals[str(next_widget["id"])], 2)
+            next_widget["breakdown"] = []
+            next_widget["timeseries"] = []
+        next_widgets.append(next_widget)
+    return next_widgets
+
+
+def _error_widgets_for_segment(
+    widgets: list[dict[str, Any]],
+    rows: list[dict[str, Any]],
+    segment: str,
+) -> list[dict[str, Any]]:
+    filtered = _apply_segment(rows, segment)
+    total_error_sessions = sum(_number(row.get("sessions_with_error")) for row in filtered)
+    total_sessions = sum(_number(row.get("sessions")) for row in filtered)
+    percent = round((total_error_sessions / total_sessions) * 100, 2) if total_sessions else 0.0
+    next_widgets = []
+    for widget in widgets:
+        next_widget = {**widget}
+        if next_widget.get("id") == "error_sessions_percentage_evolution":
+            next_widget["value"] = percent
+            next_widget["breakdown"] = []
+            next_widget["timeseries"] = []
+        elif next_widget.get("id") == "error_sessions_by_app_name":
+            series: list[dict[str, str | float]] = [
+                {
+                    "name": str(row.get("name") or row.get("app_name") or "Null"),
+                    "value": _number(row.get("sessions_with_error")),
+                    "percent": _number(row.get("error_session_percent")),
+                }
+                for row in filtered
+            ]
+            next_widget["total"] = round(total_error_sessions, 2)
+            next_widget["series"] = [item for item in series if float(item["value"]) > 0]
+        next_widgets.append(next_widget)
+    return next_widgets
+
+
+def _number(value: Any) -> float:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    return 0.0
+
+
+def _append_period_values(
+    row: dict[str, Any],
+    starts: list[str],
+    ends: list[str],
+) -> None:
+    start = row.get("start") or row.get("period_start")
+    end = row.get("end") or row.get("period_end")
+    if start:
+        starts.append(str(start))
+    if end:
+        ends.append(str(end))
+
+
+def _period_matches(
+    period: dict[str, Any],
+    start_date: str | None,
+    end_date: str | None,
+) -> bool:
+    if not start_date and not end_date:
+        return True
+    period_start = _period_date(period.get("start"), period.get("timezone"))
+    period_end = _period_date(period.get("end"), period.get("timezone")) or period_start
+    if period_start is None:
+        return False
+    requested_start = _parse_date(start_date) or period_start
+    requested_end = _parse_date(end_date) or requested_start
+    if requested_start is None or requested_end is None or period_end is None:
+        return False
+    return period_start <= requested_end and period_end >= requested_start
+
+
+def _period_date(value: Any, timezone: Any) -> date | None:
+    text = _text(value)
+    if not text:
+        return None
+    try:
+        number = float(text)
+    except ValueError:
+        parsed = _parse_date(text[:10])
+        return parsed
+    zone = _zone(str(timezone or "CST"))
+    return datetime.fromtimestamp(number, UTC).astimezone(zone).date()
+
+
+def _parse_date(value: str | None) -> date | None:
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _period_label(start: Any, end: Any, timezone: str | None) -> str | None:
+    start_date = _period_date(start, timezone)
+    end_date = _period_date(end, timezone)
+    zone_label = timezone or "CST"
+    if start_date is None and end_date is None:
+        return None
+    if start_date and end_date and start_date == end_date:
+        return f"{start_date.strftime('%b %d, %Y')} ({zone_label})"
+    if start_date and end_date:
+        return (
+            f"{start_date.strftime('%b %d, %Y')} - {end_date.strftime('%b %d, %Y')} ({zone_label})"
+        )
+    current = start_date or end_date
+    return f"{current.strftime('%b %d, %Y')} ({zone_label})" if current else None
+
+
+def _zone(timezone: str) -> ZoneInfo:
+    if timezone == "CST":
+        return ZoneInfo("America/Mexico_City")
+    if timezone == "UTC":
+        return ZoneInfo("UTC")
+    return ZoneInfo("America/Mexico_City")
+
+
+def _text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def local_dashboard_root(store: ParquetStore, country: str) -> Path:
