@@ -77,6 +77,62 @@ export type DashboardComparison = {
   delta_percent?: number | null;
 };
 
+export type ChartAxisTick = {
+  value: number | string;
+  label: string;
+  position?: number | null;
+};
+
+export type ChartAxis = {
+  min?: number | null;
+  max?: number | null;
+  unit?: string | null;
+  ticks: ChartAxisTick[];
+  label?: string | null;
+};
+
+export type ChartSeriesPoint = {
+  ts?: string | null;
+  label?: string | null;
+  value?: number | null;
+  raw_value?: number | null;
+  x?: number | null;
+  y?: number | null;
+};
+
+export type ChartSeries = {
+  id: string;
+  label: string;
+  kind: "line" | "bar" | "area";
+  device?: "mobile" | "desktop" | "unknown" | null;
+  points: ChartSeriesPoint[];
+  visible: boolean;
+};
+
+export type ChartBand = {
+  id: string;
+  label?: string | null;
+  start_ts?: string | null;
+  end_ts?: string | null;
+  start_x?: number | null;
+  end_x?: number | null;
+  value_min?: number | null;
+  value_max?: number | null;
+  purpose?: string | null;
+};
+
+export type ChartPayload = {
+  chart_type: "line" | "bar" | "donut" | "table";
+  x_axis: ChartAxis;
+  y_axis: ChartAxis;
+  series: ChartSeries[];
+  bands: ChartBand[];
+  legends: Array<Record<string, unknown>>;
+  period_label?: string | null;
+  granularity?: string | null;
+  timezone?: string | null;
+};
+
 export type KpiWidget = {
   id: string;
   title: string;
@@ -84,6 +140,7 @@ export type KpiWidget = {
   unit: "count" | "seconds" | "percent";
   breakdown: KpiBreakdownItem[];
   timeseries: TimeseriesPoint[];
+  chart_payload?: ChartPayload | null;
   comparison?: DashboardComparison | null;
   missing_source_field?: string | null;
   period?: DashboardPeriod | null;
@@ -118,7 +175,16 @@ export type DetailTableRow = {
   sessions?: number | null;
   conversions?: number | null;
   page_views_delta_percent?: number | null;
+  sessions_delta_percent?: number | null;
   conversions_delta_percent?: number | null;
+  page_views_semantic_state?: "positive" | "negative" | "neutral" | null;
+  sessions_semantic_state?: "positive" | "negative" | "neutral" | null;
+  conversions_semantic_state?: "positive" | "negative" | "neutral" | null;
+  row_id?: string | null;
+  parent_row_id?: string | null;
+  depth?: number | null;
+  is_expandable?: boolean | null;
+  is_expanded_default?: boolean | null;
 };
 
 export type DetailTableResponse = {
@@ -157,6 +223,7 @@ export type ErrorComparisonWidget = {
   chart_type: "donut";
   total?: number | null;
   series: ErrorSeriesPoint[];
+  chart_payload?: ChartPayload | null;
   comparison?: DashboardComparison | null;
   period?: DashboardPeriod | null;
 };

@@ -124,45 +124,45 @@ export function ErrorsTab({
 
   return (
     <div className="dashboard-tab-panel">
-      {response?.status === "ok" && evolution ? (
-        <section className="dashboard-widget-grid single">
+      <section className="errors-widget-grid">
+        {response?.status === "ok" && evolution ? (
           <KpiWidget widget={evolution} />
-        </section>
-      ) : (
-        <EmptyAnalyticsState
-          reason={response?.reason}
-          requiredDataset={response?.required_dataset}
+        ) : (
+          <EmptyAnalyticsState
+            reason={response?.reason}
+            requiredDataset={response?.required_dataset}
+          />
+        )}
+        <ErrorPercentageTable
+          title="Top 20 Errores por nombre del error"
+          searchLabel="Buscar top errores"
+          loadingLabel="Cargando top errores"
+          response={topErrors.data}
+          isLoading={topErrors.isLoading}
+          search={topSearch}
+          sort={topSort}
+          direction={topDirection}
+          onSearchChange={setTopSearch}
+          onSortChange={handleTopSort}
         />
-      )}
-      <ErrorPercentageTable
-        title="Top 10 Errores por nombre del error"
-        searchLabel="Buscar top errores"
-        loadingLabel="Cargando top errores"
-        response={topErrors.data}
-        isLoading={topErrors.isLoading}
-        search={topSearch}
-        sort={topSort}
-        direction={topDirection}
-        onSearchChange={setTopSearch}
-        onSortChange={handleTopSort}
-      />
-      {response?.status === "ok" && donut ? (
-        <ErrorDonut widget={donut} />
-      ) : (
-        <EmptyAnalyticsState
-          reason={response?.reason}
-          requiredDataset={response?.required_dataset}
+        {response?.status === "ok" && donut ? (
+          <ErrorDonut widget={donut} />
+        ) : (
+          <EmptyAnalyticsState
+            reason={response?.reason}
+            requiredDataset={response?.required_dataset}
+          />
+        )}
+        <ErrorPercentageTable
+          response={table.data}
+          isLoading={table.isLoading}
+          search={search}
+          sort={sort}
+          direction={direction}
+          onSearchChange={setSearch}
+          onSortChange={handleSort}
         />
-      )}
-      <ErrorPercentageTable
-        response={table.data}
-        isLoading={table.isLoading}
-        search={search}
-        sort={sort}
-        direction={direction}
-        onSearchChange={setSearch}
-        onSortChange={handleSort}
-      />
+      </section>
     </div>
   );
 }

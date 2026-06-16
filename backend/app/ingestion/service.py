@@ -73,10 +73,12 @@ class IngestionService:
         job.status = "running"
         job.endpoint_current = "/analytics + /analytics/historical"
         config = self.config_store.read()
-        ingestion_range = build_ingestion_range(
-            self.parquet_store.latest_source_end(request.country.value)
-        )
         try:
+            ingestion_range = build_ingestion_range(
+                self.parquet_store.latest_source_end(request.country.value),
+                depth_days=config.ingestion_depth_days,
+                incremental_reprocess_days=self.settings.quantum_incremental_reprocess_days,
+            )
             country_config = config.required_country_config(request.country)
             discovery = discover_dashboard_from_config(
                 settings=self.settings,
@@ -95,7 +97,7 @@ class IngestionService:
                 )
             else:
                 cookies = self.cookie_provider.load(config.browser.value, str(discovery.base_url))
-            job.status = "capturing_web"
+            job.status = "planning_range"
             rows = await asyncio.to_thread(
                 capture_quantum_dashboard_cards,
                 settings=self.settings,

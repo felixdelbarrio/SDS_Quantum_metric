@@ -70,7 +70,7 @@ MANDATORY_CARDS: tuple[DashboardCardSpec, ...] = (
     DashboardCardSpec(
         tab="errors",
         role=ERRORS_TOP_ERRORS,
-        title="Top 10 Errores por nombre del error",
+        title="Top 20 Errores por nombre del error",
         card_type="TABLE",
         parse_strategy="top_errors_table_card_v1",
         local_id="errors_top_errors_table",

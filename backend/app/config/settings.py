@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     quantum_default_errors_tab: int = 1
     quantum_capture_timeout_seconds: int = 120
     quantum_regression_tolerance_percent: float = 0.1
+    quantum_ingestion_depth_days: int = 365
+    quantum_incremental_reprocess_days: int = 1
+    quantum_ingestion_chunk_days: int = 1
+    quantum_theme_preference: str = "system"
     qm_default_dashboard_url: str = (
         "https://bbvamx.quantummetric.com/#/dashboard/"
         "8e53eb82-587c-4b92-a0fa-0f6283677e28"

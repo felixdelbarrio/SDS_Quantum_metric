@@ -152,7 +152,7 @@ describe("HomePage local dashboard", () => {
       await screen.findByText("Evolutivo - % Sesiones con Error"),
     ).toBeInTheDocument();
     expect(
-      await screen.findByText("Top 10 Errores por nombre del error"),
+      await screen.findByText("Top 20 Errores por nombre del error"),
     ).toBeInTheDocument();
     expect(
       await screen.findByText("Comparativa de sesiones con error por App Name"),
@@ -399,6 +399,7 @@ function responseFor(url: URL, options: MockOptions) {
             { ts: "2026-06-16T00:00:00Z", value: 20 },
             { ts: "2026-06-16T01:00:00Z", value: 21 },
           ],
+          chart_payload: chartPayload("percent"),
           period: { label: "Jun 16, 2026 (CST)" },
         },
         {
@@ -407,6 +408,7 @@ function responseFor(url: URL, options: MockOptions) {
           chart_type: "donut",
           total: 5,
           series: [{ name: "portabilidad nomina", value: 4, percent: 80 }],
+          chart_payload: donutPayload(),
           period: { label: "Jun 16, 2026 (CST)" },
         },
         {
@@ -440,6 +442,7 @@ function responseFor(url: URL, options: MockOptions) {
           { ts: "2026-06-16T00:00:00Z", value: 80 },
           { ts: "2026-06-16T01:00:00Z", value: 70 },
         ],
+        chart_payload: chartPayload("count"),
         period: { label: "Jun 16, 2026 (CST)" },
       },
       {
@@ -449,10 +452,86 @@ function responseFor(url: URL, options: MockOptions) {
         unit: "count",
         breakdown: [],
         timeseries: [],
+        chart_payload: chartPayload("count"),
         period: { label: "Jun 16, 2026 (CST)" },
       },
     ],
     available_datasets: ["country=MX/raw_api_calls"],
+  };
+}
+
+function chartPayload(unit: "count" | "percent") {
+  return {
+    chart_type: "line",
+    x_axis: {
+      ticks: [
+        { value: "2026-06-16T00:00:00Z", label: "00:00", position: 0 },
+        { value: "2026-06-16T01:00:00Z", label: "01:00", position: 1 },
+      ],
+    },
+    y_axis: {
+      min: 0,
+      max: unit === "percent" ? 100 : 100,
+      unit,
+      ticks: [
+        { value: 0, label: unit === "percent" ? "0%" : "0", position: 0 },
+        { value: 50, label: unit === "percent" ? "50%" : "50", position: 0.5 },
+        { value: 100, label: unit === "percent" ? "100%" : "100", position: 1 },
+      ],
+    },
+    series: [
+      {
+        id: "mobile",
+        label: "Mobile",
+        kind: "line",
+        device: "mobile",
+        visible: true,
+        points: [
+          { ts: "2026-06-16T00:00:00Z", label: "00:00", value: 80 },
+          { ts: "2026-06-16T01:00:00Z", label: "01:00", value: 70 },
+        ],
+      },
+      {
+        id: "desktop",
+        label: "Desktop",
+        kind: "line",
+        device: "desktop",
+        visible: true,
+        points: [
+          { ts: "2026-06-16T00:00:00Z", label: "00:00", value: 0 },
+          { ts: "2026-06-16T01:00:00Z", label: "01:00", value: 0 },
+        ],
+      },
+    ],
+    bands: [],
+    legends: [
+      { id: "mobile", label: "Mobile" },
+      { id: "desktop", label: "Desktop" },
+    ],
+    period_label: "Jun 16, 2026 (CST)",
+    timezone: "CST",
+  };
+}
+
+function donutPayload() {
+  return {
+    chart_type: "donut",
+    x_axis: { ticks: [] },
+    y_axis: { ticks: [], min: 0, max: 5, unit: "count" },
+    series: [
+      {
+        id: "segments",
+        label: "Comparativa",
+        kind: "bar",
+        device: "unknown",
+        visible: true,
+        points: [{ label: "portabilidad nomina", value: 4 }],
+      },
+    ],
+    bands: [],
+    legends: [{ id: "portabilidad nomina", label: "portabilidad nomina" }],
+    period_label: "Jun 16, 2026 (CST)",
+    timezone: "CST",
   };
 }
 

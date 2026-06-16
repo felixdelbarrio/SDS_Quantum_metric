@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import shutil
 import zipfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import polars as pl
@@ -177,19 +178,49 @@ class ParquetStore:
         return target
 
     def import_zip(self, zip_path: Path) -> dict[str, Any]:
+        raw_rows_by_country: dict[str, list[dict[str, Any]]] = {}
+        dataset_files: list[tuple[Path, bytes]] = []
         with zipfile.ZipFile(zip_path) as archive:
             names = archive.namelist()
             if "manifest.json" not in names:
                 raise ValueError("ZIP does not include manifest.json.")
             manifest = json.loads(archive.read("manifest.json"))
+            countries = set(manifest.get("countries") or [])
             for name in names:
                 if not name.startswith("parquet/") or not name.endswith(".parquet"):
                     continue
-                destination = self.settings.qm_data_dir / name
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                with archive.open(name) as src, destination.open("wb") as dst:
-                    shutil.copyfileobj(src, dst)
-        return {"imported_files": len(names), "manifest": manifest}
+                relative = PurePosixPath(name)
+                if ".." in relative.parts or relative.is_absolute():
+                    raise ValueError(f"Unsafe ZIP path: {name}")
+                if len(relative.parts) < 4 or not relative.parts[1].startswith("country="):
+                    raise ValueError(f"Unexpected dataset path: {name}")
+
+                country = relative.parts[1].split("=", 1)[1]
+                if countries and country not in countries:
+                    raise ValueError(f"Dataset country {country} is not listed in manifest.")
+
+                data = archive.read(name)
+                frame = pl.read_parquet(io.BytesIO(data))
+                dataset_path = "/".join(relative.parts[2:-1])
+                if dataset_path == "raw_api_calls":
+                    raw_rows_by_country.setdefault(country, []).extend(frame.to_dicts())
+                    continue
+
+                destination = (self.settings.qm_data_dir / Path(*relative.parts)).resolve()
+                destination.relative_to(self.settings.qm_data_dir.resolve())
+                dataset_files.append((destination, data))
+
+        imported_raw_files = 0
+        for country, rows in raw_rows_by_country.items():
+            self.merge_raw_calls(country, rows)
+            imported_raw_files += 1
+        for destination, data in dataset_files:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(data)
+        return {
+            "imported_files": imported_raw_files + len(dataset_files),
+            "manifest": manifest,
+        }
 
     def analytics_summary(self) -> dict[str, Any]:
         files = list(self.settings.parquet_dir.glob("country=*/raw_api_calls/*.parquet"))

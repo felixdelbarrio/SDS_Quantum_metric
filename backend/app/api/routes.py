@@ -228,9 +228,89 @@ def run_dataset_regression(
 
 @router.delete("/datasets/{country}")
 def delete_dataset(
-    country: str, store: Annotated[ParquetStore, Depends(parquet_store_dep)]
+    country: str,
+    store: Annotated[ParquetStore, Depends(parquet_store_dep)],
+    confirm: str | None = None,
 ) -> dict[str, object]:
+    if confirm != country:
+        raise HTTPException(
+            status_code=400,
+            detail="Dataset deletion requires confirm=<country>.",
+        )
     return {"deleted": store.delete_country(country)}
+
+
+@router.get("/datasets/{country}/entities")
+def dataset_entities(
+    country: str,
+    store: Annotated[ParquetStore, Depends(parquet_store_dep)],
+) -> dict[str, object]:
+    root = store.settings.parquet_dir / f"country={country}"
+    entities = []
+    if root.exists():
+        for dataset_dir in sorted({file.parent for file in root.rglob("*.parquet")}):
+            files = list(dataset_dir.glob("*.parquet"))
+            rows = store.read_country_dataset(country, str(dataset_dir.relative_to(root)))
+            entities.append(
+                {
+                    "id": str(dataset_dir.relative_to(root)),
+                    "label": str(dataset_dir.relative_to(root)).replace("_", " "),
+                    "rows": len(rows),
+                    "files": len(files),
+                    "bytes": sum(file.stat().st_size for file in files),
+                    "updated_at": max((file.stat().st_mtime for file in files), default=0),
+                }
+            )
+    return {"country": country, "entities": entities}
+
+
+@router.get("/datasets/{country}/entities/{entity:path}/schema")
+def dataset_entity_schema(
+    country: str,
+    entity: str,
+    store: Annotated[ParquetStore, Depends(parquet_store_dep)],
+) -> dict[str, object]:
+    rows = store.read_country_dataset(country, entity)
+    schema = {
+        key: type(value).__name__
+        for row in rows[:50]
+        for key, value in row.items()
+        if value is not None
+    }
+    return {"country": country, "entity": entity, "schema": schema, "rows": len(rows)}
+
+
+@router.get("/datasets/{country}/entities/{entity:path}")
+def dataset_entity_rows(
+    country: str,
+    entity: str,
+    store: Annotated[ParquetStore, Depends(parquet_store_dep)],
+    search: str | None = None,
+    sort: str | None = None,
+    direction: SortDirection = "asc",
+    offset: int = 0,
+    limit: int = 100,
+) -> dict[str, object]:
+    rows = store.read_country_dataset(country, entity)
+    if search:
+        needle = search.casefold()
+        rows = [row for row in rows if needle in " ".join(map(str, row.values())).casefold()]
+    if sort and rows and sort in rows[0]:
+        rows = sorted(rows, key=lambda row: str(row.get(sort) or ""), reverse=direction == "desc")
+    total = len(rows)
+    bounded_limit = max(1, min(limit, 500))
+    page = rows[max(0, offset) : max(0, offset) + bounded_limit]
+    columns = sorted({key for row in page for key in row})
+    return {
+        "country": country,
+        "entity": entity,
+        "rows": page,
+        "columns": columns,
+        "total": total,
+        "offset": offset,
+        "limit": bounded_limit,
+        "source": "parquet",
+    }
 
 
 @router.post("/datasets/export")
@@ -475,6 +555,37 @@ def local_dashboard_error_app_name(
         start_date=start_date,
         end_date=end_date,
     )
+
+
+@router.get("/local-dashboard/cards/{card_role}/detail")
+def local_dashboard_card_detail(
+    card_role: str,
+    store: Annotated[ParquetStore, Depends(parquet_store_dep)],
+    country: str = "MX",
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> dict[str, object]:
+    return LocalDashboardService(store).card_detail(
+        country, card_role, start_date=start_date, end_date=end_date
+    )
+
+
+@router.get("/local-dashboard/cards/{card_role}/breakdown")
+def local_dashboard_card_breakdown(
+    card_role: str,
+    store: Annotated[ParquetStore, Depends(parquet_store_dep)],
+    country: str = "MX",
+) -> dict[str, object]:
+    return LocalDashboardService(store).card_breakdown(country, card_role)
+
+
+@router.get("/local-dashboard/cards/{card_role}/points")
+def local_dashboard_card_points(
+    card_role: str,
+    store: Annotated[ParquetStore, Depends(parquet_store_dep)],
+    country: str = "MX",
+) -> dict[str, object]:
+    return LocalDashboardService(store).card_points(country, card_role)
 
 
 @router.get("/analytics/dimensions")

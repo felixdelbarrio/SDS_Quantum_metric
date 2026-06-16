@@ -100,6 +100,8 @@ class QuantumConfig(BaseModel):
     country: Country = Country.MX
     countries: list[QuantumCountryConfig] = Field(default_factory=list)
     verify_tls: bool = True
+    ingestion_depth_days: int = Field(default=365, ge=1, le=3650)
+    theme_preference: Literal["system", "light", "dark"] = "system"
 
     @model_validator(mode="before")
     @classmethod
@@ -168,6 +170,8 @@ class QuantumPublicConfig(BaseModel):
     country: Country = Country.MX
     countries: list[QuantumPublicCountryConfig] = Field(default_factory=list)
     verify_tls: bool = True
+    ingestion_depth_days: int = Field(default=365, ge=1, le=3650)
+    theme_preference: Literal["system", "light", "dark"] = "system"
 
 
 class QuantumPublicConfigUpdate(QuantumPublicConfig):
@@ -215,6 +219,8 @@ def public_quantum_config(config: QuantumConfig) -> QuantumPublicConfig:
             for item in config.countries
         ],
         verify_tls=config.verify_tls,
+        ingestion_depth_days=config.ingestion_depth_days,
+        theme_preference=config.theme_preference,
     )
 
 
@@ -242,6 +248,8 @@ def merge_public_quantum_update(
         country=update.country,
         countries=countries,
         verify_tls=update.verify_tls,
+        ingestion_depth_days=update.ingestion_depth_days,
+        theme_preference=update.theme_preference,
         manual_cookie=update.manual_cookie,
     )
 

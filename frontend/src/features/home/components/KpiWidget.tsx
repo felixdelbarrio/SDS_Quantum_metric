@@ -1,15 +1,21 @@
+import { useState } from "react";
 import { KpiWidget as KpiWidgetType } from "../types";
-import { MiniTimeseries } from "./MiniTimeseries";
+import { CardExplorerModal } from "./CardExplorerModal";
+import { QuantumChart } from "./charts/QuantumChart";
 
 type Props = {
   widget: KpiWidgetType;
 };
 
 export function KpiWidget({ widget }: Props) {
+  const [expanded, setExpanded] = useState(false);
   const hasValue = widget.value !== null && widget.value !== undefined;
 
   return (
-    <article className="dashboard-card kpi-card">
+    <article
+      className="dashboard-card kpi-card interactive-card"
+      onDoubleClick={() => setExpanded(true)}
+    >
       <div className="kpi-header">
         <span>{widget.title}</span>
         {widget.comparison?.delta_percent !== null &&
@@ -29,10 +35,7 @@ export function KpiWidget({ widget }: Props) {
       </strong>
       {hasValue ? (
         <>
-          <MiniTimeseries points={widget.timeseries} />
-          {widget.period?.label && (
-            <span className="chart-date">{widget.period.label}</span>
-          )}
+          <QuantumChart payload={widget.chart_payload} title={widget.title} />
           <div className="breakdown-list">
             {widget.breakdown.slice(0, 3).map((item) => (
               <span key={item.label}>
@@ -46,6 +49,18 @@ export function KpiWidget({ widget }: Props) {
           Falta campo fuente: {widget.missing_source_field ?? widget.id}
         </span>
       )}
+      <button
+        className="card-open-button"
+        type="button"
+        onClick={() => setExpanded(true)}
+      >
+        Abrir detalle
+      </button>
+      <CardExplorerModal
+        widget={widget}
+        open={expanded}
+        onClose={() => setExpanded(false)}
+      />
     </article>
   );
 }

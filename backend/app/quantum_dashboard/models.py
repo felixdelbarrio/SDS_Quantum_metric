@@ -34,6 +34,15 @@ type RegressionStatus = Literal[
     "failed_value_mismatch",
     "failed_table_mismatch",
     "failed_chart_mismatch",
+    "failed_chart_contract_incomplete",
+    "failed_axis_mismatch",
+    "failed_legend_mismatch",
+    "failed_series_shape_mismatch",
+    "failed_series_value_mismatch",
+    "failed_band_mismatch",
+    "failed_expandable_rows_mismatch",
+    "failed_delta_mismatch",
+    "failed_semantic_color_mismatch",
 ]
 type RegressionVerdict = Literal["PASSED", "PASSED_WITH_TOLERANCE", "FAILED"]
 
@@ -41,6 +50,62 @@ type RegressionVerdict = Literal["PASSED", "PASSED_WITH_TOLERANCE", "FAILED"]
 class DashboardPeriod(BaseModel):
     start: str | None = None
     end: str | None = None
+    timezone: str | None = None
+
+
+class ChartAxisTick(BaseModel):
+    value: float | int | str
+    label: str
+    position: float | None = None
+
+
+class ChartAxis(BaseModel):
+    min: float | None = None
+    max: float | None = None
+    unit: str | None = None
+    ticks: list[ChartAxisTick] = Field(default_factory=list)
+    label: str | None = None
+
+
+class ChartSeriesPoint(BaseModel):
+    ts: str | None = None
+    label: str | None = None
+    value: float | None = None
+    raw_value: float | None = None
+    x: float | None = None
+    y: float | None = None
+
+
+class ChartSeries(BaseModel):
+    id: str
+    label: str
+    kind: Literal["line", "bar", "area"]
+    device: Literal["mobile", "desktop", "unknown"] | None = None
+    points: list[ChartSeriesPoint]
+    visible: bool = True
+
+
+class ChartBand(BaseModel):
+    id: str
+    label: str | None = None
+    start_ts: str | None = None
+    end_ts: str | None = None
+    start_x: float | None = None
+    end_x: float | None = None
+    value_min: float | None = None
+    value_max: float | None = None
+    purpose: str | None = None
+
+
+class ChartPayload(BaseModel):
+    chart_type: Literal["line", "bar", "donut", "table"]
+    x_axis: ChartAxis
+    y_axis: ChartAxis
+    series: list[ChartSeries]
+    bands: list[ChartBand] = Field(default_factory=list)
+    legends: list[dict[str, Any]] = Field(default_factory=list)
+    period_label: str | None = None
+    granularity: str | None = None
     timezone: str | None = None
 
 

@@ -1,15 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  Palette,
-  Plus,
-  RefreshCcw,
-  Save,
-  ShieldCheck,
-  Trash2,
-  Wifi,
-} from "lucide-react";
-import { FormEvent, useState } from "react";
-import { apiGet, apiPost, apiPut } from "../../shared/api/client";
+import { Palette, Plus, Save, Trash2 } from "lucide-react";
+import { FormEvent, useEffect, useState } from "react";
+import { apiGet, apiPut } from "../../shared/api/client";
 import {
   COUNTRY_OPTIONS,
   CountryCode,
@@ -30,21 +22,8 @@ type QuantumConfig = {
   country: CountryCode;
   countries: QuantumCountryConfig[];
   verify_tls: boolean;
-};
-
-type ConnectionState = {
-  status: "not_tested" | "ok" | "ko";
-  endpoint_tested?: string;
-  latency_ms?: number;
-  timestamp?: string;
-  message: string;
-  error?: string;
-};
-
-type DiscoveryState = {
-  status?: "ok" | "ko";
-  message: string;
-  source?: string;
+  ingestion_depth_days: number;
+  theme_preference: ThemePreference;
 };
 
 export function QuantumPage() {
@@ -74,17 +53,11 @@ export function QuantumPage() {
     },
   });
 
-  const test = useMutation({
-    mutationFn: () => apiPost<ConnectionState>("/quantum/test-connection"),
-  });
-  const discover = useMutation({
-    mutationFn: () => apiPost<DiscoveryState>("/quantum/discover-dashboard"),
-    onSuccess: () =>
-      void queryClient.invalidateQueries({ queryKey: ["quantum-config"] }),
-  });
-  const validate = useMutation({
-    mutationFn: () => apiPost<DiscoveryState>("/quantum/validate-access"),
-  });
+  useEffect(() => {
+    if (config.data?.theme_preference) {
+      setThemePreference(config.data.theme_preference);
+    }
+  }, [config.data?.theme_preference, setThemePreference]);
 
   function update<K extends keyof QuantumConfig>(
     key: K,
@@ -152,9 +125,6 @@ export function QuantumPage() {
     <>
       <header className="page-header">
         <h1>Quantum</h1>
-        <span className={`status ${test.data?.status ?? "not_tested"}`}>
-          {test.data?.status ?? "not_tested"}
-        </span>
       </header>
 
       <form className="config-surface" onSubmit={onSubmit}>
@@ -222,14 +192,35 @@ export function QuantumPage() {
             <span>Tema</span>
             <select
               value={themePreference}
-              onChange={(event) =>
-                setThemePreference(event.target.value as ThemePreference)
-              }
+              onChange={(event) => {
+                const nextTheme = event.target.value as ThemePreference;
+                setThemePreference(nextTheme);
+                update("theme_preference", nextTheme);
+              }}
             >
               <option value="system">Sistema</option>
               <option value="light">Claro</option>
               <option value="dark">Oscuro</option>
             </select>
+          </label>
+        </section>
+
+        <section className="config-panel">
+          <label className="field">
+            <span>Profundidad de datos a ingestar</span>
+            <input
+              type="number"
+              min={1}
+              max={3650}
+              value={current.ingestion_depth_days}
+              onChange={(event) =>
+                update(
+                  "ingestion_depth_days",
+                  Number(event.target.value) || 365,
+                )
+              }
+            />
+            <small>dias</small>
           </label>
         </section>
 
@@ -253,7 +244,6 @@ export function QuantumPage() {
                   <tr>
                     <th>Pais</th>
                     <th>Base URL</th>
-                    <th>Dashboard</th>
                     <th>Activo</th>
                     <th></th>
                   </tr>
@@ -296,13 +286,6 @@ export function QuantumPage() {
                             })
                           }
                         />
-                      </td>
-                      <td>
-                        <span
-                          className={`status ${row.dashboard_resolved ? "ok" : ""}`}
-                        >
-                          {row.dashboard_resolved ? "resuelto" : "pendiente"}
-                        </span>
                       </td>
                       <td>
                         <input
@@ -358,44 +341,8 @@ export function QuantumPage() {
           >
             <Save size={16} /> Guardar
           </button>
-          <button
-            className="button secondary"
-            type="button"
-            onClick={() => test.mutate()}
-            disabled={test.isPending || !countryRows.length}
-          >
-            <Wifi size={16} /> Test
-          </button>
-          <button
-            className="button secondary"
-            type="button"
-            onClick={() => discover.mutate()}
-            disabled={discover.isPending || !countryRows.length}
-          >
-            <RefreshCcw size={16} /> Descubrir dashboard
-          </button>
-          <button
-            className="button secondary"
-            type="button"
-            onClick={() => validate.mutate()}
-            disabled={validate.isPending || !countryRows.length}
-          >
-            <ShieldCheck size={16} /> Validar acceso
-          </button>
         </div>
       </form>
-
-      <section className="card quantum-status-card">
-        <div className="toolbar">
-          <ShieldCheck size={18} />
-          <strong>{test.data?.message ?? "No probado"}</strong>
-        </div>
-        {test.data?.endpoint_tested && <p>{test.data.endpoint_tested}</p>}
-        {test.data?.latency_ms && <p>{test.data.latency_ms} ms</p>}
-        {test.data?.error && <p>{test.data.error}</p>}
-        {discover.data?.message && <p>{discover.data.message}</p>}
-        {validate.data?.message && <p>{validate.data.message}</p>}
-      </section>
     </>
   );
 }
