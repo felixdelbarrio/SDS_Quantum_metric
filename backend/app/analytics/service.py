@@ -4,6 +4,7 @@ from typing import Any
 
 from backend.app.analytics.models import SortDirection
 from backend.app.analytics.query_engine import AnalyticsQueryEngine
+from backend.app.quantum_dashboard.service import LocalDashboardService
 from backend.app.storage.parquet_store import ParquetStore
 
 
@@ -19,9 +20,14 @@ class AnalyticsService:
         return self.engine.countries().model_dump(mode="json")
 
     def datasets(self) -> dict[str, Any]:
+        local_dashboard = LocalDashboardService(self.store)
         return {
             "datasets": [
-                dataset.model_dump(mode="json") for dataset in self.engine.dataset_insights()
+                {
+                    **dataset.model_dump(mode="json"),
+                    **_dataset_status(local_dashboard.status(dataset.country)),
+                }
+                for dataset in self.engine.dataset_insights()
             ]
         }
 
@@ -115,3 +121,16 @@ class AnalyticsService:
                 }
             ]
         }
+
+
+def _dataset_status(status: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "captured_cards": status.get("captured_cards"),
+        "mandatory_cards": status.get("mandatory_cards"),
+        "mandatory_cards_captured": status.get("mandatory_cards_captured"),
+        "summary_ready": status.get("summary_ready"),
+        "errors_ready": status.get("errors_ready"),
+        "derived_datasets": status.get("derived_datasets"),
+        "regression_status": status.get("regression_status"),
+        "reason": status.get("reason"),
+    }

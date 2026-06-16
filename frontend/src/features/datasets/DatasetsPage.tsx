@@ -5,6 +5,7 @@ import {
   apiDelete,
   apiDownload,
   apiGet,
+  apiPost,
   apiUpload,
 } from "../../shared/api/client";
 import { countryLabel } from "../../shared/countries";
@@ -41,6 +42,13 @@ type Dataset = {
   raw_calls: number;
   rows: number;
   cards: number;
+  captured_cards?: number;
+  mandatory_cards?: number;
+  mandatory_cards_captured?: number;
+  summary_ready?: boolean;
+  errors_ready?: boolean;
+  derived_datasets?: number;
+  regression_status?: string | null;
   last_ingestion_at?: string | null;
   source_start?: string | null;
   source_end?: string | null;
@@ -85,6 +93,15 @@ export function DatasetsPage() {
       body.append("file", file);
       return apiUpload("/datasets/import", body);
     },
+    onSuccess: () => void datasets.refetch(),
+  });
+  const regenerate = useMutation({
+    mutationFn: (country: string) =>
+      apiPost(`/datasets/${country}/regenerate-derived`),
+    onSuccess: () => void datasets.refetch(),
+  });
+  const regression = useMutation({
+    mutationFn: (country: string) => apiPost(`/datasets/${country}/regression`),
     onSuccess: () => void datasets.refetch(),
   });
 
@@ -164,7 +181,39 @@ export function DatasetsPage() {
                 <span>{formatNumber(dataset.raw_calls)} llamadas</span>
                 <span>{formatNumber(dataset.rows)} filas</span>
                 <span>{formatNumber(dataset.cards)} tarjetas</span>
+                <span>{dataset.regression_status ?? "sin regresion"}</span>
                 <span>{formatBytes(dataset.bytes)}</span>
+              </div>
+              <div className="dataset-facts compact">
+                <span>
+                  obligatorias {formatNumber(dataset.mandatory_cards_captured)}/
+                  {formatNumber(dataset.mandatory_cards)}
+                </span>
+                <span>
+                  resumen {dataset.summary_ready ? "ready" : "pendiente"}
+                </span>
+                <span>
+                  errores {dataset.errors_ready ? "ready" : "pendiente"}
+                </span>
+                <span>derivados {formatNumber(dataset.derived_datasets)}</span>
+              </div>
+              <div className="command-group section-offset compact">
+                <button
+                  className="command-button"
+                  type="button"
+                  disabled={regenerate.isPending}
+                  onClick={() => regenerate.mutate(dataset.country)}
+                >
+                  <RefreshCcw size={16} /> Regenerar derivados
+                </button>
+                <button
+                  className="command-button"
+                  type="button"
+                  disabled={regression.isPending}
+                  onClick={() => regression.mutate(dataset.country)}
+                >
+                  <RefreshCcw size={16} /> Ejecutar regresion
+                </button>
               </div>
 
               {dataset.source_start && dataset.source_end && (
@@ -186,7 +235,8 @@ export function DatasetsPage() {
               ) : (
                 <div className="analytics-empty compact">
                   <strong>
-                    {dataset.reason ?? "Sin filas interpretables"}
+                    {dataset.reason ??
+                      "Datos raw disponibles, pero no existe dataset analitico derivado."}
                   </strong>
                 </div>
               )}

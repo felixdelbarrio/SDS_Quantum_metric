@@ -155,6 +155,25 @@ class QuantumConfigUpdate(QuantumConfig):
     manual_cookie: str | None = Field(default=None, exclude=True)
 
 
+class QuantumPublicCountryConfig(BaseModel):
+    country: Country
+    base_url: str = ""
+    enabled: bool = True
+    dashboard_resolved: bool = False
+
+
+class QuantumPublicConfig(BaseModel):
+    browser: BrowserName = BrowserName.chrome
+    session_mode: SessionMode = SessionMode.browser
+    country: Country = Country.MX
+    countries: list[QuantumPublicCountryConfig] = Field(default_factory=list)
+    verify_tls: bool = True
+
+
+class QuantumPublicConfigUpdate(QuantumPublicConfig):
+    manual_cookie: str | None = Field(default=None, exclude=True)
+
+
 class ConnectionState(BaseModel):
     status: Literal["not_tested", "ok", "ko"] = "not_tested"
     endpoint_tested: str | None = None
@@ -179,6 +198,52 @@ def _dashboard_parts(dashboard_url: str) -> dict[str, str | int]:
     tab = _first_int(params.get("tab"), 0)
     team_id = _first_text(params.get("teamID"), "")
     return {"dashboard_id": dashboard_id, "team_id": team_id, "tab": tab}
+
+
+def public_quantum_config(config: QuantumConfig) -> QuantumPublicConfig:
+    return QuantumPublicConfig(
+        browser=config.browser,
+        session_mode=config.session_mode,
+        country=config.country,
+        countries=[
+            QuantumPublicCountryConfig(
+                country=item.country,
+                base_url=item.base_url,
+                enabled=item.enabled,
+                dashboard_resolved=bool(item.dashboard_id),
+            )
+            for item in config.countries
+        ],
+        verify_tls=config.verify_tls,
+    )
+
+
+def merge_public_quantum_update(
+    existing: QuantumConfig,
+    update: QuantumPublicConfigUpdate,
+) -> QuantumConfigUpdate:
+    existing_by_country = {item.country: item for item in existing.countries}
+    countries: list[QuantumCountryConfig] = []
+    for item in update.countries:
+        previous = existing_by_country.get(item.country)
+        countries.append(
+            QuantumCountryConfig(
+                country=item.country,
+                base_url=item.base_url,
+                dashboard_id=previous.dashboard_id if previous else "",
+                team_id=previous.team_id if previous else "",
+                tab=previous.tab if previous else 0,
+                enabled=item.enabled,
+            )
+        )
+    return QuantumConfigUpdate(
+        browser=update.browser,
+        session_mode=update.session_mode,
+        country=update.country,
+        countries=countries,
+        verify_tls=update.verify_tls,
+        manual_cookie=update.manual_cookie,
+    )
 
 
 def _first_text(values: list[str] | None, default: str) -> str:

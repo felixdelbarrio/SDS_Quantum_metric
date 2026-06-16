@@ -11,6 +11,8 @@ export type AvailableCountry = {
   has_data: boolean;
   raw_calls: number;
   rows: number;
+  cards?: number;
+  regression_status?: string | null;
   last_ingestion_at?: string | null;
 };
 
@@ -90,6 +92,12 @@ export type SummaryDashboardResponse = {
   reason?: string | null;
   required_dataset?: string | null;
   available_datasets: string[];
+  period?: {
+    start?: string | null;
+    end?: string | null;
+    timezone?: string | null;
+  };
+  regression?: DashboardRegression | null;
 };
 
 export type TableColumn = {
@@ -130,14 +138,17 @@ export type ErrorSeriesPoint = {
 
 export type ErrorPercentRow = {
   name: string;
+  error_name?: string | null;
   app_name?: string | null;
   sessions?: number | null;
+  error_sessions?: number | null;
   sessions_with_error?: number | null;
   error_session_percent?: number | null;
 };
 
 export type ErrorComparisonWidget = {
-  id: "error_sessions_by_app_name";
+  id: string;
+  role?: string;
   title: string;
   chart_type: "donut";
   total?: number | null;
@@ -146,13 +157,17 @@ export type ErrorComparisonWidget = {
 };
 
 export type ErrorPercentageWidget = {
-  id: "error_session_percentage_by_app_name";
+  id: string;
+  role?: string;
   title: string;
   chart_type: "table";
   rows: ErrorPercentRow[];
 };
 
-export type ErrorWidget = ErrorComparisonWidget | ErrorPercentageWidget;
+export type ErrorWidget =
+  | ErrorComparisonWidget
+  | ErrorPercentageWidget
+  | KpiWidget;
 
 export type ErrorsDashboardResponse = {
   status: AnalyticsStatus;
@@ -165,6 +180,12 @@ export type ErrorsDashboardResponse = {
   reason?: string | null;
   required_dataset?: string | null;
   available_datasets: string[];
+  period?: {
+    start?: string | null;
+    end?: string | null;
+    timezone?: string | null;
+  };
+  regression?: DashboardRegression | null;
 };
 
 export type ErrorTableResponse = {
@@ -178,4 +199,10 @@ export type ErrorTableResponse = {
   reason?: string | null;
   required_dataset?: string | null;
   available_datasets: string[];
+};
+
+export type DashboardRegression = {
+  status?: string | null;
+  verdict?: string | null;
+  report?: string | null;
 };

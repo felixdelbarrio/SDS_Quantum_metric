@@ -8,7 +8,21 @@ import { useAppStore } from "../../shared/state/appStore";
 type IngestionJob = {
   ingestion_id: string;
   country: string;
-  status: "queued" | "running" | "completed" | "failed" | "cancelled";
+  status:
+    | "pending"
+    | "running"
+    | "capturing_web"
+    | "capturing_summary_tab"
+    | "capturing_errors_tab"
+    | "persisting_raw"
+    | "building_contracts"
+    | "building_derived_datasets"
+    | "running_regression"
+    | "completed"
+    | "completed_with_warnings"
+    | "failed"
+    | "failed_regression"
+    | "cancelled";
   started_at: string;
   finished_at?: string;
   endpoint_current?: string;
@@ -28,8 +42,8 @@ type IngestionsResponse = {
 type QuantumCountryConfig = {
   country: CountryCode;
   base_url: string;
-  dashboard_id: string;
   enabled: boolean;
+  dashboard_resolved?: boolean;
 };
 
 type QuantumConfig = {
@@ -65,11 +79,7 @@ export function IngestionPage() {
     onSuccess: () => void ingestions.refetch(),
   });
 
-  const canIngest = Boolean(
-    selectedConfig?.base_url &&
-    selectedConfig.dashboard_id &&
-    !create.isPending,
-  );
+  const canIngest = Boolean(selectedConfig?.base_url && !create.isPending);
 
   const cancel = useMutation({
     mutationFn: (id: string) =>
@@ -149,6 +159,10 @@ export function IngestionPage() {
                 <th>Estado</th>
                 <th>Calls</th>
                 <th>Filas</th>
+                <th>Cards</th>
+                <th>Obligatorias</th>
+                <th>Derivados</th>
+                <th>Regresion</th>
                 <th>Duracion</th>
                 <th></th>
               </tr>
@@ -167,9 +181,21 @@ export function IngestionPage() {
                   </td>
                   <td>{job.records_persisted}</td>
                   <td>{job.records_received}</td>
+                  <td>{String(job.details.cards_captured ?? "-")}</td>
+                  <td>
+                    {String(job.details.mandatory_cards_captured ?? "-")}/
+                    {String(job.details.mandatory_cards ?? "-")}
+                  </td>
+                  <td>{String(job.details.derived_datasets ?? "-")}</td>
+                  <td>{String(job.details.regression_status ?? "-")}</td>
                   <td>{job.duration_seconds ?? "-"}</td>
                   <td>
-                    {job.status === "running" && (
+                    {![
+                      "completed",
+                      "failed",
+                      "failed_regression",
+                      "cancelled",
+                    ].includes(job.status) && (
                       <button
                         className="button danger"
                         onClick={() => cancel.mutate(job.ingestion_id)}

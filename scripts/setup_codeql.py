@@ -18,6 +18,7 @@ REPO_API = "https://api.github.com/repos/github/codeql-action"
 
 
 def main() -> None:
+    _install_platform_truststore()
     args = _parse_args()
     home = Path(args.home).resolve()
     binary = _codeql_binary(home)
@@ -40,6 +41,14 @@ def main() -> None:
         shutil.move(str(bundle), str(home))
     _mark_executable(binary)
     print(f"CodeQL installed: {binary}")
+
+
+def _install_platform_truststore() -> None:
+    try:
+        import truststore
+    except ImportError:
+        return
+    truststore.inject_into_ssl()
 
 
 def _parse_args() -> argparse.Namespace:

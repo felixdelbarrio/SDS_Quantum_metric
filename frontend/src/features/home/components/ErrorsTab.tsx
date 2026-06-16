@@ -1,16 +1,18 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { getErrorsTable } from "../api";
+import { getErrorsAppNameTable, getTopErrorsTable } from "../api";
 import {
   CountryCode,
   ErrorComparisonWidget,
   ErrorsDashboardResponse,
   ErrorTableResponse,
+  KpiWidget as KpiWidgetType,
   SortDirection,
 } from "../types";
 import { EmptyAnalyticsState } from "./EmptyAnalyticsState";
 import { ErrorDonut } from "./ErrorDonut";
 import { ErrorPercentageTable } from "./ErrorPercentageTable";
+import { KpiWidget } from "./KpiWidget";
 
 type Props = {
   country: CountryCode;
@@ -30,11 +32,36 @@ export function ErrorsTab({
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState("error_session_percent");
   const [direction, setDirection] = useState<SortDirection>("desc");
+  const [topSearch, setTopSearch] = useState("");
+  const [topSort, setTopSort] = useState("error_sessions");
+  const [topDirection, setTopDirection] = useState<SortDirection>("desc");
+
+  const topErrors = useQuery<ErrorTableResponse>({
+    queryKey: [
+      "dashboard",
+      "errors-top-table",
+      country,
+      dimension,
+      segment,
+      topSearch,
+      topSort,
+      topDirection,
+    ],
+    queryFn: () =>
+      getTopErrorsTable({
+        country,
+        dimension,
+        segment,
+        search: topSearch,
+        sort: topSort,
+        direction: topDirection,
+      }),
+  });
 
   const table = useQuery<ErrorTableResponse>({
     queryKey: [
       "dashboard",
-      "errors-table",
+      "errors-app-table",
       country,
       dimension,
       segment,
@@ -43,7 +70,7 @@ export function ErrorsTab({
       direction,
     ],
     queryFn: () =>
-      getErrorsTable({
+      getErrorsAppNameTable({
         country,
         dimension,
         segment,
@@ -62,6 +89,19 @@ export function ErrorsTab({
     }
   }
 
+  function handleTopSort(nextSort: string) {
+    if (nextSort === topSort) {
+      setTopDirection((current) => (current === "asc" ? "desc" : "asc"));
+    } else {
+      setTopSort(nextSort);
+      setTopDirection("desc");
+    }
+  }
+
+  const evolution = response?.widgets.find(
+    (widget): widget is KpiWidgetType =>
+      widget.id === "error_sessions_percentage_evolution",
+  );
   const donut = response?.widgets.find(
     (widget): widget is ErrorComparisonWidget =>
       widget.id === "error_sessions_by_app_name",
@@ -73,6 +113,28 @@ export function ErrorsTab({
 
   return (
     <div className="dashboard-tab-panel">
+      {response?.status === "ok" && evolution ? (
+        <section className="dashboard-widget-grid single">
+          <KpiWidget widget={evolution} />
+        </section>
+      ) : (
+        <EmptyAnalyticsState
+          reason={response?.reason}
+          requiredDataset={response?.required_dataset}
+        />
+      )}
+      <ErrorPercentageTable
+        title="Top 10 Errores por nombre del error"
+        searchLabel="Buscar top errores"
+        loadingLabel="Cargando top errores"
+        response={topErrors.data}
+        isLoading={topErrors.isLoading}
+        search={topSearch}
+        sort={topSort}
+        direction={topDirection}
+        onSearchChange={setTopSearch}
+        onSortChange={handleTopSort}
+      />
       {response?.status === "ok" && donut ? (
         <ErrorDonut widget={donut} />
       ) : (

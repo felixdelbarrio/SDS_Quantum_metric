@@ -15,7 +15,17 @@ from backend.app.ingestion.models import IngestionCreate
 from backend.app.ingestion.service import IngestionService
 from backend.app.quantum.client import QuantumClient
 from backend.app.quantum.config_store import QuantumConfigStore
-from backend.app.quantum.schemas import QuantumConfig, QuantumConfigUpdate
+from backend.app.quantum.schemas import (
+    QuantumConfigUpdate,
+    QuantumPublicConfig,
+    QuantumPublicConfigUpdate,
+    merge_public_quantum_update,
+    public_quantum_config,
+)
+from backend.app.quantum_dashboard.builder import build_derived_datasets
+from backend.app.quantum_dashboard.discovery import discover_dashboard_from_config
+from backend.app.quantum_dashboard.regression import run_regression
+from backend.app.quantum_dashboard.service import LocalDashboardService
 from backend.app.storage.parquet_store import ParquetStore
 
 router = APIRouter(prefix="/api")
@@ -59,20 +69,21 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@router.get("/config/quantum", response_model=QuantumConfig)
+@router.get("/config/quantum", response_model=QuantumPublicConfig)
 def get_quantum_config(
     store: Annotated[QuantumConfigStore, Depends(config_store_dep)],
-) -> QuantumConfig:
-    return store.read()
+) -> QuantumPublicConfig:
+    return public_quantum_config(store.read())
 
 
-@router.put("/config/quantum", response_model=QuantumConfig)
+@router.put("/config/quantum", response_model=QuantumPublicConfig)
 def put_quantum_config(
-    update: QuantumConfigUpdate,
+    update: QuantumPublicConfigUpdate,
     store: Annotated[QuantumConfigStore, Depends(config_store_dep)],
-) -> QuantumConfig:
+) -> QuantumPublicConfig:
     secret_store.set_manual_cookie(update.manual_cookie)
-    return store.write(update)
+    merged = merge_public_quantum_update(store.read(), update)
+    return public_quantum_config(store.write(merged))
 
 
 @router.post("/quantum/test-connection")
@@ -100,6 +111,58 @@ def test_connection(
         .test_connection()
         .model_dump(mode="json")
     )
+
+
+@router.post("/quantum/discover-dashboard")
+def discover_dashboard(
+    store: Annotated[QuantumConfigStore, Depends(config_store_dep)],
+    settings: Annotated[Settings, Depends(settings_dep)],
+) -> dict[str, object]:
+    config = store.read()
+    country_config = config.required_country_config()
+    discovery = discover_dashboard_from_config(settings=settings, country_config=country_config)
+    if discovery.dashboard_id:
+        updated_countries = []
+        for item in config.countries:
+            if item.country == country_config.country:
+                updated_countries.append(
+                    item.model_copy(
+                        update={
+                            "base_url": discovery.base_url,
+                            "dashboard_id": discovery.dashboard_id or item.dashboard_id,
+                            "team_id": discovery.team_id or item.team_id,
+                            "tab": discovery.summary_tab,
+                        }
+                    )
+                )
+            else:
+                updated_countries.append(item)
+        store.write(
+            QuantumConfigUpdate(
+                browser=config.browser,
+                session_mode=config.session_mode,
+                country=config.country,
+                countries=updated_countries,
+                verify_tls=config.verify_tls,
+            )
+        )
+    return discovery.model_dump(mode="json")
+
+
+@router.post("/quantum/validate-access")
+def validate_access(
+    store: Annotated[QuantumConfigStore, Depends(config_store_dep)],
+    settings: Annotated[Settings, Depends(settings_dep)],
+) -> dict[str, object]:
+    config = store.read()
+    country_config = config.required_country_config()
+    discovery = discover_dashboard_from_config(settings=settings, country_config=country_config)
+    ok = bool(discovery.base_url and discovery.dashboard_id and discovery.tabs)
+    return {
+        "status": "ok" if ok else "ko",
+        "message": "Dashboard, team and tabs resolved." if ok else discovery.message,
+        "details": discovery.model_dump(mode="json"),
+    }
 
 
 @router.post("/ingestions")
@@ -145,6 +208,22 @@ def cancel_ingestion(
 @router.get("/datasets")
 def datasets(store: Annotated[ParquetStore, Depends(parquet_store_dep)]) -> dict[str, object]:
     return AnalyticsService(store).datasets()
+
+
+@router.post("/datasets/{country}/regenerate-derived")
+def regenerate_derived(
+    country: str,
+    store: Annotated[ParquetStore, Depends(parquet_store_dep)],
+) -> dict[str, object]:
+    return build_derived_datasets(store, country).model_dump(mode="json")
+
+
+@router.post("/datasets/{country}/regression")
+def run_dataset_regression(
+    country: str,
+    store: Annotated[ParquetStore, Depends(parquet_store_dep)],
+) -> dict[str, object]:
+    return run_regression(store, country).model_dump(mode="json")
 
 
 @router.delete("/datasets/{country}")
@@ -272,6 +351,85 @@ def analytics_dashboard_errors_table(
         direction=direction,
         dimension=dimension,
         segment=segment,
+    )
+
+
+@router.get("/local-dashboard/countries")
+def local_dashboard_countries(
+    store: Annotated[ParquetStore, Depends(parquet_store_dep)],
+) -> dict[str, object]:
+    return LocalDashboardService(store).countries()
+
+
+@router.get("/local-dashboard/status")
+def local_dashboard_status(
+    store: Annotated[ParquetStore, Depends(parquet_store_dep)],
+    country: str = "MX",
+) -> dict[str, object]:
+    return LocalDashboardService(store).status(country)
+
+
+@router.get("/local-dashboard/summary")
+def local_dashboard_summary(
+    store: Annotated[ParquetStore, Depends(parquet_store_dep)],
+    country: str = "MX",
+) -> dict[str, object]:
+    return LocalDashboardService(store).summary(country)
+
+
+@router.get("/local-dashboard/summary/table")
+def local_dashboard_summary_table(
+    store: Annotated[ParquetStore, Depends(parquet_store_dep)],
+    country: str = "MX",
+    search: str | None = None,
+    sort: str = "page_views",
+    direction: SortDirection = "desc",
+) -> dict[str, object]:
+    return LocalDashboardService(store).summary_table(
+        country,
+        search=search,
+        sort=sort,
+        direction=direction,
+    )
+
+
+@router.get("/local-dashboard/errors")
+def local_dashboard_errors(
+    store: Annotated[ParquetStore, Depends(parquet_store_dep)],
+    country: str = "MX",
+) -> dict[str, object]:
+    return LocalDashboardService(store).errors(country)
+
+
+@router.get("/local-dashboard/errors/top-errors")
+def local_dashboard_top_errors(
+    store: Annotated[ParquetStore, Depends(parquet_store_dep)],
+    country: str = "MX",
+    search: str | None = None,
+    sort: str = "error_sessions",
+    direction: SortDirection = "desc",
+) -> dict[str, object]:
+    return LocalDashboardService(store).top_errors_table(
+        country,
+        search=search,
+        sort=sort,
+        direction=direction,
+    )
+
+
+@router.get("/local-dashboard/errors/app-name")
+def local_dashboard_error_app_name(
+    store: Annotated[ParquetStore, Depends(parquet_store_dep)],
+    country: str = "MX",
+    search: str | None = None,
+    sort: str = "error_session_percent",
+    direction: SortDirection = "desc",
+) -> dict[str, object]:
+    return LocalDashboardService(store).app_name_error_table(
+        country,
+        search=search,
+        sort=sort,
+        direction=direction,
     )
 
 
