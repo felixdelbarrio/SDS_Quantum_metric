@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { getSummaryTable } from "../api";
+import { DateRange } from "./DashboardHeader";
 import { CountryCode, SortDirection, SummaryDashboardResponse } from "../types";
 import { EmptyAnalyticsState } from "./EmptyAnalyticsState";
 import { KpiWidget } from "./KpiWidget";
@@ -10,6 +11,7 @@ type Props = {
   country: CountryCode;
   dimension?: string | null;
   segment?: string | null;
+  dateRange: DateRange;
   response?: SummaryDashboardResponse;
   isLoading: boolean;
 };
@@ -18,6 +20,7 @@ export function SummaryTab({
   country,
   dimension,
   segment,
+  dateRange,
   response,
   isLoading,
 }: Props) {
@@ -32,6 +35,8 @@ export function SummaryTab({
       country,
       dimension,
       segment,
+      dateRange.startDate,
+      dateRange.endDate,
       search,
       sort,
       direction,
@@ -41,6 +46,8 @@ export function SummaryTab({
         country,
         dimension,
         segment,
+        startDate: dateRange.startDate,
+        endDate: dateRange.endDate,
         search,
         sort,
         direction,

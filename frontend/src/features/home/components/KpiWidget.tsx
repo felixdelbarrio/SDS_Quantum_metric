@@ -30,6 +30,9 @@ export function KpiWidget({ widget }: Props) {
       {hasValue ? (
         <>
           <MiniTimeseries points={widget.timeseries} />
+          {widget.period?.label && (
+            <span className="chart-date">{widget.period.label}</span>
+          )}
           <div className="breakdown-list">
             {widget.breakdown.slice(0, 3).map((item) => (
               <span key={item.label}>

@@ -54,6 +54,9 @@ export function ErrorDonut({ widget }: Props) {
           Sin sesiones con error calculables
         </div>
       )}
+      {widget.period?.label && (
+        <span className="chart-date">{widget.period.label}</span>
+      )}
     </article>
   );
 }

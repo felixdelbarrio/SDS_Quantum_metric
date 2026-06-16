@@ -65,6 +65,13 @@ export type TimeseriesPoint = {
   value: number;
 };
 
+export type DashboardPeriod = {
+  start?: string | null;
+  end?: string | null;
+  timezone?: string | null;
+  label?: string | null;
+};
+
 export type DashboardComparison = {
   label: string;
   delta_percent?: number | null;
@@ -79,6 +86,7 @@ export type KpiWidget = {
   timeseries: TimeseriesPoint[];
   comparison?: DashboardComparison | null;
   missing_source_field?: string | null;
+  period?: DashboardPeriod | null;
 };
 
 export type SummaryDashboardResponse = {
@@ -92,11 +100,7 @@ export type SummaryDashboardResponse = {
   reason?: string | null;
   required_dataset?: string | null;
   available_datasets: string[];
-  period?: {
-    start?: string | null;
-    end?: string | null;
-    timezone?: string | null;
-  };
+  period?: DashboardPeriod;
   regression?: DashboardRegression | null;
 };
 
@@ -154,6 +158,7 @@ export type ErrorComparisonWidget = {
   total?: number | null;
   series: ErrorSeriesPoint[];
   comparison?: DashboardComparison | null;
+  period?: DashboardPeriod | null;
 };
 
 export type ErrorPercentageWidget = {
@@ -180,11 +185,7 @@ export type ErrorsDashboardResponse = {
   reason?: string | null;
   required_dataset?: string | null;
   available_datasets: string[];
-  period?: {
-    start?: string | null;
-    end?: string | null;
-    timezone?: string | null;
-  };
+  period?: DashboardPeriod;
   regression?: DashboardRegression | null;
 };
 

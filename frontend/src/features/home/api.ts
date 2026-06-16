@@ -15,6 +15,8 @@ type DashboardParams = {
   country: CountryCode;
   dimension?: string | null;
   segment?: string | null;
+  startDate?: string | null;
+  endDate?: string | null;
 };
 
 type TableParams = DashboardParams & {
@@ -73,8 +75,12 @@ function toQuery(values: Record<string, string | null | undefined>) {
   const params = new URLSearchParams();
   Object.entries(values).forEach(([key, value]) => {
     if (value !== undefined && value !== null && value !== "") {
-      params.set(key, value);
+      params.set(toSnakeCase(key), value);
     }
   });
   return params.toString();
+}
+
+function toSnakeCase(value: string) {
+  return value.replace(/[A-Z]/g, (match) => `_${match.toLowerCase()}`);
 }

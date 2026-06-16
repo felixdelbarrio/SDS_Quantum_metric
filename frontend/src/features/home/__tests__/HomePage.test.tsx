@@ -88,6 +88,16 @@ describe("HomePage local dashboard", () => {
 
     expect(await screen.findByText("Paginas vistas")).toBeInTheDocument();
     expect(await screen.findByText("150")).toBeInTheDocument();
+    expect(await screen.findAllByText("Jun 16, 2026 (CST)")).not.toHaveLength(
+      0,
+    );
+    expect(
+      requests.some(
+        (request) =>
+          request.includes("start_date=2026-06-16") &&
+          request.includes("end_date=2026-06-16"),
+      ),
+    ).toBe(true);
     expect(
       await screen.findByText("Detalle por App Name y Sistema operativo"),
     ).toBeInTheDocument();
@@ -385,7 +395,11 @@ function responseFor(url: URL, options: MockOptions) {
           value: 20,
           unit: "percent",
           breakdown: [{ label: "Mobile", value: 20 }],
-          timeseries: [{ ts: "2026-06-01T00:00:00Z", value: 20 }],
+          timeseries: [
+            { ts: "2026-06-16T00:00:00Z", value: 20 },
+            { ts: "2026-06-16T01:00:00Z", value: 21 },
+          ],
+          period: { label: "Jun 16, 2026 (CST)" },
         },
         {
           id: "error_sessions_by_app_name",
@@ -393,6 +407,7 @@ function responseFor(url: URL, options: MockOptions) {
           chart_type: "donut",
           total: 5,
           series: [{ name: "portabilidad nomina", value: 4, percent: 80 }],
+          period: { label: "Jun 16, 2026 (CST)" },
         },
         {
           id: "error_session_percentage_by_app_name",
@@ -422,9 +437,10 @@ function responseFor(url: URL, options: MockOptions) {
         unit: "count",
         breakdown: [{ label: "Mobile", value: 150 }],
         timeseries: [
-          { ts: "2026-06-01T00:00:00Z", value: 80 },
-          { ts: "2026-06-02T00:00:00Z", value: 70 },
+          { ts: "2026-06-16T00:00:00Z", value: 80 },
+          { ts: "2026-06-16T01:00:00Z", value: 70 },
         ],
+        period: { label: "Jun 16, 2026 (CST)" },
       },
       {
         id: "sessions",
@@ -433,6 +449,7 @@ function responseFor(url: URL, options: MockOptions) {
         unit: "count",
         breakdown: [],
         timeseries: [],
+        period: { label: "Jun 16, 2026 (CST)" },
       },
     ],
     available_datasets: ["country=MX/raw_api_calls"],

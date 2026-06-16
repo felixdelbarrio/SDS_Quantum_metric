@@ -373,8 +373,18 @@ def local_dashboard_status(
 def local_dashboard_summary(
     store: Annotated[ParquetStore, Depends(parquet_store_dep)],
     country: str = "MX",
+    dimension: str | None = None,
+    segment: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
 ) -> dict[str, object]:
-    return LocalDashboardService(store).summary(country)
+    return LocalDashboardService(store).summary(
+        country,
+        dimension=dimension,
+        segment=segment,
+        start_date=start_date,
+        end_date=end_date,
+    )
 
 
 @router.get("/local-dashboard/summary/table")
@@ -384,12 +394,20 @@ def local_dashboard_summary_table(
     search: str | None = None,
     sort: str = "page_views",
     direction: SortDirection = "desc",
+    dimension: str | None = None,
+    segment: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
 ) -> dict[str, object]:
     return LocalDashboardService(store).summary_table(
         country,
         search=search,
         sort=sort,
         direction=direction,
+        dimension=dimension,
+        segment=segment,
+        start_date=start_date,
+        end_date=end_date,
     )
 
 
@@ -397,8 +415,18 @@ def local_dashboard_summary_table(
 def local_dashboard_errors(
     store: Annotated[ParquetStore, Depends(parquet_store_dep)],
     country: str = "MX",
+    dimension: str | None = None,
+    segment: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
 ) -> dict[str, object]:
-    return LocalDashboardService(store).errors(country)
+    return LocalDashboardService(store).errors(
+        country,
+        dimension=dimension,
+        segment=segment,
+        start_date=start_date,
+        end_date=end_date,
+    )
 
 
 @router.get("/local-dashboard/errors/top-errors")
@@ -408,12 +436,20 @@ def local_dashboard_top_errors(
     search: str | None = None,
     sort: str = "error_sessions",
     direction: SortDirection = "desc",
+    dimension: str | None = None,
+    segment: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
 ) -> dict[str, object]:
     return LocalDashboardService(store).top_errors_table(
         country,
         search=search,
         sort=sort,
         direction=direction,
+        dimension=dimension,
+        segment=segment,
+        start_date=start_date,
+        end_date=end_date,
     )
 
 
@@ -424,12 +460,20 @@ def local_dashboard_error_app_name(
     search: str | None = None,
     sort: str = "error_session_percent",
     direction: SortDirection = "desc",
+    dimension: str | None = None,
+    segment: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
 ) -> dict[str, object]:
     return LocalDashboardService(store).app_name_error_table(
         country,
         search=search,
         sort=sort,
         direction=direction,
+        dimension=dimension,
+        segment=segment,
+        start_date=start_date,
+        end_date=end_date,
     )
 
 

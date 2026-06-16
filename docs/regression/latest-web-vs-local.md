@@ -6,7 +6,7 @@
 - Regression status: passed
 - Country: MX
 - Ingestion ID: -
-- Generated at: 2026-06-16T13:16:52.663972+00:00
+- Generated at: 2026-06-16T14:05:18.401639+00:00
 - Tolerance: 0.1%
 
 ## Environment
