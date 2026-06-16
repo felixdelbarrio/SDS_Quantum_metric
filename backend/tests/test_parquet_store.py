@@ -1,4 +1,8 @@
+import json
+import zipfile
 from pathlib import Path
+
+import pytest
 
 from backend.app.config.settings import Settings
 from backend.app.storage.parquet_store import ParquetStore
@@ -50,6 +54,18 @@ def test_parquet_store_roundtrip(tmp_path: Path) -> None:
     imported = store.import_zip(exported)
     assert imported["manifest"]["countries"] == ["MX"]
     assert store.list_datasets()[0]["country"] == "MX"
+
+
+def test_parquet_store_rejects_unsafe_import_paths(tmp_path: Path) -> None:
+    store = ParquetStore(Settings(qm_data_dir=tmp_path / "data"))
+    zip_path = tmp_path / "unsafe.zip"
+
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("manifest.json", json.dumps({"countries": ["MX"]}))
+        archive.writestr("parquet/../country=MX/raw_api_calls/raw_api_calls.parquet", b"bad")
+
+    with pytest.raises(ValueError, match="Unsafe ZIP path"):
+        store.import_zip(zip_path)
 
 
 def test_parquet_store_merge_replaces_overlap_and_tracks_latest_source_end(

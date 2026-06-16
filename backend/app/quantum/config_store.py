@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Literal, cast
 
 from backend.app.config.settings import Settings
 from backend.app.quantum.schemas import (
@@ -21,12 +22,20 @@ class QuantumConfigStore:
         self.path = settings.config_dir / "quantum.json"
 
     def default(self) -> QuantumConfig:
+        raw_theme = self.settings.quantum_theme_preference
+        theme_preference: Literal["system", "light", "dark"] = (
+            cast(Literal["system", "light", "dark"], raw_theme)
+            if raw_theme in {"system", "light", "dark"}
+            else "system"
+        )
         return QuantumConfig(
             browser=BrowserName(self.settings.qm_browser),
             session_mode=SessionMode(self.settings.qm_session_mode),
             country=Country(self.settings.qm_country),
             countries=self._countries_from_settings(),
             verify_tls=self.settings.qm_verify_tls,
+            ingestion_depth_days=self.settings.quantum_ingestion_depth_days,
+            theme_preference=theme_preference,
         )
 
     def read(self) -> QuantumConfig:
@@ -91,6 +100,8 @@ class QuantumConfigStore:
             "QM_SESSION_MODE": config.session_mode.value,
             "QM_COUNTRY": config.country.value,
             "QM_VERIFY_TLS": "true" if config.verify_tls else "false",
+            "QUANTUM_INGESTION_DEPTH_DAYS": str(config.ingestion_depth_days),
+            "QUANTUM_THEME_PREFERENCE": config.theme_preference,
             "QM_DASHBOARD_ID": selected.dashboard_id,
             "QM_TEAM_ID": selected.team_id,
             "QM_DASHBOARD_TAB": str(selected.tab),

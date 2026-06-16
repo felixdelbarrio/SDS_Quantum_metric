@@ -122,6 +122,18 @@ def _compare_card(
     if spec.card_type == "TABLE":
         web_rows = _list(snapshot.get("visible_table_rows"))
         local_rows = _list(local.get("rows"))
+        if role == "summary.detail_by_app_name_os" and not any(
+            bool(row.get("parent_row_id")) for row in local_rows
+        ):
+            return _card_result(
+                spec.tab,
+                role,
+                spec.title,
+                "failed_expandable_rows_mismatch",
+                web_value=len(web_rows),
+                local_value=len(local_rows),
+                details="Local table does not include expandable child rows.",
+            )
         if len(web_rows[:10]) != len(local_rows[:10]):
             return _card_result(
                 spec.tab,
@@ -140,6 +152,10 @@ def _compare_card(
             web_value=len(web_rows),
             local_value=len(local_rows),
         )
+
+    chart_result = _compare_chart_contract(role, snapshot, local)
+    if chart_result is not None:
+        return chart_result
 
     web_value = _number(snapshot.get("visible_value"))
     local_value = _number(local.get("value"))
@@ -196,6 +212,67 @@ def _local_payload(store: ParquetStore, country: str, role: VisualRole) -> dict[
     if role == "errors.error_session_percentage_by_app_name":
         rows = store.read_country_dataset(country, DATASET_ERRORS_APP_NAME)
         return {"rows": [row for row in rows if row.get("card_role") == role]}
+    return None
+
+
+def _compare_chart_contract(
+    role: VisualRole,
+    snapshot: dict[str, Any],
+    local: dict[str, Any],
+) -> RegressionCardResult | None:
+    spec = ROLE_SPECS[role]
+    if spec.card_type not in {"CHART", "KPI"}:
+        return None
+    payload = local.get("chart_payload")
+    if not isinstance(payload, dict):
+        return _card_result(
+            spec.tab,
+            role,
+            spec.title,
+            "failed_chart_contract_incomplete",
+            details="Local derived widget has no chart_payload.",
+        )
+    x_ticks = _list((payload.get("x_axis") or {}).get("ticks"))
+    y_ticks = _list((payload.get("y_axis") or {}).get("ticks"))
+    legends = _list(payload.get("legends"))
+    series = _list(payload.get("series"))
+    if payload.get("chart_type") != "donut" and (not x_ticks or not y_ticks):
+        return _card_result(
+            spec.tab,
+            role,
+            spec.title,
+            "failed_axis_mismatch",
+            details="Chart payload is missing x/y axis ticks.",
+        )
+    legend_labels = {str(item.get("label")) for item in legends if isinstance(item, dict)}
+    if not {"Mobile", "Desktop"}.issubset(legend_labels) and payload.get("chart_type") == "line":
+        return _card_result(
+            spec.tab,
+            role,
+            spec.title,
+            "failed_legend_mismatch",
+            details="Chart payload does not expose Mobile and Desktop legends.",
+        )
+    if payload.get("chart_type") == "line" and len(series) < 2:
+        return _card_result(
+            spec.tab,
+            role,
+            spec.title,
+            "failed_series_shape_mismatch",
+            details="Line chart must expose Mobile and Desktop series.",
+        )
+    web_points = len(_list(snapshot.get("visible_series")))
+    local_points = sum(len(_list(item.get("points"))) for item in series if isinstance(item, dict))
+    if web_points and local_points < web_points:
+        return _card_result(
+            spec.tab,
+            role,
+            spec.title,
+            "failed_series_shape_mismatch",
+            web_value=web_points,
+            local_value=local_points,
+            details="Local chart has fewer visible points than web snapshot.",
+        )
     return None
 
 
@@ -311,6 +388,18 @@ def _markdown(report: RegressionReport) -> str:
             "",
             "Charts compare totals, point counts, and visible values where available.",
             "",
+            "## Chart Regression",
+            "",
+            "| Tab | Card | Series | Axis X | Axis Y | Bands | Values | Status |",
+            "|---|---|---:|---|---|---|---|---|",
+            *_chart_rows(report),
+            "",
+            "## Table Regression",
+            "",
+            "| Tab | Table | Columns | Rows | Expandable | Deltas | Colors | Status |",
+            "|---|---|---|---:|---|---|---|---|",
+            *_table_rows(report),
+            "",
             "## Discrepancies",
             "",
             *discrepancies,
@@ -321,6 +410,51 @@ def _markdown(report: RegressionReport) -> str:
             "",
         ]
     )
+
+
+def _chart_rows(report: RegressionReport) -> list[str]:
+    rows = []
+    for card in report.cards:
+        if ROLE_SPECS[card.card_role].card_type == "TABLE":
+            continue
+        rows.append(
+            f"| {card.tab} | {card.card_title} | - | "
+            f"{_status_cell(card.status, 'axis')} | {_status_cell(card.status, 'axis')} | "
+            f"{_status_cell(card.status, 'band')} | {_status_cell(card.status, 'value')} | "
+            f"{card.status} |"
+        )
+    return rows or ["| - | - | 0 | - | - | - | - | - |"]
+
+
+def _table_rows(report: RegressionReport) -> list[str]:
+    rows = []
+    for card in report.cards:
+        if ROLE_SPECS[card.card_role].card_type != "TABLE":
+            continue
+        rows.append(
+            f"| {card.tab} | {card.card_title} | checked | {_format_cell(card.local_value)} | "
+            f"{_status_cell(card.status, 'expandable')} | {_status_cell(card.status, 'delta')} | "
+            f"{_status_cell(card.status, 'color')} | {card.status} |"
+        )
+    return rows or ["| - | - | - | 0 | - | - | - | - |"]
+
+
+def _status_cell(status: RegressionStatus, area: str) -> str:
+    if status.startswith("passed"):
+        return "passed"
+    if area == "axis" and status == "failed_axis_mismatch":
+        return "failed"
+    if area == "band" and status == "failed_band_mismatch":
+        return "failed"
+    if area == "value" and status in {"failed_value_mismatch", "failed_series_value_mismatch"}:
+        return "failed"
+    if area == "expandable" and status == "failed_expandable_rows_mismatch":
+        return "failed"
+    if area == "delta" and status == "failed_delta_mismatch":
+        return "failed"
+    if area == "color" and status == "failed_semantic_color_mismatch":
+        return "failed"
+    return "checked"
 
 
 def _card_result(

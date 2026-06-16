@@ -28,6 +28,7 @@ DATASET_ERRORS_WIDGETS = "derived/errors_widgets"
 DATASET_ERRORS_TOP_ERRORS = "derived/errors_top_errors_table"
 DATASET_ERRORS_APP_NAME = "derived/errors_app_name_table"
 DATASET_TIMESERIES = "derived/timeseries"
+DATASET_CHART_PAYLOADS = "derived/chart_payloads"
 DATASET_REGRESSION_RESULTS = "regression/web_vs_local_results"
 DATASET_REGRESSION_DISCREPANCIES = "regression/discrepancies"
 
@@ -51,6 +52,7 @@ def build_derived_datasets(
     top_error_rows: list[dict[str, Any]] = []
     error_app_rows: list[dict[str, Any]] = []
     timeseries_rows: list[dict[str, Any]] = []
+    chart_payload_rows: list[dict[str, Any]] = []
     parser_errors: list[dict[str, str]] = []
 
     for role, call in selected.items():
@@ -81,6 +83,7 @@ def build_derived_datasets(
             top_error_rows=top_error_rows,
             error_app_rows=error_app_rows,
             timeseries_rows=timeseries_rows,
+            chart_payload_rows=chart_payload_rows,
         )
 
     store.write_country_dataset(
@@ -107,6 +110,7 @@ def build_derived_datasets(
     store.write_country_dataset(country, DATASET_ERRORS_TOP_ERRORS, top_error_rows)
     store.write_country_dataset(country, DATASET_ERRORS_APP_NAME, error_app_rows)
     store.write_country_dataset(country, DATASET_TIMESERIES, timeseries_rows)
+    store.write_country_dataset(country, DATASET_CHART_PAYLOADS, chart_payload_rows)
 
     missing = [role for role in required_roles() if role not in selected]
     mandatory_captured = len([role for role in required_roles() if role in selected])
@@ -133,6 +137,7 @@ def build_derived_datasets(
                 top_error_rows,
                 error_app_rows,
                 timeseries_rows,
+                chart_payload_rows,
             )
         ),
         missing_roles=[str(role) for role in missing],
@@ -204,9 +209,15 @@ def _with_related_timeseries(
     timeseries = timeseries_widget.get("timeseries")
     if isinstance(timeseries, list) and timeseries:
         widget["timeseries"] = timeseries
+    chart_payload = timeseries_widget.get("chart_payload")
+    if isinstance(chart_payload, dict) and chart_payload.get("series"):
+        widget["chart_payload"] = chart_payload
     period = _period_from_call(timeseries_call)
     if period:
         widget["period"] = period
+        payload = widget.get("chart_payload")
+        if isinstance(payload, dict):
+            payload["timezone"] = period.get("timezone") or payload.get("timezone")
     return ParserResult(role=result.role, status=result.status, data=result.data)
 
 
@@ -324,6 +335,7 @@ def _append_derived_rows(
     top_error_rows: list[dict[str, Any]],
     error_app_rows: list[dict[str, Any]],
     timeseries_rows: list[dict[str, Any]],
+    chart_payload_rows: list[dict[str, Any]],
 ) -> None:
     widget = result.data.get("widget")
     rows = result.data.get("rows")
@@ -344,6 +356,9 @@ def _append_derived_rows(
                     "unit": widget.get("unit"),
                 }
             )
+        chart_payload = widget.get("chart_payload")
+        if isinstance(chart_payload, dict):
+            chart_payload_rows.append(_chart_payload_row(contract, widget, chart_payload))
     if isinstance(rows, list):
         for index, item in enumerate(_list_of_dicts(rows)):
             row = {
@@ -377,11 +392,41 @@ def _widget_row(contract: CardContract, widget: dict[str, Any]) -> dict[str, Any
         "breakdown": widget.get("breakdown", []),
         "series": widget.get("series", []),
         "timeseries": widget.get("timeseries", []),
+        "chart_payload": widget.get("chart_payload"),
         "comparison": widget.get("comparison"),
         "period_start": widget_period.get("start") or contract.period.start,
         "period_end": widget_period.get("end") or contract.period.end,
         "period_timezone": widget_period.get("timezone") or contract.period.timezone,
         "regression_source": "web_snapshot",
+    }
+
+
+def _chart_payload_row(
+    contract: CardContract,
+    widget: dict[str, Any],
+    chart_payload: dict[str, Any],
+) -> dict[str, Any]:
+    raw_widget_period = widget.get("period")
+    widget_period: dict[str, Any] = raw_widget_period if isinstance(raw_widget_period, dict) else {}
+    payload = dict(chart_payload)
+    payload["period_label"] = payload.get("period_label")
+    return {
+        "country": contract.country,
+        "ingestion_id": "",
+        "dashboard_id": contract.dashboard_id,
+        "team_id": contract.team_id,
+        "tab": contract.tab,
+        "card_id": contract.card_id,
+        "card_role": contract.visual_role,
+        "card_title": contract.card_title,
+        "chart_type": payload.get("chart_type"),
+        "chart_payload": payload,
+        "source_query_hash": contract.request_hash,
+        "source_response_hash": contract.response_hash,
+        "period_start": widget_period.get("start") or contract.period.start,
+        "period_end": widget_period.get("end") or contract.period.end,
+        "timezone": widget_period.get("timezone") or contract.period.timezone,
+        "regression_status": "pending",
     }
 
 

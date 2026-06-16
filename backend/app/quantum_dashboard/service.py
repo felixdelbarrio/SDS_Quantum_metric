@@ -12,6 +12,7 @@ from backend.app.analytics.normalizer import humanize_key
 from backend.app.analytics.segments import parse_segment
 from backend.app.quantum.schemas import COUNTRY_LABELS, COUNTRY_ORDER, Country
 from backend.app.quantum_dashboard.builder import (
+    DATASET_CHART_PAYLOADS,
     DATASET_ERRORS_APP_NAME,
     DATASET_ERRORS_TOP_ERRORS,
     DATASET_ERRORS_WIDGETS,
@@ -29,8 +30,11 @@ SUMMARY_COLUMNS = [
     TableColumn(key="app_name", label="App Name", sortable=True),
     TableColumn(key="operating_system", label="Sistema operativo", sortable=True),
     TableColumn(key="page_views", label="Page Views", sortable=True),
+    TableColumn(key="page_views_delta_percent", label="Delta Page Views", sortable=True),
     TableColumn(key="sessions", label="Sessions", sortable=True),
+    TableColumn(key="sessions_delta_percent", label="Delta Sessions", sortable=True),
     TableColumn(key="conversions", label="General - Conversiones", sortable=True),
+    TableColumn(key="conversions_delta_percent", label="Delta Conversiones", sortable=True),
 ]
 
 TOP_ERRORS_COLUMNS = [
@@ -217,6 +221,7 @@ class LocalDashboardService:
             "applied_segment": _segment_selection(segment),
             "reason": None if rows else "No local summary rows match the selected filters.",
             "available_datasets": self._available_dataset_names(country),
+            "period": period,
         }
 
     def errors(
@@ -356,6 +361,64 @@ class LocalDashboardService:
             "applied_segment": _segment_selection(segment),
             "reason": None if rows else "No local error rows match the selected filters.",
             "available_datasets": self._available_dataset_names(country),
+            "period": period,
+        }
+
+    def card_detail(
+        self,
+        country: str,
+        card_role: str,
+        *,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> dict[str, Any]:
+        widget = self._card_widget(country, card_role)
+        rows = self._card_rows(country, card_role)
+        period = self._period(country)
+        if not _period_matches(period, start_date, end_date):
+            return {
+                "status": "empty",
+                "country": country,
+                "card_role": card_role,
+                "reason": "No hay ingesta local para el rango de fechas seleccionado.",
+                "rows": [],
+                "points": [],
+            }
+        points = _chart_points(widget.get("chart_payload") if widget else None)
+        return {
+            "status": "ok" if widget or rows else "empty",
+            "country": country,
+            "card_role": card_role,
+            "title": (widget or {}).get("title")
+            or (rows[0].get("card_title") if rows else card_role),
+            "value": (widget or {}).get("value") or (widget or {}).get("total"),
+            "unit": (widget or {}).get("unit"),
+            "period": period,
+            "widget": widget,
+            "rows": rows,
+            "points": points,
+            "video_notice": "La reproduccion de sesiones solo esta disponible en Quantum Web.",
+            "source": "parquet",
+        }
+
+    def card_breakdown(self, country: str, card_role: str) -> dict[str, Any]:
+        widget = self._card_widget(country, card_role) or {}
+        return {
+            "status": "ok" if widget else "empty",
+            "country": country,
+            "card_role": card_role,
+            "breakdown": widget.get("breakdown") or widget.get("series") or [],
+            "source": "parquet",
+        }
+
+    def card_points(self, country: str, card_role: str) -> dict[str, Any]:
+        widget = self._card_widget(country, card_role) or {}
+        return {
+            "status": "ok" if widget else "empty",
+            "country": country,
+            "card_role": card_role,
+            "points": _chart_points(widget.get("chart_payload")),
+            "source": "parquet",
         }
 
     def _empty_response(
@@ -406,6 +469,7 @@ class LocalDashboardService:
                 DATASET_ERRORS_WIDGETS,
                 DATASET_ERRORS_TOP_ERRORS,
                 DATASET_ERRORS_APP_NAME,
+                DATASET_CHART_PAYLOADS,
             )
         )
 
@@ -436,6 +500,7 @@ class LocalDashboardService:
             *self.store.read_country_dataset(country, DATASET_VISUAL_CONTRACTS),
             *self.store.read_country_dataset(country, DATASET_SUMMARY_WIDGETS),
             *self.store.read_country_dataset(country, DATASET_ERRORS_WIDGETS),
+            *self.store.read_country_dataset(country, DATASET_CHART_PAYLOADS),
         ]
         starts: list[str] = []
         ends: list[str] = []
@@ -474,6 +539,31 @@ class LocalDashboardService:
             "report": status.get("regression_report"),
         }
 
+    def _card_widget(self, country: str, card_role: str) -> dict[str, Any] | None:
+        rows = [
+            *self.store.read_country_dataset(country, DATASET_SUMMARY_WIDGETS),
+            *self.store.read_country_dataset(country, DATASET_ERRORS_WIDGETS),
+        ]
+        for row in rows:
+            if row.get("card_role") == card_role:
+                return _widget_from_row(row)
+        return None
+
+    def _card_rows(self, country: str, card_role: str) -> list[dict[str, Any]]:
+        if card_role == "summary.detail_by_app_name_os":
+            dataset = DATASET_SUMMARY_TABLE
+        elif card_role == "errors.top_errors_by_error_name":
+            dataset = DATASET_ERRORS_TOP_ERRORS
+        elif card_role == "errors.error_session_percentage_by_app_name":
+            dataset = DATASET_ERRORS_APP_NAME
+        else:
+            return []
+        return [
+            row
+            for row in self.store.read_country_dataset(country, dataset)
+            if row.get("card_role") == card_role
+        ]
+
 
 def _widget_from_row(row: dict[str, Any]) -> dict[str, Any]:
     period = {
@@ -490,6 +580,7 @@ def _widget_from_row(row: dict[str, Any]) -> dict[str, Any]:
             "chart_type": "donut",
             "total": row.get("total"),
             "series": _list(row.get("series")),
+            "chart_payload": _with_period_label(row.get("chart_payload"), period),
             "comparison": row.get("comparison"),
             "period": period,
         }
@@ -501,10 +592,40 @@ def _widget_from_row(row: dict[str, Any]) -> dict[str, Any]:
         "unit": row.get("unit") or "count",
         "breakdown": _list(row.get("breakdown")),
         "timeseries": _list(row.get("timeseries")),
+        "chart_payload": _with_period_label(row.get("chart_payload"), period),
         "comparison": row.get("comparison"),
         "missing_source_field": None,
         "period": period,
     }
+
+
+def _with_period_label(value: Any, period: dict[str, Any]) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    payload = dict(value)
+    payload["period_label"] = payload.get("period_label") or period.get("label")
+    payload["timezone"] = payload.get("timezone") or period.get("timezone")
+    return payload
+
+
+def _chart_points(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, dict):
+        return []
+    points: list[dict[str, Any]] = []
+    for series in _list(value.get("series")):
+        if not isinstance(series, dict):
+            continue
+        for point in _list(series.get("points")):
+            if isinstance(point, dict):
+                points.append(
+                    {
+                        "series": series.get("label"),
+                        "ts": point.get("ts"),
+                        "label": point.get("label"),
+                        "value": point.get("value"),
+                    }
+                )
+    return points
 
 
 def _regression_usable(status: object) -> bool:
@@ -610,6 +731,7 @@ def _summary_widgets_for_segment(
             next_widget["value"] = round(totals[str(next_widget["id"])], 2)
             next_widget["breakdown"] = []
             next_widget["timeseries"] = []
+            next_widget["chart_payload"] = None
         next_widgets.append(next_widget)
     return next_widgets
 
@@ -630,6 +752,7 @@ def _error_widgets_for_segment(
             next_widget["value"] = percent
             next_widget["breakdown"] = []
             next_widget["timeseries"] = []
+            next_widget["chart_payload"] = None
         elif next_widget.get("id") == "error_sessions_by_app_name":
             series: list[dict[str, str | float]] = [
                 {

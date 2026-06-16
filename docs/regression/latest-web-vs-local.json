@@ -52,8 +52,8 @@
       "tab": "summary",
       "card_role": "summary.detail_by_app_name_os",
       "card_title": "Detalle por APP Name y Sistema operativo",
-      "web_value": 2.0,
-      "local_value": 2.0,
+      "web_value": 4.0,
+      "local_value": 4.0,
       "status": "passed",
       "difference": null,
       "details": null
@@ -71,7 +71,7 @@
     {
       "tab": "errors",
       "card_role": "errors.top_errors_by_error_name",
-      "card_title": "Top 10 Errores por nombre del error",
+      "card_title": "Top 20 Errores por nombre del error",
       "web_value": 2.0,
       "local_value": 2.0,
       "status": "passed",
@@ -102,5 +102,5 @@
   "verdict": "PASSED",
   "status": "passed",
   "tolerance_percent": 0.1,
-  "generated_at": "2026-06-16T14:05:18.401639+00:00"
+  "generated_at": "2026-06-16T17:43:13.487080+00:00"
 }

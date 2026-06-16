@@ -1,25 +1,30 @@
 # Regression Runbook
 
-Run the local regression command:
+## Ejecutar
 
 ```bash
 . .venv/bin/activate
-python -m backend.app.quantum_dashboard.regression --country MX --dashboard general
+python -m backend.app.quantum_dashboard.regression --country MX
 ```
 
-Outputs:
+Tambien puede ejecutarse desde Datasets con `Ejecutar regresion`.
+
+## Reportes
 
 - `docs/regression/latest-web-vs-local.md`
 - `docs/regression/latest-web-vs-local.json`
-- `data/parquet/country=MX/regression/web_vs_local_results/`
-- `data/parquet/country=MX/regression/discrepancies/`
+- `data/parquet/country={country}/regression/web_vs_local_results/`
+- `data/parquet/country={country}/regression/discrepancies/`
 
-Verdicts:
+## Interpretacion
 
-- `PASSED`: all mandatory card values match exactly.
-- `PASSED_WITH_TOLERANCE`: decimal or percentage differences are within `QUANTUM_REGRESSION_TOLERANCE_PERCENT`.
-- `FAILED`: a mandatory card, API response, parser result, table, chart or value comparison failed.
+La regresion falla si:
 
-CI uses sanitized fixtures under `backend/tests/fixtures/quantum_dashboard/`. GitHub Actions must not call Quantum Web or require real cookies.
+- falta una card obligatoria;
+- falta dataset derivado;
+- falta `chart_payload` en una card grafica;
+- faltan ejes, leyenda, series o puntos;
+- una tabla pierde hijos expandibles;
+- valores principales difieren por encima de tolerancia.
 
-For a real acceptance run, first authenticate in the configured browser, run ingestion for MX, then rerun regression and inspect the Markdown report before opening or marking a PR ready.
+Los estados especificos ayudan a localizar el contrato roto: `failed_axis_mismatch`, `failed_legend_mismatch`, `failed_series_shape_mismatch`, `failed_expandable_rows_mismatch` y equivalentes.
