@@ -5,7 +5,7 @@
 - `backend`: FastAPI, Pydantic v2, cliente Quantum aislado, orquestador de ingesta, almacenamiento Parquet y analitica local.
 - `frontend`: React + TypeScript + Vite, TanStack Query, Zustand, React Router y sistema de diseno centralizado.
 - `desktop`: PyWebView para dar experiencia integrada.
-- `data`: Parquet, manifests, catalogo y exports.
+- ruta persistente de usuario: Parquet, manifests, catalogo, exports y logs.
 
 ## Analitica local
 
@@ -41,12 +41,12 @@ El motor lee solo `data/parquet/country=<pais>/raw_api_calls/*.parquet`. No usa
 3. Se resuelve dashboard/team/tabs internamente.
 4. Se navega `Resumen` y `Errores`.
 5. Se capturan respuestas reales de `/analytics` y `/analytics/historical`.
-6. Se guardan raw calls y manifests en Parquet particionado por pais.
+6. Se guardan raw calls y manifests en Parquet particionado por pais dentro de la ruta persistente.
 7. Se generan contratos visuales, snapshots web, datasets derivados y `derived/chart_payloads`.
 8. Se ejecuta regresion Web vs Local.
 9. La ingesta solo termina `completed` si la regresion pasa.
 
-La politica de rango usa `QUANTUM_INGESTION_DEPTH_DAYS`, `QUANTUM_INCREMENTAL_REPROCESS_DAYS` y `QUANTUM_INGESTION_CHUNK_DAYS`.
+La politica de rango usa `QUANTUM_INGESTION_DEPTH_DAYS`, `QUANTUM_INCREMENTAL_REPROCESS_DAYS` y `QUANTUM_INGESTION_CHUNK_DAYS`. El planner divide ventanas largas en chunks y el rewriter aplica el rango activo a payloads Quantum antes de persistir.
 
 ## Flujo del dashboard offline
 
@@ -58,7 +58,7 @@ La politica de rango usa `QUANTUM_INGESTION_DEPTH_DAYS`, `QUANTUM_INCREMENTAL_RE
 
 ## Contrato grafico
 
-Las cards graficas no se renderizan desde agregados. Backend persiste `ChartPayload` con ejes, ticks, series, leyenda, bandas y periodo. Frontend pinta ese payload con SVG. Si falta el contrato, se muestra estado vacio y regresion falla con estados especificos.
+Las cards graficas no se renderizan desde agregados. Backend persiste `ChartPayload` con ejes, ticks, series, leyenda, bandas y periodo. Frontend pinta ese payload con SVG. Si falta el contrato, se muestra fallo contractual y regresion falla con estados especificos.
 
 ## Datasets Auditables
 

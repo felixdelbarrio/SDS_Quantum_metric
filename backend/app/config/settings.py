@@ -4,6 +4,8 @@ from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from backend.app.config.paths import default_user_data_dir, default_user_log_dir
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
@@ -13,7 +15,8 @@ class Settings(BaseSettings):
     qm_session_mode: str = "browser"
     qm_country: str = "MX"
     qm_verify_tls: bool = True
-    qm_data_dir: Path = Path("data")
+    qm_data_dir: Path = Field(default_factory=default_user_data_dir)
+    logs_dir: Path = Field(default_factory=default_user_log_dir)
     qm_dashboard_id: str = ""
     qm_team_id: str = ""
     qm_dashboard_tab: int = 0
@@ -73,6 +76,7 @@ def get_settings() -> Settings:
         settings.manifests_dir,
         settings.exports_dir,
         settings.runtime_dir,
+        settings.logs_dir,
     ]:
         directory.mkdir(parents=True, exist_ok=True)
     return settings

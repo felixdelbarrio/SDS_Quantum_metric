@@ -17,6 +17,7 @@ from backend.app.quantum_dashboard.models import (
     WebSnapshot,
 )
 from backend.app.quantum_dashboard.parsers import parse_card
+from backend.app.quantum_dashboard.semantics import semantic_intent, semantic_state
 from backend.app.storage.parquet_store import ParquetStore, hash_json
 
 DATASET_VISUAL_CONTRACTS = "visual_contracts"
@@ -31,6 +32,14 @@ DATASET_TIMESERIES = "derived/timeseries"
 DATASET_CHART_PAYLOADS = "derived/chart_payloads"
 DATASET_REGRESSION_RESULTS = "regression/web_vs_local_results"
 DATASET_REGRESSION_DISCREPANCIES = "regression/discrepancies"
+REQUIRED_CHART_ROLES: set[VisualRole] = {
+    "summary.page_views",
+    "summary.sessions",
+    "summary.converted_sessions",
+    "summary.avg_session_duration",
+    "errors.error_sessions_percentage_evolution",
+    "errors.error_sessions_by_app_name_comparison",
+}
 
 
 def build_derived_datasets(
@@ -86,6 +95,9 @@ def build_derived_datasets(
             chart_payload_rows=chart_payload_rows,
         )
 
+    validation_errors = _validate_required_chart_payloads(selected, summary_widgets, errors_widgets)
+    parser_errors.extend(validation_errors)
+
     store.write_country_dataset(
         country,
         DATASET_VISUAL_CONTRACTS,
@@ -104,13 +116,14 @@ def build_derived_datasets(
         [snapshot.model_dump(mode="json") for snapshot in snapshots],
         file_name="web_snapshots.parquet",
     )
-    store.write_country_dataset(country, DATASET_SUMMARY_WIDGETS, summary_widgets)
-    store.write_country_dataset(country, DATASET_SUMMARY_TABLE, summary_rows)
-    store.write_country_dataset(country, DATASET_ERRORS_WIDGETS, errors_widgets)
-    store.write_country_dataset(country, DATASET_ERRORS_TOP_ERRORS, top_error_rows)
-    store.write_country_dataset(country, DATASET_ERRORS_APP_NAME, error_app_rows)
-    store.write_country_dataset(country, DATASET_TIMESERIES, timeseries_rows)
-    store.write_country_dataset(country, DATASET_CHART_PAYLOADS, chart_payload_rows)
+    if not validation_errors:
+        store.write_country_dataset(country, DATASET_SUMMARY_WIDGETS, summary_widgets)
+        store.write_country_dataset(country, DATASET_SUMMARY_TABLE, summary_rows)
+        store.write_country_dataset(country, DATASET_ERRORS_WIDGETS, errors_widgets)
+        store.write_country_dataset(country, DATASET_ERRORS_TOP_ERRORS, top_error_rows)
+        store.write_country_dataset(country, DATASET_ERRORS_APP_NAME, error_app_rows)
+        store.write_country_dataset(country, DATASET_TIMESERIES, timeseries_rows)
+        store.write_country_dataset(country, DATASET_CHART_PAYLOADS, chart_payload_rows)
 
     missing = [role for role in required_roles() if role not in selected]
     mandatory_captured = len([role for role in required_roles() if role in selected])
@@ -119,6 +132,8 @@ def build_derived_datasets(
     )
     if parser_errors:
         regression_status = "failed_parse_error"
+    if validation_errors:
+        regression_status = "failed_missing_chart_payload"
 
     return DerivedBuildResult(
         ingestion_id=ingestion_id,
@@ -379,6 +394,23 @@ def _append_derived_rows(
 def _widget_row(contract: CardContract, widget: dict[str, Any]) -> dict[str, Any]:
     raw_widget_period = widget.get("period")
     widget_period: dict[str, Any] = raw_widget_period if isinstance(raw_widget_period, dict) else {}
+    period_label = _period_label(
+        widget_period.get("start") or contract.period.start,
+        widget_period.get("end") or contract.period.end,
+        widget_period.get("timezone") or contract.period.timezone,
+    )
+    chart_payload = widget.get("chart_payload")
+    if isinstance(chart_payload, dict):
+        chart_payload = dict(chart_payload)
+        chart_payload["period_label"] = chart_payload.get("period_label") or period_label
+        chart_payload["timezone"] = (
+            chart_payload.get("timezone")
+            or widget_period.get("timezone")
+            or contract.period.timezone
+        )
+    comparison = widget.get("comparison") if isinstance(widget.get("comparison"), dict) else {}
+    delta_percent = comparison.get("delta_percent") if isinstance(comparison, dict) else None
+    metric_id = str(widget.get("id") or contract.visual_role.split(".")[-1])
     return {
         "country": contract.country,
         "card_role": contract.visual_role,
@@ -392,11 +424,15 @@ def _widget_row(contract: CardContract, widget: dict[str, Any]) -> dict[str, Any
         "breakdown": widget.get("breakdown", []),
         "series": widget.get("series", []),
         "timeseries": widget.get("timeseries", []),
-        "chart_payload": widget.get("chart_payload"),
+        "chart_payload": chart_payload,
         "comparison": widget.get("comparison"),
+        "delta_percent": delta_percent,
+        "semantic_state": semantic_state(metric_id, _float_or_none(delta_percent)),
+        "semantic_intent": semantic_intent(metric_id, _float_or_none(delta_percent)),
         "period_start": widget_period.get("start") or contract.period.start,
         "period_end": widget_period.get("end") or contract.period.end,
         "period_timezone": widget_period.get("timezone") or contract.period.timezone,
+        "period_label": period_label,
         "regression_source": "web_snapshot",
     }
 
@@ -409,7 +445,11 @@ def _chart_payload_row(
     raw_widget_period = widget.get("period")
     widget_period: dict[str, Any] = raw_widget_period if isinstance(raw_widget_period, dict) else {}
     payload = dict(chart_payload)
-    payload["period_label"] = payload.get("period_label")
+    payload["period_label"] = payload.get("period_label") or _period_label(
+        widget_period.get("start") or contract.period.start,
+        widget_period.get("end") or contract.period.end,
+        widget_period.get("timezone") or contract.period.timezone,
+    )
     return {
         "country": contract.country,
         "ingestion_id": "",
@@ -426,8 +466,42 @@ def _chart_payload_row(
         "period_start": widget_period.get("start") or contract.period.start,
         "period_end": widget_period.get("end") or contract.period.end,
         "timezone": widget_period.get("timezone") or contract.period.timezone,
+        "period_label": payload["period_label"],
         "regression_status": "pending",
     }
+
+
+def _validate_required_chart_payloads(
+    selected: dict[VisualRole, dict[str, Any]],
+    summary_widgets: list[dict[str, Any]],
+    errors_widgets: list[dict[str, Any]],
+) -> list[dict[str, str]]:
+    widgets = {str(row.get("card_role")): row for row in [*summary_widgets, *errors_widgets]}
+    errors: list[dict[str, str]] = []
+    for role in REQUIRED_CHART_ROLES:
+        if role not in selected:
+            continue
+        payload = widgets.get(role, {}).get("chart_payload")
+        if not isinstance(payload, dict) or not payload.get("series"):
+            errors.append(
+                {
+                    "card_role": role,
+                    "card_title": card_title_for_role(role, selected[role]),
+                    "error_code": "failed_missing_chart_payload",
+                    "error_message": "Required chart card has no complete chart_payload.",
+                }
+            )
+            continue
+        if not payload.get("period_label"):
+            errors.append(
+                {
+                    "card_role": role,
+                    "card_title": card_title_for_role(role, selected[role]),
+                    "error_code": "failed_period_label_mismatch",
+                    "error_message": "Required chart card has no period_label.",
+                }
+            )
+    return errors
 
 
 def _dashboard_card_row(contract: CardContract) -> dict[str, Any]:
@@ -572,6 +646,21 @@ def _text(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _period_label(start: Any, end: Any, timezone: Any) -> str | None:
+    start_text = _text(start)
+    end_text = _text(end)
+    tz = _text(timezone) or "CST"
+    if not start_text or not end_text:
+        return None
+    return f"{start_text} - {end_text} {tz}"
+
+
+def _float_or_none(value: Any) -> float | None:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    return None
 
 
 def _list_of_dicts(value: Any) -> list[dict[str, Any]]:

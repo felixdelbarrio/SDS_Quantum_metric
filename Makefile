@@ -8,7 +8,7 @@ CODEQL_SOURCE_DIR ?= .codeql-source
 CODEQL_PYTHON_DB ?= $(CODEQL_DB_DIR)/python
 CODEQL_TS_DB ?= $(CODEQL_DB_DIR)/javascript-typescript
 
-.PHONY: help setup run clean CI build kill codeql codeql-clean
+.PHONY: help setup run clean CI build kill _codeql _codeql-clean
 
 help:
 	@printf "Targets disponibles:\\n"
@@ -18,7 +18,6 @@ help:
 	@printf "  make CI     Ejecuta checks backend/frontend/security\\n"
 	@printf "  make build  Genera artefacto desktop local\\n"
 	@printf "  make kill   Detiene procesos iniciados por make run\\n"
-	@printf "  make codeql Ejecuta analisis CodeQL local\\n"
 
 setup:
 	python3 -m venv .venv
@@ -47,11 +46,13 @@ CI:
 	npm run lint
 	npm run typecheck
 	npm test
+	npm run build
 	. .venv/bin/activate && python scripts/scan_no_secrets.py
 	. .venv/bin/activate && bandit -q -c bandit.yml -x backend/tests -r backend desktop scripts
-	$(MAKE) codeql
+	. .venv/bin/activate && python scripts/smoke_test_desktop.py --preflight
+	$(MAKE) _codeql
 
-codeql:
+_codeql:
 	. .venv/bin/activate && python scripts/setup_codeql.py --version "$(CODEQL_VERSION)" --home "$(CODEQL_HOME)"
 	rm -rf "$(CODEQL_PYTHON_DB)" "$(CODEQL_TS_DB)" "$(CODEQL_SOURCE_DIR)" codeql-results-python.sarif codeql-results-javascript-typescript.sarif
 	mkdir -p "$(CODEQL_DB_DIR)" "$(CODEQL_SOURCE_DIR)"
@@ -61,13 +62,14 @@ codeql:
 	"$(CODEQL)" database create "$(CODEQL_TS_DB)" --language=javascript-typescript --source-root="$(CODEQL_SOURCE_DIR)" --overwrite
 	"$(CODEQL)" database analyze "$(CODEQL_TS_DB)" codeql/javascript-queries --format=sarif-latest --output=codeql-results-javascript-typescript.sarif
 
-codeql-clean:
+_codeql-clean:
 	rm -rf "$(CODEQL_DB_DIR)" "$(CODEQL_SOURCE_DIR)"
 	rm -f codeql-results*.sarif
 
 build:
 	npm run build
 	. .venv/bin/activate && python scripts/build_desktop.py
+	. .venv/bin/activate && python scripts/smoke_test_desktop.py
 
 kill:
 	python scripts/kill_app.py

@@ -66,6 +66,8 @@ type Dataset = {
 
 type DatasetsResponse = {
   datasets: Dataset[];
+  data_dir?: string;
+  legacy_data_detected?: boolean;
 };
 
 type DatasetEntity = {
@@ -94,6 +96,7 @@ export function DatasetsPage() {
   const [selectedCountry, setSelectedCountry] = useState<string | null>(null);
   const [selectedEntity, setSelectedEntity] = useState("raw_api_calls");
   const [deleteCountry, setDeleteCountry] = useState<string | null>(null);
+  const [deleteConfirmation, setDeleteConfirmation] = useState("");
   const datasets = useQuery({
     queryKey: ["datasets"],
     queryFn: () => apiGet<DatasetsResponse>("/datasets"),
@@ -126,6 +129,7 @@ export function DatasetsPage() {
       apiDelete(`/datasets/${country}?confirm=${country}`),
     onSuccess: () => {
       setDeleteCountry(null);
+      setDeleteConfirmation("");
       void datasets.refetch();
     },
   });
@@ -172,7 +176,18 @@ export function DatasetsPage() {
   return (
     <>
       <header className="page-header">
-        <h1>Datasets</h1>
+        <div>
+          <h1>Datasets</h1>
+          <p className="page-subtitle">
+            Ruta de datos local: {datasets.data?.data_dir ?? "-"}
+          </p>
+          {datasets.data?.legacy_data_detected && (
+            <p className="warning-text">
+              Se ha detectado una carpeta data legacy. Puedes migrarla a la ruta
+              persistente.
+            </p>
+          )}
+        </div>
         <div className="command-group">
           <button
             className="command-button"
@@ -231,7 +246,10 @@ export function DatasetsPage() {
                     type="button"
                     aria-label={`Eliminar ${dataset.country}`}
                     title={`Eliminar ${dataset.country}`}
-                    onClick={() => setDeleteCountry(dataset.country)}
+                    onClick={() => {
+                      setDeleteCountry(dataset.country);
+                      setDeleteConfirmation("");
+                    }}
                   >
                     <Trash2 size={16} />
                   </button>
@@ -417,8 +435,11 @@ export function DatasetsPage() {
       <ConfirmDialog
         open={Boolean(deleteCountry)}
         title="Borrar dataset local"
-        message={`Se eliminara RAW, derivados y regresion de ${deleteCountry ?? ""}.`}
+        message={`Escribe ${deleteCountry ?? ""} para borrar RAW, derivados y regresion.`}
         confirmLabel="Borrar"
+        confirmationValue={deleteCountry ?? undefined}
+        confirmationInput={deleteConfirmation}
+        onConfirmationInput={setDeleteConfirmation}
         onCancel={() => setDeleteCountry(null)}
         onConfirm={() => deleteCountry && remove.mutate(deleteCountry)}
       />

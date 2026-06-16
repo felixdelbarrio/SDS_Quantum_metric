@@ -5,6 +5,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
+from backend.app.ingestion.planner import IngestionChunk
+from backend.app.ingestion.time_rewriter import rewrite_query_time_range
+
 CAPTURE_WAIT_SECONDS = 35
 DEFAULT_INGESTION_DEPTH_DAYS = 365
 DEFAULT_INCREMENTAL_REPROCESS_DAYS = 1
@@ -66,6 +69,14 @@ def apply_ingestion_range(
     payload: dict[str, Any],
     ingestion_range: IngestionRange,
 ) -> tuple[dict[str, Any], bool]:
+    chunk = IngestionChunk(
+        start=ingestion_range.start,
+        end=ingestion_range.end,
+        label=f"{_iso(ingestion_range.start)} -> {_iso(ingestion_range.end)}",
+    )
+    result = rewrite_query_time_range(payload, chunk)
+    if result.changed:
+        return result.payload, True
     rewritten = deepcopy(payload)
     changed = _rewrite_ts(rewritten, ingestion_range)
     return rewritten, changed

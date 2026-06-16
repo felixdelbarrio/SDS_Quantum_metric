@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { MetricDelta } from "../../../shared/components/MetricDelta";
+import { SemanticValue } from "../../../shared/components/SemanticValue";
 import { KpiWidget as KpiWidgetType } from "../types";
 import { CardExplorerModal } from "./CardExplorerModal";
 import { QuantumChart } from "./charts/QuantumChart";
@@ -18,20 +20,19 @@ export function KpiWidget({ widget }: Props) {
     >
       <div className="kpi-header">
         <span>{widget.title}</span>
-        {widget.comparison?.delta_percent !== null &&
-          widget.comparison?.delta_percent !== undefined && (
-            <strong
-              className={
-                widget.comparison.delta_percent >= 0 ? "delta up" : "delta down"
-              }
-            >
-              {widget.comparison.delta_percent >= 0 ? "+" : ""}
-              {widget.comparison.delta_percent.toFixed(2)}%
-            </strong>
-          )}
+        <MetricDelta
+          value={widget.comparison?.delta_percent}
+          intent={widget.semantic_intent}
+        />
       </div>
       <strong className="kpi-value">
-        {hasValue ? formatValue(widget.value ?? 0, widget.unit) : "-"}
+        {hasValue ? (
+          <SemanticValue intent={widget.semantic_intent}>
+            {formatValue(widget.value ?? 0, widget.unit)}
+          </SemanticValue>
+        ) : (
+          "-"
+        )}
       </strong>
       {hasValue ? (
         <>

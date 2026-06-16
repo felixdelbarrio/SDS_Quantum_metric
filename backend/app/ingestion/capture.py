@@ -11,6 +11,7 @@ from playwright.sync_api import sync_playwright
 from backend.app.auth.browser_cookies import BrowserCookie
 from backend.app.config.settings import Settings
 from backend.app.ingestion.policy import IngestionRange, apply_ingestion_range
+from backend.app.ingestion.time_rewriter import extract_query_time_range
 from backend.app.observability.sanitizer import sanitize
 from backend.app.storage.parquet_store import hash_json
 
@@ -72,6 +73,7 @@ def capture_quantum_analytics(
             request = response.request
             request_json = _parse_json(request.post_data or "")
             response_json = _parse_json(response.body().decode("utf-8", "replace"))
+            query_range = extract_query_time_range(request_json)
             query = (
                 request_json.get("query") if parsed.path.endswith("historical") else request_json
             )
@@ -107,12 +109,13 @@ def capture_quantum_analytics(
                     "parse_status": "pending",
                     "parse_error": None,
                     "captured_at": ingestion_ts,
-                    "source_ts_start": (request_json.get("ts") or [None, None])[0]
-                    if isinstance(request_json.get("ts"), list)
-                    else None,
-                    "source_ts_end": (request_json.get("ts") or [None, None])[1]
-                    if isinstance(request_json.get("ts"), list)
-                    else None,
+                    "source_ts_start": _iso(query_range.start) if query_range else None,
+                    "source_ts_end": _iso(query_range.end) if query_range else None,
+                    "source_period_label": query_range.label if query_range else None,
+                    "source_timezone": query_range.timezone if query_range else "CST",
+                    "capture_chunk_start": _iso(ingestion_range.start) if ingestion_range else None,
+                    "capture_chunk_end": _iso(ingestion_range.end) if ingestion_range else None,
+                    "time_rewrite_status": "rewritten" if ingestion_range else "original",
                 }
             )
 
@@ -139,3 +142,7 @@ def _sanitize_headers(headers: dict[str, str]) -> dict[str, str]:
         for key, value in sanitize(headers).items()
         if key.casefold() not in blocked and "token" not in key.casefold()
     }
+
+
+def _iso(value: datetime) -> str:
+    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")

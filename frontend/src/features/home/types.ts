@@ -142,6 +142,9 @@ export type KpiWidget = {
   timeseries: TimeseriesPoint[];
   chart_payload?: ChartPayload | null;
   comparison?: DashboardComparison | null;
+  delta_percent?: number | null;
+  semantic_state?: "positive" | "negative" | "neutral" | null;
+  semantic_intent?: "good" | "bad" | "neutral" | null;
   missing_source_field?: string | null;
   period?: DashboardPeriod | null;
 };
