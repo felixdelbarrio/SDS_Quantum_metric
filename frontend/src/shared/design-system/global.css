@@ -807,6 +807,47 @@ textarea:focus-visible {
   text-align: center;
 }
 
+.contract-failure {
+  gap: var(--space-2);
+  padding: var(--space-4);
+  color: var(--semantic-negative);
+  background: var(--semantic-negative-soft);
+}
+
+.metric-delta {
+  border-radius: var(--radius-sm);
+  padding: 0.15rem 0.45rem;
+  font-size: 12px;
+}
+
+.metric-delta-good {
+  color: var(--semantic-positive);
+  background: var(--semantic-positive-soft);
+}
+
+.metric-delta-bad {
+  color: var(--semantic-negative);
+  background: var(--semantic-negative-soft);
+}
+
+.metric-delta-neutral,
+.semantic-value-neutral {
+  color: var(--semantic-neutral);
+}
+
+.semantic-value-good {
+  color: var(--semantic-positive);
+}
+
+.semantic-value-bad {
+  color: var(--semantic-negative);
+}
+
+.warning-text {
+  color: var(--semantic-warning);
+  font-weight: 800;
+}
+
 .interactive-card {
   position: relative;
 }
@@ -1428,6 +1469,85 @@ textarea:focus-visible {
   color: var(--color-muted);
   font-size: 13px;
   font-weight: 800;
+}
+
+.ingestion-list {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.ingestion-progress-card {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--border-dashboard);
+  border-radius: var(--radius-md);
+  background: var(--surface-dashboard-elevated);
+}
+
+.ingestion-progress-card > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.ingestion-progress-card > header > div {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.ingestion-chunks {
+  display: grid;
+  gap: var(--space-2);
+  max-height: 260px;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.ingestion-chunks li {
+  display: grid;
+  grid-template-columns: 3rem minmax(0, 1fr) max-content;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 2.5rem;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-dashboard);
+  border-radius: var(--radius-sm);
+  background: var(--surface-dashboard);
+}
+
+.ingestion-chunks span,
+.ingestion-chunks em {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-style: normal;
+}
+
+.ingestion-chunks strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 0.86rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.progress-track {
+  width: 100%;
+  height: 10px;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--surface-dashboard-muted);
+}
+
+.progress-track > span {
+  display: block;
+  height: 100%;
+  background: var(--color-accent);
 }
 
 .dataset-kpi-grid {

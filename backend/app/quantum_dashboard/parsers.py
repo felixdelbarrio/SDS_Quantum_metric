@@ -594,7 +594,7 @@ def _line_chart_payload(
         for point in points
         if point.get("ts") is not None and _to_number(point.get("value")) is not None
     ]
-    desktop_points = [{**point, "value": 0.0, "raw_value": 0.0} for point in primary_points]
+    desktop_points: list[dict[str, Any]] = []
     return {
         "chart_type": "line",
         "x_axis": {"ticks": x_ticks, "label": "Periodo"},

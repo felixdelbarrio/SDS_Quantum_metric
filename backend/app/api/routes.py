@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
@@ -207,7 +208,23 @@ def cancel_ingestion(
 
 @router.get("/datasets")
 def datasets(store: Annotated[ParquetStore, Depends(parquet_store_dep)]) -> dict[str, object]:
-    return AnalyticsService(store).datasets()
+    payload = AnalyticsService(store).datasets()
+    payload["data_dir"] = str(store.settings.qm_data_dir)
+    legacy = Path("data")
+    payload["legacy_data_detected"] = (
+        legacy.exists() and legacy.resolve() != store.settings.qm_data_dir.resolve()
+    )
+    return payload
+
+
+@router.post("/datasets/migrate-legacy-data")
+def migrate_legacy_data(
+    store: Annotated[ParquetStore, Depends(parquet_store_dep)],
+) -> dict[str, object]:
+    legacy = Path("data")
+    if not legacy.exists() or legacy.resolve() == store.settings.qm_data_dir.resolve():
+        raise HTTPException(status_code=404, detail="No legacy ./data folder detected.")
+    return store.migrate_legacy_data(legacy)
 
 
 @router.post("/datasets/{country}/regenerate-derived")
@@ -245,23 +262,7 @@ def dataset_entities(
     country: str,
     store: Annotated[ParquetStore, Depends(parquet_store_dep)],
 ) -> dict[str, object]:
-    root = store.settings.parquet_dir / f"country={country}"
-    entities = []
-    if root.exists():
-        for dataset_dir in sorted({file.parent for file in root.rglob("*.parquet")}):
-            files = list(dataset_dir.glob("*.parquet"))
-            rows = store.read_country_dataset(country, str(dataset_dir.relative_to(root)))
-            entities.append(
-                {
-                    "id": str(dataset_dir.relative_to(root)),
-                    "label": str(dataset_dir.relative_to(root)).replace("_", " "),
-                    "rows": len(rows),
-                    "files": len(files),
-                    "bytes": sum(file.stat().st_size for file in files),
-                    "updated_at": max((file.stat().st_mtime for file in files), default=0),
-                }
-            )
-    return {"country": country, "entities": entities}
+    return {"country": country, "entities": store.list_country_entities(country)}
 
 
 @router.get("/datasets/{country}/entities/{entity:path}/schema")
@@ -270,14 +271,13 @@ def dataset_entity_schema(
     entity: str,
     store: Annotated[ParquetStore, Depends(parquet_store_dep)],
 ) -> dict[str, object]:
-    rows = store.read_country_dataset(country, entity)
-    schema = {
-        key: type(value).__name__
-        for row in rows[:50]
-        for key, value in row.items()
-        if value is not None
+    page = store.read_country_entity_page(country, entity, limit=1)
+    return {
+        "country": country,
+        "entity": entity,
+        "schema": store.country_entity_schema(country, entity),
+        "rows": page["total"],
     }
-    return {"country": country, "entity": entity, "schema": schema, "rows": len(rows)}
 
 
 @router.get("/datasets/{country}/entities/{entity:path}")
@@ -291,24 +291,23 @@ def dataset_entity_rows(
     offset: int = 0,
     limit: int = 100,
 ) -> dict[str, object]:
-    rows = store.read_country_dataset(country, entity)
-    if search:
-        needle = search.casefold()
-        rows = [row for row in rows if needle in " ".join(map(str, row.values())).casefold()]
-    if sort and rows and sort in rows[0]:
-        rows = sorted(rows, key=lambda row: str(row.get(sort) or ""), reverse=direction == "desc")
-    total = len(rows)
-    bounded_limit = max(1, min(limit, 500))
-    page = rows[max(0, offset) : max(0, offset) + bounded_limit]
-    columns = sorted({key for row in page for key in row})
+    page = store.read_country_entity_page(
+        country,
+        entity,
+        search=search,
+        sort=sort,
+        direction=direction,
+        offset=offset,
+        limit=limit,
+    )
     return {
         "country": country,
         "entity": entity,
-        "rows": page,
-        "columns": columns,
-        "total": total,
-        "offset": offset,
-        "limit": bounded_limit,
+        "rows": page["rows"],
+        "columns": page["columns"],
+        "total": page["total"],
+        "offset": page["offset"],
+        "limit": page["limit"],
         "source": "parquet",
     }
 

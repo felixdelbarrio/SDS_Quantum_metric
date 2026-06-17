@@ -18,6 +18,7 @@ dependencies = [
   "playwright>=1.45.0",
   "truststore>=0.9.0",
   "python-multipart>=0.0.9",
+  "platformdirs>=4.3.0",
 ]
 
 [project.optional-dependencies]

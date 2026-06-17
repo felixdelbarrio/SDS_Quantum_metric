@@ -40,6 +40,13 @@ def test_config_store_does_not_persist_manual_cookie(tmp_path: Path) -> None:
     assert "manual_cookie" not in text
 
 
+def test_config_store_default_ingestion_depth_is_30_days(tmp_path: Path) -> None:
+    settings = Settings(qm_data_dir=tmp_path)
+    store = QuantumConfigStore(settings)
+
+    assert store.default().ingestion_depth_days == 30
+
+
 def test_config_store_persists_ingestion_depth_and_theme(tmp_path: Path) -> None:
     settings = Settings(qm_data_dir=tmp_path, quantum_ingestion_depth_days=180)
     store = QuantumConfigStore(settings)

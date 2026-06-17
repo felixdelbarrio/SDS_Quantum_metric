@@ -81,11 +81,23 @@ class ParquetStore:
         row = sanitize(manifest)
         new_frame = pl.DataFrame([row])
         if path.exists():
-            old = pl.read_parquet(path)
+            try:
+                old = pl.read_parquet(path)
+            except Exception:
+                corrupt = path.with_suffix(
+                    f".corrupt-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}.parquet"
+                )
+                path.replace(corrupt)
+                old = None
+        else:
+            old = None
+        if old is not None:
             frame = pl.concat([old, new_frame], how="diagonal_relaxed")
         else:
             frame = new_frame
-        frame.write_parquet(path)
+        temporary = path.with_suffix(".tmp.parquet")
+        frame.write_parquet(temporary)
+        temporary.replace(path)
         return path
 
     def write_country_dataset(
@@ -119,6 +131,81 @@ class ParquetStore:
         frame = self._read_parquet_files(files)
         return [_parquet_rich_row(row) for row in frame.to_dicts()]
 
+    def list_country_entities(self, country: str) -> list[dict[str, Any]]:
+        root = self.settings.parquet_dir / f"country={country}"
+        entities: list[dict[str, Any]] = []
+        if not root.exists():
+            return entities
+        for dataset_dir in sorted({file.parent for file in root.rglob("*.parquet")}):
+            files = sorted(dataset_dir.glob("*.parquet"))
+            if not files:
+                continue
+            scan = pl.scan_parquet([str(file) for file in files])
+            rows = int(scan.select(pl.len()).collect().item())
+            relative = str(dataset_dir.relative_to(root))
+            entities.append(
+                {
+                    "id": relative,
+                    "label": relative.replace("_", " "),
+                    "rows": rows,
+                    "files": len(files),
+                    "bytes": sum(file.stat().st_size for file in files),
+                    "updated_at": max((file.stat().st_mtime for file in files), default=0),
+                }
+            )
+        return entities
+
+    def country_entity_schema(self, country: str, dataset_path: str) -> dict[str, str]:
+        files = self._country_dataset_files(country, dataset_path)
+        if not files:
+            return {}
+        schema = pl.scan_parquet([str(file) for file in files]).collect_schema()
+        return {name: str(dtype) for name, dtype in schema.items()}
+
+    def read_country_entity_page(
+        self,
+        country: str,
+        dataset_path: str,
+        *,
+        search: str | None = None,
+        sort: str | None = None,
+        direction: str = "asc",
+        offset: int = 0,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        files = self._country_dataset_files(country, dataset_path)
+        bounded_limit = max(1, min(limit, 500))
+        bounded_offset = max(0, offset)
+        if not files:
+            return {
+                "rows": [],
+                "columns": [],
+                "total": 0,
+                "offset": bounded_offset,
+                "limit": bounded_limit,
+            }
+        frame = pl.scan_parquet([str(file) for file in files])
+        schema = frame.collect_schema()
+        columns = list(schema.names())
+        if search:
+            predicates = [
+                pl.col(column).cast(pl.Utf8).str.contains(search, literal=True)
+                for column in columns
+            ]
+            if predicates:
+                frame = frame.filter(pl.any_horizontal(predicates))
+        total = int(frame.select(pl.len()).collect().item())
+        if sort and sort in columns:
+            frame = frame.sort(sort, descending=direction == "desc")
+        page = frame.slice(bounded_offset, bounded_limit).collect()
+        return {
+            "rows": [_parquet_rich_row(row) for row in page.to_dicts()],
+            "columns": columns,
+            "total": total,
+            "offset": bounded_offset,
+            "limit": bounded_limit,
+        }
+
     def country_dataset_exists(self, country: str, dataset_path: str) -> bool:
         target = self.settings.parquet_dir / f"country={country}" / dataset_path
         return target.exists() and any(target.glob("*.parquet"))
@@ -127,7 +214,10 @@ class ParquetStore:
         path = self.settings.manifests_dir / "ingestion_manifest.parquet"
         if not path.exists():
             return []
-        return pl.read_parquet(path).sort("started_at", descending=True).to_dicts()
+        try:
+            return pl.read_parquet(path).sort("started_at", descending=True).to_dicts()
+        except Exception:
+            return []
 
     def list_datasets(self) -> list[dict[str, Any]]:
         datasets: list[dict[str, Any]] = []
@@ -222,6 +312,33 @@ class ParquetStore:
             "manifest": manifest,
         }
 
+    def migrate_legacy_data(self, legacy_root: Path) -> dict[str, Any]:
+        source = legacy_root / "parquet"
+        if not source.exists():
+            return {"migrated_files": 0, "source": str(legacy_root)}
+        migrated = 0
+        for file in source.glob("country=*"):
+            if not file.is_dir():
+                continue
+            country = file.name.split("=", 1)[1]
+            for parquet_file in file.rglob("*.parquet"):
+                entity = str(parquet_file.parent.relative_to(file))
+                frame = pl.read_parquet(parquet_file)
+                if entity == "raw_api_calls":
+                    self.merge_raw_calls(country, frame.to_dicts())
+                elif not frame.is_empty():
+                    destination = (
+                        self.settings.parquet_dir
+                        / f"country={country}"
+                        / entity
+                        / parquet_file.name
+                    )
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    if not destination.exists():
+                        shutil.copy2(parquet_file, destination)
+                migrated += 1
+        return {"migrated_files": migrated, "source": str(legacy_root)}
+
     def analytics_summary(self) -> dict[str, Any]:
         files = list(self.settings.parquet_dir.glob("country=*/raw_api_calls/*.parquet"))
         if not files:
@@ -261,8 +378,38 @@ class ParquetStore:
         timestamps = [value for value in parsed if value is not None]
         return max(timestamps) if timestamps else None
 
+    def covered_source_ranges(self, country: str) -> list[tuple[datetime, datetime]]:
+        files = self._raw_call_files(country)
+        if not files:
+            return []
+        try:
+            frame = (
+                pl.scan_parquet([str(file) for file in files])
+                .select(["source_ts_start", "source_ts_end"])
+                .drop_nulls()
+                .collect()
+            )
+        except Exception:
+            return []
+        ranges = [
+            (start, end)
+            for start, end in (
+                (
+                    _parse_source_ts(row.get("source_ts_start")),
+                    _parse_source_ts(row.get("source_ts_end")),
+                )
+                for row in frame.to_dicts()
+            )
+            if start is not None and end is not None and start <= end
+        ]
+        return _merge_source_ranges(ranges)
+
     def _raw_call_files(self, country: str) -> list[Path]:
         root = self.settings.parquet_dir / f"country={country}" / "raw_api_calls"
+        return sorted(root.glob("*.parquet")) if root.exists() else []
+
+    def _country_dataset_files(self, country: str, dataset_path: str) -> list[Path]:
+        root = self.settings.parquet_dir / f"country={country}" / dataset_path
         return sorted(root.glob("*.parquet")) if root.exists() else []
 
     def _read_parquet_files(self, files: list[Path]) -> pl.DataFrame:
@@ -354,3 +501,22 @@ def _parse_source_ts(value: Any) -> datetime | None:
         except ValueError:
             return None
     return None
+
+
+def _merge_source_ranges(
+    ranges: list[tuple[datetime, datetime]],
+) -> list[tuple[datetime, datetime]]:
+    if not ranges:
+        return []
+    ordered = sorted(ranges, key=lambda item: item[0])
+    merged: list[tuple[datetime, datetime]] = []
+    for start, end in ordered:
+        if not merged:
+            merged.append((start, end))
+            continue
+        previous_start, previous_end = merged[-1]
+        if start <= previous_end:
+            merged[-1] = (previous_start, max(previous_end, end))
+        else:
+            merged.append((start, end))
+    return merged

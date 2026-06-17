@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 from backend.app.config.settings import Settings, get_settings
@@ -27,6 +26,8 @@ from backend.app.quantum_dashboard.models import (
     VisualRole,
 )
 from backend.app.storage.parquet_store import ParquetStore
+
+REGRESSION_REPORT_PATH = "regression/latest-web-vs-local.md"
 
 
 def run_regression(
@@ -236,6 +237,14 @@ def _compare_chart_contract(
     y_ticks = _list((payload.get("y_axis") or {}).get("ticks"))
     legends = _list(payload.get("legends"))
     series = _list(payload.get("series"))
+    if not payload.get("period_label"):
+        return _card_result(
+            spec.tab,
+            role,
+            spec.title,
+            "failed_period_label_mismatch",
+            details="Chart payload is missing period_label.",
+        )
     if payload.get("chart_type") != "donut" and (not x_ticks or not y_ticks):
         return _card_result(
             spec.tab,
@@ -318,7 +327,7 @@ def _persist_report(store: ParquetStore, report: RegressionReport) -> None:
 
 
 def _write_docs_report(settings: Settings, report: RegressionReport) -> None:
-    docs_dir = Path("docs/regression")
+    docs_dir = settings.reports_dir / "regression"
     docs_dir.mkdir(parents=True, exist_ok=True)
     markdown_path = docs_dir / "latest-web-vs-local.md"
     json_path = docs_dir / "latest-web-vs-local.json"

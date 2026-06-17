@@ -4,7 +4,7 @@ from typing import Any
 
 from backend.app.auth.browser_cookies import BrowserCookie
 from backend.app.config.settings import Settings
-from backend.app.ingestion.capture import capture_quantum_analytics
+from backend.app.ingestion.capture import QuantumAnalyticsCaptureSession, capture_quantum_analytics
 from backend.app.ingestion.policy import IngestionRange
 from backend.app.quantum_dashboard.discovery import dashboard_tab_url
 
@@ -21,7 +21,31 @@ def capture_quantum_dashboard_cards(
     errors_tab: int,
     ingestion_id: str,
     ingestion_range: IngestionRange | None,
+    capture_session: QuantumAnalyticsCaptureSession | None = None,
 ) -> list[dict[str, Any]]:
+    if capture_session is None:
+        with QuantumAnalyticsCaptureSession(
+            settings=settings,
+            cookies=cookies,
+            country=country,
+            base_url=base_url,
+            wait_seconds=settings.quantum_capture_timeout_seconds,
+            ingestion_id=ingestion_id,
+        ) as session:
+            return capture_quantum_dashboard_cards(
+                settings=settings,
+                cookies=cookies,
+                country=country,
+                base_url=base_url,
+                dashboard_id=dashboard_id,
+                team_id=team_id,
+                summary_tab=summary_tab,
+                errors_tab=errors_tab,
+                ingestion_id=ingestion_id,
+                ingestion_range=ingestion_range,
+                capture_session=session,
+            )
+
     rows: list[dict[str, Any]] = []
     for tab_name, tab_index in (("summary", summary_tab), ("errors", errors_tab)):
         dashboard_url = dashboard_tab_url(
@@ -30,16 +54,22 @@ def capture_quantum_dashboard_cards(
             team_id=team_id,
             tab=tab_index,
         )
-        captured = capture_quantum_analytics(
-            settings=settings,
-            cookies=cookies,
-            country=country,
-            base_url=base_url,
-            dashboard_url=dashboard_url,
-            wait_seconds=settings.quantum_capture_timeout_seconds,
-            ingestion_id=ingestion_id,
-            ingestion_range=ingestion_range,
-        )
+        if capture_session:
+            captured = capture_session.capture(
+                dashboard_url=dashboard_url,
+                ingestion_range=ingestion_range,
+            )
+        else:
+            captured = capture_quantum_analytics(
+                settings=settings,
+                cookies=cookies,
+                country=country,
+                base_url=base_url,
+                dashboard_url=dashboard_url,
+                wait_seconds=settings.quantum_capture_timeout_seconds,
+                ingestion_id=ingestion_id,
+                ingestion_range=ingestion_range,
+            )
         for row in captured:
             row["tab"] = tab_name
             row["tab_name"] = "Resumen" if tab_name == "summary" else "Errores"
