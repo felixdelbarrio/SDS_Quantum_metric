@@ -10,7 +10,7 @@ from backend.app.auth.browser_cookies import BrowserCookieProvider
 from backend.app.auth.session_store import secret_store
 from backend.app.config.settings import Settings
 from backend.app.ingestion.models import IngestionCreate, IngestionJob
-from backend.app.ingestion.planner import plan_ingestion_chunks
+from backend.app.ingestion.planner import IngestionChunk, plan_ingestion_chunks
 from backend.app.ingestion.policy import build_ingestion_range
 from backend.app.ingestion.progress import update_progress
 from backend.app.observability.sanitizer import sanitize_error
@@ -18,8 +18,9 @@ from backend.app.quantum.config_store import QuantumConfigStore
 from backend.app.quantum_dashboard.builder import build_derived_datasets
 from backend.app.quantum_dashboard.capture import capture_quantum_dashboard_cards
 from backend.app.quantum_dashboard.discovery import discover_dashboard_from_config
-from backend.app.quantum_dashboard.regression import run_regression
-from backend.app.storage.parquet_store import ParquetStore
+from backend.app.quantum_dashboard.models import DerivedBuildResult, RegressionReport
+from backend.app.quantum_dashboard.regression import REGRESSION_REPORT_PATH, run_regression
+from backend.app.storage.parquet_store import ParquetStore, RawCallMergeResult
 
 
 class IngestionService:
@@ -104,23 +105,51 @@ class IngestionService:
                 ingestion_range,
                 chunk_days=self.settings.quantum_ingestion_chunk_days,
             )
+            covered_ranges = self.parquet_store.covered_source_ranges(request.country.value)
+            chunks_to_capture = [
+                chunk for chunk in chunks if not _is_chunk_covered(chunk, covered_ranges)
+            ]
             job.planned_chunks = len(chunks)
+            job.chunks = [
+                {
+                    **chunk.details(),
+                    "index": index,
+                    "status": "pending"
+                    if chunk in chunks_to_capture
+                    else "skipped_already_ingested",
+                    "completed_at": None,
+                }
+                for index, chunk in enumerate(chunks, start=1)
+            ]
             update_progress(
                 job,
                 status="planning_chunks",
-                message=f"Planificados {len(chunks)} chunks.",
+                completed_chunks=len(chunks) - len(chunks_to_capture),
+                message=(
+                    f"Planificados {len(chunks)} chunks; "
+                    f"{len(chunks_to_capture)} pendientes de captura."
+                ),
             )
-            rows: list[dict[str, Any]] = []
-            for index, chunk in enumerate(chunks, start=1):
+            chunk_indexes = {chunk: index for index, chunk in enumerate(chunks, start=1)}
+            skipped_chunks = len(chunks) - len(chunks_to_capture)
+            merge: RawCallMergeResult | None = None
+            build: DerivedBuildResult | None = None
+            report: RegressionReport | None = None
+            rows_replaced = 0
+            rows_after_merge = 0
+            for capture_index, chunk in enumerate(chunks_to_capture, start=1):
+                index = chunk_indexes[chunk]
                 current_task = asyncio.current_task()
                 if current_task is not None and current_task.cancelled():
                     raise asyncio.CancelledError
+                job.current_chunk_index = index
                 job.current_chunk_start = chunk.details()["start"]
                 job.current_chunk_end = chunk.details()["end"]
+                _set_chunk_status(job, index, "running")
                 update_progress(
                     job,
                     status="capturing_chunk",
-                    completed_chunks=index - 1,
+                    completed_chunks=skipped_chunks + capture_index - 1,
                     message=f"Capturando chunk {index}/{len(chunks)} {chunk.label}.",
                 )
                 chunk_range = ingestion_range.__class__(
@@ -143,43 +172,91 @@ class IngestionService:
                     ingestion_id=job.ingestion_id,
                     ingestion_range=chunk_range,
                 )
-                rows.extend(captured)
+                chunk_rows = sum(int(row.get("row_count") or 0) for row in captured)
+                merge, build, report = _publish_completed_chunk(
+                    self.parquet_store,
+                    request.country.value,
+                    captured,
+                    job.ingestion_id,
+                )
+                rows_replaced += merge.rows_replaced if merge else 0
+                rows_after_merge = merge.rows_after if merge else rows_after_merge
+                job.records_received += chunk_rows
+                job.records_persisted += merge.rows_captured if merge else 0
+                job.calls_captured += len(captured)
+                job.rows_captured = job.records_received
+                job.mandatory_cards_total = (
+                    build.mandatory_cards if build else job.mandatory_cards_total
+                )
+                job.mandatory_cards_captured = (
+                    build.mandatory_cards_captured if build else job.mandatory_cards_captured
+                )
+                job.derived_datasets = build.derived_datasets if build else job.derived_datasets
+                job.regression_status = report.status if report else job.regression_status
                 update_progress(
                     job,
-                    completed_chunks=index,
-                    calls_captured=len(rows),
-                    rows_captured=sum(int(row.get("row_count") or 0) for row in rows),
-                    message=f"Chunk {index}/{len(chunks)} persistido en memoria.",
+                    completed_chunks=skipped_chunks + capture_index,
+                    calls_captured=job.calls_captured,
+                    rows_captured=job.rows_captured,
+                    message=(
+                        f"Chunk {index}/{len(chunks)} publicado; "
+                        "dashboard actualizado con los datos disponibles."
+                    ),
                 )
-            update_progress(job, status="persisting_raw", message="Persistiendo RAW Parquet.")
-            merge = self.parquet_store.merge_raw_calls(request.country.value, rows)
-            job.records_received = sum(int(row.get("row_count") or 0) for row in rows)
-            job.records_persisted = merge.rows_captured
-            job.calls_captured = len(rows)
-            job.rows_captured = job.records_received
+                _set_chunk_status(job, index, "completed")
             job.pages_processed = 2
-            update_progress(job, status="building_derived", message="Construyendo derivados.")
-            build = build_derived_datasets(
-                self.parquet_store,
-                request.country.value,
-                raw_calls=rows,
-                ingestion_id=job.ingestion_id,
-            )
+            if not chunks_to_capture:
+                update_progress(
+                    job,
+                    status="building_derived",
+                    message="Actualizando dashboard con chunks ya disponibles.",
+                )
+                build = build_derived_datasets(
+                    self.parquet_store,
+                    request.country.value,
+                    ingestion_id=job.ingestion_id,
+                )
+                update_progress(job, status="running_regression", message="Ejecutando regresion.")
+                report = run_regression(
+                    self.parquet_store,
+                    request.country.value,
+                    ingestion_id=job.ingestion_id,
+                )
+            elif build and report:
+                update_progress(
+                    job,
+                    status="running_regression",
+                    message="Validacion incremental disponible para dashboard.",
+                )
+            else:
+                update_progress(
+                    job,
+                    status="building_derived",
+                    message="Sin nuevas filas capturadas; dashboard mantiene datos previos.",
+                )
+            if build is None:
+                build = build_derived_datasets(
+                    self.parquet_store,
+                    request.country.value,
+                    ingestion_id=job.ingestion_id,
+                )
+            if report is None:
+                report = run_regression(
+                    self.parquet_store,
+                    request.country.value,
+                    ingestion_id=job.ingestion_id,
+                )
             job.mandatory_cards_total = build.mandatory_cards
             job.mandatory_cards_captured = build.mandatory_cards_captured
             job.derived_datasets = build.derived_datasets
-            update_progress(job, status="running_regression", message="Ejecutando regresion.")
-            report = run_regression(
-                self.parquet_store,
-                request.country.value,
-                ingestion_id=job.ingestion_id,
-            )
             job.regression_status = report.status
             job.details = {
-                "parquet_path": str(merge.path) if merge.path else None,
-                "raw_calls": len(rows),
-                "rows_replaced": merge.rows_replaced,
-                "rows_after_merge": merge.rows_after,
+                "parquet_path": str(merge.path) if merge and merge.path else None,
+                "raw_calls": job.calls_captured,
+                "rows_replaced": rows_replaced,
+                "rows_after_merge": rows_after_merge,
+                "skipped_chunks": skipped_chunks,
+                "captured_chunks": len(chunks_to_capture),
                 "cards_captured": build.captured_cards,
                 "mandatory_cards": build.mandatory_cards,
                 "mandatory_cards_captured": build.mandatory_cards_captured,
@@ -188,7 +265,7 @@ class IngestionService:
                 "regression_verdict": report.verdict,
                 "missing_roles": build.missing_roles,
                 "parser_errors": build.parser_errors,
-                "regression_report": "docs/regression/latest-web-vs-local.md",
+                "regression_report": REGRESSION_REPORT_PATH,
                 "range": ingestion_range.details(),
                 "dashboard": discovery.model_dump(mode="json"),
             }
@@ -209,3 +286,43 @@ class IngestionService:
             job.finished_at = datetime.now(UTC)
             job.duration_seconds = round(time.perf_counter() - started, 2)
             self.parquet_store.append_manifest(job.model_dump(mode="json"))
+
+
+def _is_chunk_covered(
+    chunk: IngestionChunk,
+    covered_ranges: list[tuple[datetime, datetime]],
+) -> bool:
+    return any(
+        range_start <= chunk.start and range_end >= chunk.end
+        for range_start, range_end in covered_ranges
+    )
+
+
+def _publish_completed_chunk(
+    store: ParquetStore,
+    country: str,
+    rows: list[dict[str, Any]],
+    ingestion_id: str,
+) -> tuple[RawCallMergeResult | None, DerivedBuildResult, RegressionReport]:
+    merge = store.merge_raw_calls(country, rows) if rows else None
+    build = build_derived_datasets(store, country, ingestion_id=ingestion_id)
+    report = run_regression(store, country, ingestion_id=ingestion_id)
+    return merge, build, report
+
+
+def _set_chunk_status(job: IngestionJob, index: int, status: str) -> None:
+    next_chunks = []
+    for chunk in job.chunks:
+        if int(chunk.get("index") or 0) == index:
+            next_chunks.append(
+                {
+                    **chunk,
+                    "status": status,
+                    "completed_at": datetime.now(UTC).isoformat()
+                    if status == "completed"
+                    else chunk.get("completed_at"),
+                }
+            )
+        else:
+            next_chunks.append(chunk)
+    job.chunks = next_chunks

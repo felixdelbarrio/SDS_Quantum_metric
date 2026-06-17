@@ -68,6 +68,26 @@ def test_parquet_store_rejects_unsafe_import_paths(tmp_path: Path) -> None:
         store.import_zip(zip_path)
 
 
+def test_parquet_store_recovers_from_corrupt_manifest(tmp_path: Path) -> None:
+    store = ParquetStore(Settings(qm_data_dir=tmp_path))
+    manifest_path = store.settings.manifests_dir / "ingestion_manifest.parquet"
+    manifest_path.write_bytes(b"bad")
+
+    assert store.list_ingestions() == []
+
+    store.append_manifest(
+        {
+            "ingestion_id": "ing-2",
+            "country": "MX",
+            "status": "completed",
+            "started_at": "2026-06-12T00:00:00Z",
+        }
+    )
+
+    assert store.list_ingestions()[0]["ingestion_id"] == "ing-2"
+    assert list(store.settings.manifests_dir.glob("ingestion_manifest.corrupt-*.parquet"))
+
+
 def test_parquet_store_merge_replaces_overlap_and_tracks_latest_source_end(
     tmp_path: Path,
 ) -> None:
@@ -102,6 +122,33 @@ def test_parquet_store_merge_replaces_overlap_and_tracks_latest_source_end(
     assert latest.isoformat() == "2026-06-13T00:00:00+00:00"
     rows = store.card_data("old") + store.card_data("overlap-new")
     assert {row["card_id"] for row in rows} == {"old", "overlap-new"}
+
+
+def test_parquet_store_lists_merged_covered_source_ranges(tmp_path: Path) -> None:
+    store = ParquetStore(Settings(qm_data_dir=tmp_path))
+    store.merge_raw_calls(
+        "MX",
+        [
+            _raw_call(
+                ingestion_id="ing-1",
+                card_id="day-1",
+                source_ts_start="2026-06-15T00:00:00Z",
+                source_ts_end="2026-06-16T00:00:00Z",
+            ),
+            _raw_call(
+                ingestion_id="ing-1",
+                card_id="day-2",
+                source_ts_start="2026-06-16T00:00:00Z",
+                source_ts_end="2026-06-17T00:00:00Z",
+            ),
+        ],
+    )
+
+    ranges = store.covered_source_ranges("MX")
+
+    assert len(ranges) == 1
+    assert ranges[0][0].isoformat() == "2026-06-15T00:00:00+00:00"
+    assert ranges[0][1].isoformat() == "2026-06-17T00:00:00+00:00"
 
 
 def _raw_call(

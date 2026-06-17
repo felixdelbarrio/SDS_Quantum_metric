@@ -94,8 +94,8 @@ describe("HomePage local dashboard", () => {
     expect(
       requests.some(
         (request) =>
-          request.includes("start_date=2026-06-16") &&
-          request.includes("end_date=2026-06-16"),
+          request.includes(`start_date=${todayInMexico()}`) &&
+          request.includes(`end_date=${todayInMexico()}`),
       ),
     ).toBe(true);
     expect(
@@ -234,6 +234,18 @@ function renderHome() {
       <HomePage />
     </QueryClientProvider>,
   );
+}
+
+function todayInMexico() {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Mexico_City",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const part = (type: string) =>
+    parts.find((candidate) => candidate.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
 }
 
 function mockFetch(options: MockOptions = {}) {

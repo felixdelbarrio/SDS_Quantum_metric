@@ -9,9 +9,9 @@ def test_backfill_range_uses_maximum_window_when_no_local_data() -> None:
     ingestion_range = build_ingestion_range(None, now=now)
 
     assert ingestion_range.mode == "backfill"
-    assert ingestion_range.start == datetime(2025, 6, 13, 12, 0, tzinfo=UTC)
+    assert ingestion_range.start == datetime(2026, 5, 14, 12, 0, tzinfo=UTC)
     assert ingestion_range.end == now
-    assert ingestion_range.lookback_days == 365
+    assert ingestion_range.lookback_days == 30
 
 
 def test_incremental_range_reprocesses_only_configured_recent_days() -> None:

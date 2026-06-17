@@ -116,14 +116,13 @@ def build_derived_datasets(
         [snapshot.model_dump(mode="json") for snapshot in snapshots],
         file_name="web_snapshots.parquet",
     )
-    if not validation_errors:
-        store.write_country_dataset(country, DATASET_SUMMARY_WIDGETS, summary_widgets)
-        store.write_country_dataset(country, DATASET_SUMMARY_TABLE, summary_rows)
-        store.write_country_dataset(country, DATASET_ERRORS_WIDGETS, errors_widgets)
-        store.write_country_dataset(country, DATASET_ERRORS_TOP_ERRORS, top_error_rows)
-        store.write_country_dataset(country, DATASET_ERRORS_APP_NAME, error_app_rows)
-        store.write_country_dataset(country, DATASET_TIMESERIES, timeseries_rows)
-        store.write_country_dataset(country, DATASET_CHART_PAYLOADS, chart_payload_rows)
+    store.write_country_dataset(country, DATASET_SUMMARY_WIDGETS, summary_widgets)
+    store.write_country_dataset(country, DATASET_SUMMARY_TABLE, summary_rows)
+    store.write_country_dataset(country, DATASET_ERRORS_WIDGETS, errors_widgets)
+    store.write_country_dataset(country, DATASET_ERRORS_TOP_ERRORS, top_error_rows)
+    store.write_country_dataset(country, DATASET_ERRORS_APP_NAME, error_app_rows)
+    store.write_country_dataset(country, DATASET_TIMESERIES, timeseries_rows)
+    store.write_country_dataset(country, DATASET_CHART_PAYLOADS, chart_payload_rows)
 
     missing = [role for role in required_roles() if role not in selected]
     mandatory_captured = len([role for role in required_roles() if role in selected])

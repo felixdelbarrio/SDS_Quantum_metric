@@ -23,6 +23,7 @@ from backend.app.quantum_dashboard.builder import (
 )
 from backend.app.quantum_dashboard.catalog import MANDATORY_CARDS, required_roles
 from backend.app.quantum_dashboard.models import DashboardTab
+from backend.app.quantum_dashboard.regression import REGRESSION_REPORT_PATH
 from backend.app.storage.parquet_store import ParquetStore
 
 SUMMARY_COLUMNS = [
@@ -131,7 +132,7 @@ class LocalDashboardService:
             "derived_datasets": self._derived_dataset_count(country),
             "reason": reason,
             "missing_roles": missing_roles,
-            "regression_report": "docs/regression/latest-web-vs-local.md" if regression else None,
+            "regression_report": REGRESSION_REPORT_PATH if regression else None,
         }
 
     def summary(

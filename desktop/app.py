@@ -18,15 +18,23 @@ def main() -> None:
     settings = get_settings()
     log_path = _configure_logging()
     url = f"http://{settings.backend_host}:{settings.backend_port}"
-    server = uvicorn.Server(
-        uvicorn.Config(
-            app, host=settings.backend_host, port=settings.backend_port, log_level="info"
-        )
-    )
-    thread = threading.Thread(target=server.run, name="sds-uvicorn", daemon=False)
+    server: uvicorn.Server | None = None
+    thread: threading.Thread | None = None
     try:
-        thread.start()
-        _wait_for(url + "/api/health")
+        if _is_healthy(url + "/api/health"):
+            logging.info("Reusing existing SDS Quantum Metric backend at %s", url)
+        else:
+            server = uvicorn.Server(
+                uvicorn.Config(
+                    app,
+                    host=settings.backend_host,
+                    port=settings.backend_port,
+                    log_level="info",
+                )
+            )
+            thread = threading.Thread(target=server.run, name="sds-uvicorn", daemon=False)
+            thread.start()
+            _wait_for(url + "/api/health")
         _wait_for(url + "/")
         import webview
 
@@ -36,14 +44,24 @@ def main() -> None:
     except Exception as exc:
         logging.exception("SDS Quantum Metric failed to start")
         _show_error(exc, log_path, url)
-        try:
-            server.should_exit = True
-            if thread.is_alive():
-                thread.join(timeout=5)
-        except Exception:
-            logging.exception("Failed to stop embedded server")
+        if server is not None:
+            try:
+                server.should_exit = True
+                if thread and thread.is_alive():
+                    thread.join(timeout=5)
+            except Exception:
+                logging.exception("Failed to stop embedded server")
     finally:
-        server.should_exit = True
+        if server is not None:
+            server.should_exit = True
+
+
+def _is_healthy(url: str) -> bool:
+    try:
+        with urllib.request.urlopen(url, timeout=1) as response:  # noqa: S310
+            return int(response.status) == 200
+    except Exception:
+        return False
 
 
 def _wait_for(url: str) -> None:

@@ -120,7 +120,7 @@ def test_regression_passes_and_writes_report(tmp_path: Path) -> None:
     assert report.verdict == "PASSED"
     assert report.status == "passed"
     assert len(report.cards) == 9
-    assert Path("docs/regression/latest-web-vs-local.md").exists()
+    assert (store.settings.reports_dir / "regression/latest-web-vs-local.md").exists()
 
 
 def test_regression_fails_when_mandatory_card_is_missing(tmp_path: Path) -> None:

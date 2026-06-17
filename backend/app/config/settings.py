@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     quantum_default_errors_tab: int = 1
     quantum_capture_timeout_seconds: int = 120
     quantum_regression_tolerance_percent: float = 0.1
-    quantum_ingestion_depth_days: int = 365
+    quantum_ingestion_depth_days: int = 30
     quantum_incremental_reprocess_days: int = 1
     quantum_ingestion_chunk_days: int = 1
     quantum_theme_preference: str = "system"
@@ -63,6 +63,10 @@ class Settings(BaseSettings):
         return self.qm_data_dir / "exports"
 
     @property
+    def reports_dir(self) -> Path:
+        return self.qm_data_dir / "reports"
+
+    @property
     def runtime_dir(self) -> Path:
         return self.qm_data_dir / "runtime"
 
@@ -75,6 +79,7 @@ def get_settings() -> Settings:
         settings.parquet_dir,
         settings.manifests_dir,
         settings.exports_dir,
+        settings.reports_dir,
         settings.runtime_dir,
         settings.logs_dir,
     ]:
