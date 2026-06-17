@@ -81,11 +81,23 @@ class ParquetStore:
         row = sanitize(manifest)
         new_frame = pl.DataFrame([row])
         if path.exists():
-            old = pl.read_parquet(path)
+            try:
+                old = pl.read_parquet(path)
+            except Exception:
+                corrupt = path.with_suffix(
+                    f".corrupt-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}.parquet"
+                )
+                path.replace(corrupt)
+                old = None
+        else:
+            old = None
+        if old is not None:
             frame = pl.concat([old, new_frame], how="diagonal_relaxed")
         else:
             frame = new_frame
-        frame.write_parquet(path)
+        temporary = path.with_suffix(".tmp.parquet")
+        frame.write_parquet(temporary)
+        temporary.replace(path)
         return path
 
     def write_country_dataset(
@@ -202,7 +214,10 @@ class ParquetStore:
         path = self.settings.manifests_dir / "ingestion_manifest.parquet"
         if not path.exists():
             return []
-        return pl.read_parquet(path).sort("started_at", descending=True).to_dicts()
+        try:
+            return pl.read_parquet(path).sort("started_at", descending=True).to_dicts()
+        except Exception:
+            return []
 
     def list_datasets(self) -> list[dict[str, Any]]:
         datasets: list[dict[str, Any]] = []

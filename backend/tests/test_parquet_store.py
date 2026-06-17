@@ -68,6 +68,26 @@ def test_parquet_store_rejects_unsafe_import_paths(tmp_path: Path) -> None:
         store.import_zip(zip_path)
 
 
+def test_parquet_store_recovers_from_corrupt_manifest(tmp_path: Path) -> None:
+    store = ParquetStore(Settings(qm_data_dir=tmp_path))
+    manifest_path = store.settings.manifests_dir / "ingestion_manifest.parquet"
+    manifest_path.write_bytes(b"bad")
+
+    assert store.list_ingestions() == []
+
+    store.append_manifest(
+        {
+            "ingestion_id": "ing-2",
+            "country": "MX",
+            "status": "completed",
+            "started_at": "2026-06-12T00:00:00Z",
+        }
+    )
+
+    assert store.list_ingestions()[0]["ingestion_id"] == "ing-2"
+    assert list(store.settings.manifests_dir.glob("ingestion_manifest.corrupt-*.parquet"))
+
+
 def test_parquet_store_merge_replaces_overlap_and_tracks_latest_source_end(
     tmp_path: Path,
 ) -> None:

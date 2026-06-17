@@ -34,6 +34,10 @@ def main() -> None:
         artifact = _artifact_path()
         _require(artifact.exists(), f"Desktop artifact not found: {artifact}")
         _require(dist.exists(), "Built frontend dist is missing.")
+        _require(
+            _bundled_playwright_browsers_exist(artifact),
+            "Desktop artifact must bundle Playwright Chromium.",
+        )
 
 
 def _artifact_path() -> Path:
@@ -42,6 +46,11 @@ def _artifact_path() -> Path:
     if sys.platform == "win32":
         return Path("dist/SDS Quantum Metric/SDS Quantum Metric.exe")
     return Path("dist/SDS Quantum Metric/SDS Quantum Metric")
+
+
+def _bundled_playwright_browsers_exist(artifact: Path) -> bool:
+    root = artifact if artifact.is_dir() else artifact.parent
+    return any(path.is_dir() and any(path.iterdir()) for path in root.rglob(".local-browsers"))
 
 
 def _require(condition: bool, message: str) -> None:

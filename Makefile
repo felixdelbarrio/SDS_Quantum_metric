@@ -23,7 +23,7 @@ setup:
 	python3 -m venv .venv
 	. .venv/bin/activate && python -m pip install --upgrade pip
 	. .venv/bin/activate && python -m pip install -e ".[dev,desktop]"
-	. .venv/bin/activate && python -m playwright install chromium
+	. .venv/bin/activate && python scripts/ensure_playwright_browsers.py
 	npm install
 	. .venv/bin/activate && python scripts/setup_codeql.py --version "$(CODEQL_VERSION)" --home "$(CODEQL_HOME)"
 	mkdir -p data/parquet data/manifests data/exports data/config data/runtime

@@ -63,6 +63,10 @@ class Settings(BaseSettings):
         return self.qm_data_dir / "exports"
 
     @property
+    def reports_dir(self) -> Path:
+        return self.qm_data_dir / "reports"
+
+    @property
     def runtime_dir(self) -> Path:
         return self.qm_data_dir / "runtime"
 
@@ -75,6 +79,7 @@ def get_settings() -> Settings:
         settings.parquet_dir,
         settings.manifests_dir,
         settings.exports_dir,
+        settings.reports_dir,
         settings.runtime_dir,
         settings.logs_dir,
     ]:

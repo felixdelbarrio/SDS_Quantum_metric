@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, cast
 from urllib.parse import urlparse
 
@@ -61,6 +64,7 @@ class QuantumAnalyticsCaptureSession:
         self._context: Any | None = None
 
     def __enter__(self) -> QuantumAnalyticsCaptureSession:
+        _configure_playwright_browser_path()
         self._playwright = sync_playwright().start()
         self._browser = _launch_headless_browser(self._playwright, self.settings)
         self._context = self._browser.new_context(
@@ -180,12 +184,35 @@ def _launch_headless_browser(playwright: Any, settings: Settings) -> Any:
     args = ["--disable-dev-shm-usage", "--no-first-run", "--disable-background-networking"]
     try:
         return playwright.chromium.launch(headless=True, args=args)
-    except Exception:
-        return playwright.chromium.launch(
-            executable_path=str(settings.chrome_executable),
-            headless=True,
-            args=args,
-        )
+    except Exception as exc:
+        raise RuntimeError(
+            "Playwright Chromium is not available for ingestion capture. "
+            "Run `make setup` and rebuild the desktop artifact with `make build`."
+        ) from exc
+
+
+def _configure_playwright_browser_path() -> None:
+    if os.environ.get("PLAYWRIGHT_BROWSERS_PATH"):
+        return
+    if _running_frozen() or _packaged_playwright_browsers_exist():
+        os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "0"
+
+
+def _running_frozen() -> bool:
+    return bool(getattr(sys, "frozen", False))
+
+
+def _packaged_playwright_browsers_exist() -> bool:
+    try:
+        import playwright
+    except ImportError:
+        return False
+    package_root = Path(playwright.__file__).resolve().parent
+    candidates = [
+        package_root / "driver/package/.local-browsers",
+        Path(getattr(sys, "_MEIPASS", "")) / "playwright/driver/package/.local-browsers",
+    ]
+    return any(path.exists() and any(path.iterdir()) for path in candidates)
 
 
 def _parse_json(raw: str) -> dict[str, Any]:
