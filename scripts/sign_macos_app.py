@@ -26,12 +26,10 @@ def main() -> None:
         "--force",
         "--deep",
         "--timestamp=none" if identity == "-" else "--timestamp",
-        "--options",
-        "runtime",
-        "--sign",
-        identity,
-        str(APP_PATH),
     ]
+    if identity != "-":
+        command.extend(["--options", "runtime"])
+    command.extend(["--sign", identity, str(APP_PATH)])
     subprocess.run(command, check=True)
     subprocess.run([codesign, "--verify", "--deep", "--strict", str(APP_PATH)], check=True)
     print(f"Signed {APP_PATH} with {'ad-hoc identity' if identity == '-' else identity}.")
