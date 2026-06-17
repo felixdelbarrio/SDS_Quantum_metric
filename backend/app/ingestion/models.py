@@ -45,8 +45,10 @@ class IngestionJob(BaseModel):
     pages_processed: int = 0
     planned_chunks: int = 0
     completed_chunks: int = 0
+    current_chunk_index: int | None = None
     current_chunk_start: str | None = None
     current_chunk_end: str | None = None
+    chunks: list[dict[str, Any]] = Field(default_factory=list)
     mandatory_cards_total: int = 9
     mandatory_cards_captured: int = 0
     current_card_role: str | None = None

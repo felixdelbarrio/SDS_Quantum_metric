@@ -104,6 +104,33 @@ def test_parquet_store_merge_replaces_overlap_and_tracks_latest_source_end(
     assert {row["card_id"] for row in rows} == {"old", "overlap-new"}
 
 
+def test_parquet_store_lists_merged_covered_source_ranges(tmp_path: Path) -> None:
+    store = ParquetStore(Settings(qm_data_dir=tmp_path))
+    store.merge_raw_calls(
+        "MX",
+        [
+            _raw_call(
+                ingestion_id="ing-1",
+                card_id="day-1",
+                source_ts_start="2026-06-15T00:00:00Z",
+                source_ts_end="2026-06-16T00:00:00Z",
+            ),
+            _raw_call(
+                ingestion_id="ing-1",
+                card_id="day-2",
+                source_ts_start="2026-06-16T00:00:00Z",
+                source_ts_end="2026-06-17T00:00:00Z",
+            ),
+        ],
+    )
+
+    ranges = store.covered_source_ranges("MX")
+
+    assert len(ranges) == 1
+    assert ranges[0][0].isoformat() == "2026-06-15T00:00:00+00:00"
+    assert ranges[0][1].isoformat() == "2026-06-17T00:00:00+00:00"
+
+
 def _raw_call(
     *,
     ingestion_id: str,

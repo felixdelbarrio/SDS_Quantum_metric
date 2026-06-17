@@ -73,8 +73,9 @@ def test_planner_chunks_backfill_by_day() -> None:
     chunks = plan_ingestion_chunks(ingestion_range, chunk_days=1)
 
     assert len(chunks) == 365
-    assert chunks[0].start == ingestion_range.start
-    assert chunks[-1].end == ingestion_range.end
+    assert chunks[0].end == ingestion_range.end
+    assert chunks[-1].start == ingestion_range.start
+    assert chunks[0].start > chunks[-1].start
 
 
 def test_planner_handles_empty_window_and_naive_datetimes() -> None:

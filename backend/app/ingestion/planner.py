@@ -32,6 +32,7 @@ def plan_ingestion_chunks(
     *,
     chunk_days: int = 1,
     now: datetime | None = None,
+    newest_first: bool = True,
 ) -> list[IngestionChunk]:
     bounded_days = max(1, chunk_days)
     current = _as_utc(ingestion_range.start)
@@ -45,7 +46,7 @@ def plan_ingestion_chunks(
         current = chunk_end
     if not chunks and end >= current:
         chunks.append(IngestionChunk(start=current, end=end, label=_label(current, end)))
-    return chunks
+    return list(reversed(chunks)) if newest_first else chunks
 
 
 def _label(start: datetime, end: datetime) -> str:

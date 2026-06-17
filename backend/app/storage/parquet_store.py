@@ -363,6 +363,32 @@ class ParquetStore:
         timestamps = [value for value in parsed if value is not None]
         return max(timestamps) if timestamps else None
 
+    def covered_source_ranges(self, country: str) -> list[tuple[datetime, datetime]]:
+        files = self._raw_call_files(country)
+        if not files:
+            return []
+        try:
+            frame = (
+                pl.scan_parquet([str(file) for file in files])
+                .select(["source_ts_start", "source_ts_end"])
+                .drop_nulls()
+                .collect()
+            )
+        except Exception:
+            return []
+        ranges = [
+            (start, end)
+            for start, end in (
+                (
+                    _parse_source_ts(row.get("source_ts_start")),
+                    _parse_source_ts(row.get("source_ts_end")),
+                )
+                for row in frame.to_dicts()
+            )
+            if start is not None and end is not None and start <= end
+        ]
+        return _merge_source_ranges(ranges)
+
     def _raw_call_files(self, country: str) -> list[Path]:
         root = self.settings.parquet_dir / f"country={country}" / "raw_api_calls"
         return sorted(root.glob("*.parquet")) if root.exists() else []
@@ -460,3 +486,22 @@ def _parse_source_ts(value: Any) -> datetime | None:
         except ValueError:
             return None
     return None
+
+
+def _merge_source_ranges(
+    ranges: list[tuple[datetime, datetime]],
+) -> list[tuple[datetime, datetime]]:
+    if not ranges:
+        return []
+    ordered = sorted(ranges, key=lambda item: item[0])
+    merged: list[tuple[datetime, datetime]] = []
+    for start, end in ordered:
+        if not merged:
+            merged.append((start, end))
+            continue
+        previous_start, previous_end = merged[-1]
+        if start <= previous_end:
+            merged[-1] = (previous_start, max(previous_end, end))
+        else:
+            merged.append((start, end))
+    return merged

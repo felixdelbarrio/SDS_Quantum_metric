@@ -10,7 +10,7 @@ from backend.app.auth.browser_cookies import BrowserCookieProvider
 from backend.app.auth.session_store import secret_store
 from backend.app.config.settings import Settings
 from backend.app.ingestion.models import IngestionCreate, IngestionJob
-from backend.app.ingestion.planner import plan_ingestion_chunks
+from backend.app.ingestion.planner import IngestionChunk, plan_ingestion_chunks
 from backend.app.ingestion.policy import build_ingestion_range
 from backend.app.ingestion.progress import update_progress
 from backend.app.observability.sanitizer import sanitize_error
@@ -104,23 +104,47 @@ class IngestionService:
                 ingestion_range,
                 chunk_days=self.settings.quantum_ingestion_chunk_days,
             )
+            covered_ranges = self.parquet_store.covered_source_ranges(request.country.value)
+            chunks_to_capture = [
+                chunk for chunk in chunks if not _is_chunk_covered(chunk, covered_ranges)
+            ]
             job.planned_chunks = len(chunks)
+            job.chunks = [
+                {
+                    **chunk.details(),
+                    "index": index,
+                    "status": "pending"
+                    if chunk in chunks_to_capture
+                    else "skipped_already_ingested",
+                    "completed_at": None,
+                }
+                for index, chunk in enumerate(chunks, start=1)
+            ]
             update_progress(
                 job,
                 status="planning_chunks",
-                message=f"Planificados {len(chunks)} chunks.",
+                completed_chunks=len(chunks) - len(chunks_to_capture),
+                message=(
+                    f"Planificados {len(chunks)} chunks; "
+                    f"{len(chunks_to_capture)} pendientes de captura."
+                ),
             )
             rows: list[dict[str, Any]] = []
-            for index, chunk in enumerate(chunks, start=1):
+            chunk_indexes = {chunk: index for index, chunk in enumerate(chunks, start=1)}
+            skipped_chunks = len(chunks) - len(chunks_to_capture)
+            for capture_index, chunk in enumerate(chunks_to_capture, start=1):
+                index = chunk_indexes[chunk]
                 current_task = asyncio.current_task()
                 if current_task is not None and current_task.cancelled():
                     raise asyncio.CancelledError
+                job.current_chunk_index = index
                 job.current_chunk_start = chunk.details()["start"]
                 job.current_chunk_end = chunk.details()["end"]
+                _set_chunk_status(job, index, "running")
                 update_progress(
                     job,
                     status="capturing_chunk",
-                    completed_chunks=index - 1,
+                    completed_chunks=skipped_chunks + capture_index - 1,
                     message=f"Capturando chunk {index}/{len(chunks)} {chunk.label}.",
                 )
                 chunk_range = ingestion_range.__class__(
@@ -146,15 +170,18 @@ class IngestionService:
                 rows.extend(captured)
                 update_progress(
                     job,
-                    completed_chunks=index,
+                    completed_chunks=skipped_chunks + capture_index,
                     calls_captured=len(rows),
                     rows_captured=sum(int(row.get("row_count") or 0) for row in rows),
                     message=f"Chunk {index}/{len(chunks)} persistido en memoria.",
                 )
+                _set_chunk_status(job, index, "completed")
             update_progress(job, status="persisting_raw", message="Persistiendo RAW Parquet.")
-            merge = self.parquet_store.merge_raw_calls(request.country.value, rows)
+            merge = (
+                self.parquet_store.merge_raw_calls(request.country.value, rows) if rows else None
+            )
             job.records_received = sum(int(row.get("row_count") or 0) for row in rows)
-            job.records_persisted = merge.rows_captured
+            job.records_persisted = merge.rows_captured if merge else 0
             job.calls_captured = len(rows)
             job.rows_captured = job.records_received
             job.pages_processed = 2
@@ -162,7 +189,7 @@ class IngestionService:
             build = build_derived_datasets(
                 self.parquet_store,
                 request.country.value,
-                raw_calls=rows,
+                raw_calls=rows or None,
                 ingestion_id=job.ingestion_id,
             )
             job.mandatory_cards_total = build.mandatory_cards
@@ -176,10 +203,12 @@ class IngestionService:
             )
             job.regression_status = report.status
             job.details = {
-                "parquet_path": str(merge.path) if merge.path else None,
+                "parquet_path": str(merge.path) if merge and merge.path else None,
                 "raw_calls": len(rows),
-                "rows_replaced": merge.rows_replaced,
-                "rows_after_merge": merge.rows_after,
+                "rows_replaced": merge.rows_replaced if merge else 0,
+                "rows_after_merge": merge.rows_after if merge else 0,
+                "skipped_chunks": skipped_chunks,
+                "captured_chunks": len(chunks_to_capture),
                 "cards_captured": build.captured_cards,
                 "mandatory_cards": build.mandatory_cards,
                 "mandatory_cards_captured": build.mandatory_cards_captured,
@@ -209,3 +238,31 @@ class IngestionService:
             job.finished_at = datetime.now(UTC)
             job.duration_seconds = round(time.perf_counter() - started, 2)
             self.parquet_store.append_manifest(job.model_dump(mode="json"))
+
+
+def _is_chunk_covered(
+    chunk: IngestionChunk,
+    covered_ranges: list[tuple[datetime, datetime]],
+) -> bool:
+    return any(
+        range_start <= chunk.start and range_end >= chunk.end
+        for range_start, range_end in covered_ranges
+    )
+
+
+def _set_chunk_status(job: IngestionJob, index: int, status: str) -> None:
+    next_chunks = []
+    for chunk in job.chunks:
+        if int(chunk.get("index") or 0) == index:
+            next_chunks.append(
+                {
+                    **chunk,
+                    "status": status,
+                    "completed_at": datetime.now(UTC).isoformat()
+                    if status == "completed"
+                    else chunk.get("completed_at"),
+                }
+            )
+        else:
+            next_chunks.append(chunk)
+    job.chunks = next_chunks

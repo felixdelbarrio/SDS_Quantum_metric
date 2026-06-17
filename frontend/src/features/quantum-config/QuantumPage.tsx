@@ -42,6 +42,10 @@ export function QuantumPage() {
   const activeCountryExists = countryRows.some(
     (row) => row.country === current?.country,
   );
+  const depthDaysInvalid =
+    !current ||
+    !Number.isInteger(current.ingestion_depth_days) ||
+    current.ingestion_depth_days < 1;
 
   const save = useMutation({
     mutationFn: (payload: QuantumConfig & { manual_cookie?: string }) =>
@@ -212,11 +216,12 @@ export function QuantumPage() {
               type="number"
               min={1}
               max={3650}
-              value={current.ingestion_depth_days}
+              required
+              value={current.ingestion_depth_days || ""}
               onChange={(event) =>
                 update(
                   "ingestion_depth_days",
-                  Number(event.target.value) || 365,
+                  event.target.value === "" ? 0 : Number(event.target.value),
                 )
               }
             />
@@ -337,7 +342,7 @@ export function QuantumPage() {
           <button
             className="button"
             type="submit"
-            disabled={save.isPending || !countryRows.length}
+            disabled={save.isPending || !countryRows.length || depthDaysInvalid}
           >
             <Save size={16} /> Guardar
           </button>

@@ -100,7 +100,7 @@ class QuantumConfig(BaseModel):
     country: Country = Country.MX
     countries: list[QuantumCountryConfig] = Field(default_factory=list)
     verify_tls: bool = True
-    ingestion_depth_days: int = Field(default=365, ge=1, le=3650)
+    ingestion_depth_days: int = Field(default=30, ge=1, le=3650)
     theme_preference: Literal["system", "light", "dark"] = "system"
 
     @model_validator(mode="before")
@@ -170,7 +170,7 @@ class QuantumPublicConfig(BaseModel):
     country: Country = Country.MX
     countries: list[QuantumPublicCountryConfig] = Field(default_factory=list)
     verify_tls: bool = True
-    ingestion_depth_days: int = Field(default=365, ge=1, le=3650)
+    ingestion_depth_days: int = Field(default=30, ge=1, le=3650)
     theme_preference: Literal["system", "light", "dark"] = "system"
 
 
