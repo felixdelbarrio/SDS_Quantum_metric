@@ -35,6 +35,8 @@ Playwright ni clientes HTTP externos.
 - `builder.py`: raw calls -> visual contracts -> web snapshots -> derived Parquet -> chart payloads.
 - `service.py`: endpoints `/api/local-dashboard/*` desde derivados.
 - `regression.py`: comparacion Web vs Local de valores, ejes, leyendas, series y tablas.
+- `range_query.py`: resolucion de rangos y cobertura con severidad por preset.
+- `evidence.py`: trazabilidad widget a widget desde Web snapshot hasta API local.
 
 ## Flujo de ingesta
 
@@ -43,9 +45,9 @@ Playwright ni clientes HTTP externos.
 3. Se resuelve dashboard/team/tabs internamente.
 4. Se navega `Resumen` y `Errores`.
 5. Se capturan respuestas reales de `/analytics` y `/analytics/historical`.
-6. Se guardan raw calls, particiones diarias y manifests en Parquet dentro de la ruta persistente.
+6. Se guardan raw calls normalizadas, particiones diarias y manifests en Parquet dentro de la ruta persistente.
 7. Se generan contratos visuales, snapshots web, datasets derivados y `derived/chart_payloads`.
-8. Se ejecuta regresion Web vs Local.
+8. Se ejecuta regresion Web vs Local solo para widgets habilitados.
 9. La ingesta solo termina `completed` si la regresion pasa.
 
 La politica de rango usa `QUANTUM_INGESTION_DEPTH_DAYS`, `QUANTUM_INCREMENTAL_REPROCESS_DAYS` y `QUANTUM_INGESTION_CHUNK_DAYS`. El planner divide ventanas largas en chunks y el rewriter aplica el rango activo a payloads Quantum antes de persistir.
@@ -64,7 +66,11 @@ Las cards graficas no se renderizan desde agregados. Backend persiste `ChartPayl
 
 ## Datasets Auditables
 
-Datasets expone entidades Parquet por pais mediante `/api/datasets/{country}/entities` y `/api/datasets/{country}/entities/{entity}`. Las respuestas son paginadas; RAW completo solo se lee bajo demanda. Export/import incluye `config/quantum.json` y datos Parquet, rechazando secretos y rutas peligrosas.
+Datasets expone entidades Parquet por pais mediante `/api/datasets/{country}/entities` y `/api/datasets/{country}/entities/{entity}`. Las entidades incluyen categoria, dashboard ID y widget role. Las respuestas son paginadas; RAW completo solo se lee bajo demanda. Export/import incluye `config/quantum_config.json` y datos Parquet, rechazando secretos y rutas peligrosas. `/api/datasets/{country}/evidence` expone la cadena Web -> RAW -> derived -> API.
+
+## Configuracion persistente
+
+`backend/app/quantum/config_store.py` escribe `config/quantum_config.json` de forma atomica con schema version. El modelo contiene paises, dashboards, widgets, tema, browser, modo de sesion y profundidad de ingesta. Cookies y Authorization nunca se persisten.
 
 ## Offline
 

@@ -365,6 +365,8 @@ function responseFor(url: URL, options: MockOptions) {
       start: url.searchParams.get("start"),
       end: url.searchParams.get("end"),
       complete: missingDays.length === 0,
+      warning_level: missingDays.length ? "warning" : "none",
+      completeness: missingDays.length ? "empty" : "complete",
       covered_days: missingDays.length ? [] : [url.searchParams.get("start")],
       missing_days: missingDays,
       message: missingDays.length

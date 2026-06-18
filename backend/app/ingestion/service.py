@@ -17,6 +17,7 @@ from backend.app.observability.sanitizer import sanitize_error
 from backend.app.quantum.config_store import QuantumConfigStore
 from backend.app.quantum_dashboard.builder import build_derived_datasets
 from backend.app.quantum_dashboard.capture import capture_quantum_dashboard_cards
+from backend.app.quantum_dashboard.card_mapper import map_card_role
 from backend.app.quantum_dashboard.discovery import discover_dashboard_from_config
 from backend.app.quantum_dashboard.models import DerivedBuildResult, RegressionReport
 from backend.app.quantum_dashboard.periods import parse_date, zoneinfo_for
@@ -100,6 +101,18 @@ class IngestionService:
                     incremental_reprocess_days=self.settings.quantum_incremental_reprocess_days,
                 )
             country_config = config.required_country_config(request.country)
+            dashboard = country_config.default_dashboard()
+            if not dashboard or not dashboard.dashboard_id or not dashboard.validated:
+                raise RuntimeError(
+                    f"No hay dashboard validado para {request.country.value}. "
+                    "Ve a Configuracion y ejecuta Test pais o Test dashboard."
+                )
+            enabled_roles = set(country_config.enabled_widget_roles())
+            if not enabled_roles:
+                raise RuntimeError(
+                    f"No hay widgets habilitados para {request.country.value}. "
+                    "Ve a Configuracion y habilita al menos un widget."
+                )
             discovery = discover_dashboard_from_config(
                 settings=self.settings,
                 country_config=country_config,
@@ -190,12 +203,14 @@ class IngestionService:
                     ingestion_id=job.ingestion_id,
                     ingestion_range=chunk_range,
                 )
+                captured = _filter_enabled_rows(captured, enabled_roles)
                 chunk_rows = sum(int(row.get("row_count") or 0) for row in captured)
                 merge, build, report = _publish_completed_chunk(
                     self.parquet_store,
                     request.country.value,
                     captured,
                     job.ingestion_id,
+                    enabled_roles,
                 )
                 rows_replaced += merge.rows_replaced if merge else 0
                 rows_after_merge = merge.rows_after if merge else rows_after_merge
@@ -233,12 +248,14 @@ class IngestionService:
                     self.parquet_store,
                     request.country.value,
                     ingestion_id=job.ingestion_id,
+                    enabled_roles=enabled_roles,
                 )
                 update_progress(job, status="running_regression", message="Ejecutando regresion.")
                 report = run_regression(
                     self.parquet_store,
                     request.country.value,
                     ingestion_id=job.ingestion_id,
+                    enabled_roles=enabled_roles,
                 )
             elif build and report:
                 update_progress(
@@ -257,12 +274,14 @@ class IngestionService:
                     self.parquet_store,
                     request.country.value,
                     ingestion_id=job.ingestion_id,
+                    enabled_roles=enabled_roles,
                 )
             if report is None:
                 report = run_regression(
                     self.parquet_store,
                     request.country.value,
                     ingestion_id=job.ingestion_id,
+                    enabled_roles=enabled_roles,
                 )
             job.mandatory_cards_total = build.mandatory_cards
             job.mandatory_cards_captured = build.mandatory_cards_captured
@@ -287,6 +306,7 @@ class IngestionService:
                 "range": ingestion_range.details(),
                 "requested_days": request.days,
                 "dashboard": discovery.model_dump(mode="json"),
+                "enabled_roles": sorted(enabled_roles),
             }
             if report.verdict == "FAILED":
                 job.status = "failed_regression"
@@ -300,7 +320,20 @@ class IngestionService:
             job.errors.append("Ingestion cancelled.")
         except Exception as exc:
             job.status = "failed"
-            job.errors.append(sanitize_error(exc))
+            failure = sanitize_error(exc)
+            job.errors.append(failure)
+            job.details.update(
+                {
+                    "failure": failure,
+                    "failure_stage": job.status,
+                    "endpoint_current": job.endpoint_current,
+                    "current_chunk_index": job.current_chunk_index,
+                    "current_chunk_start": job.current_chunk_start,
+                    "current_chunk_end": job.current_chunk_end,
+                }
+            )
+            if job.current_chunk_index is not None:
+                _set_chunk_status(job, job.current_chunk_index, "failed")
         finally:
             job.finished_at = datetime.now(UTC)
             job.duration_seconds = round(time.perf_counter() - started, 2)
@@ -346,10 +379,13 @@ def _publish_completed_chunk(
     country: str,
     rows: list[dict[str, Any]],
     ingestion_id: str,
+    enabled_roles: set[str],
 ) -> tuple[RawCallMergeResult | None, DerivedBuildResult, RegressionReport]:
     merge = store.merge_raw_calls(country, rows) if rows else None
-    build = build_derived_datasets(store, country, ingestion_id=ingestion_id)
-    report = run_regression(store, country, ingestion_id=ingestion_id)
+    build = build_derived_datasets(
+        store, country, ingestion_id=ingestion_id, enabled_roles=enabled_roles
+    )
+    report = run_regression(store, country, ingestion_id=ingestion_id, enabled_roles=enabled_roles)
     return merge, build, report
 
 
@@ -369,3 +405,27 @@ def _set_chunk_status(job: IngestionJob, index: int, status: str) -> None:
         else:
             next_chunks.append(chunk)
     job.chunks = next_chunks
+
+
+def _filter_enabled_rows(
+    rows: list[dict[str, Any]],
+    enabled_roles: set[str],
+) -> list[dict[str, Any]]:
+    card_role_by_id: dict[str, str] = {}
+    for row in rows:
+        role = map_card_role(row)
+        card_id = str(row.get("card_id") or "")
+        if role is not None and card_id:
+            card_role_by_id[card_id] = role
+    filtered: list[dict[str, Any]] = []
+    for row in rows:
+        role = map_card_role(row)
+        card_id = str(row.get("card_id") or "")
+        if role is not None:
+            if role in enabled_roles:
+                filtered.append(row)
+            continue
+        inferred = card_role_by_id.get(card_id)
+        if inferred is None or inferred in enabled_roles:
+            filtered.append(row)
+    return filtered

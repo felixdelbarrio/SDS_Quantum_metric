@@ -58,7 +58,10 @@ class ParquetStore:
         target.mkdir(parents=True, exist_ok=True)
         path = target / COMPACTED_RAW_CALLS_FILE
         files = self._legacy_raw_call_files(country)
-        new_frame = pl.DataFrame(rows)
+        new_frame = pl.DataFrame(
+            [_parquet_safe_row(row) for row in rows],
+            infer_schema_length=None,
+        )
         existing = self._read_parquet_files(files)
         kept_existing, rows_replaced = self._drop_overlapping_source_range(existing, rows)
         frame = pl.concat([kept_existing, new_frame], how="diagonal_relaxed")
@@ -146,10 +149,16 @@ class ParquetStore:
             scan = pl.scan_parquet([str(file) for file in files])
             rows = int(scan.select(pl.len()).collect().item())
             relative = str(dataset_dir.relative_to(root))
+            sample = _sample_row(scan)
             entities.append(
                 {
                     "id": relative,
                     "label": relative.replace("_", " "),
+                    "category": _entity_category(relative),
+                    "dashboard_id": _text_or_none(sample.get("dashboard_id")),
+                    "widget_role": _text_or_none(
+                        sample.get("card_role") or sample.get("visual_role")
+                    ),
                     "rows": rows,
                     "files": len(files),
                     "bytes": sum(file.stat().st_size for file in files),
@@ -256,17 +265,19 @@ class ParquetStore:
         target = self.settings.exports_dir / f"quantum_export_{safe_countries}_{timestamp}.zip"
         with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
             manifest = {
-                "schema_version": "1.1",
+                "schema_version": "1.2",
                 "created_at": datetime.now(UTC).isoformat(),
                 "countries": countries,
-                "includes": ["config/quantum.json", "data/parquet"],
+                "includes": ["config/quantum_config.json", "data/parquet"],
                 "checksum": "",
             }
             archive.writestr("manifest.json", json.dumps(manifest, indent=2))
-            quantum_config = self.settings.config_dir / "quantum.json"
+            quantum_config = self.settings.config_dir / "quantum_config.json"
+            if not quantum_config.exists():
+                quantum_config = self.settings.config_dir / "quantum.json"
             if quantum_config.exists():
                 archive.writestr(
-                    "config/quantum.json",
+                    "config/quantum_config.json",
                     json.dumps(_safe_json_file(quantum_config), indent=2),
                 )
             for country in countries:
@@ -292,13 +303,13 @@ class ParquetStore:
                     relative = PurePosixPath(name)
                     if ".." in relative.parts or relative.is_absolute():
                         raise ValueError(f"Unsafe ZIP path: {name}")
-                    if name != "config/quantum.json":
+                    if name not in {"config/quantum.json", "config/quantum_config.json"}:
                         raise ValueError(f"Unexpected config path: {name}")
                     config_payload = json.loads(archive.read(name))
                     _reject_secret_config(config_payload)
                     config_files.append(
                         (
-                            self.settings.config_dir / "quantum.json",
+                            self.settings.config_dir / "quantum_config.json",
                             json.dumps(config_payload, indent=2).encode(),
                         )
                     )
@@ -534,7 +545,10 @@ class ParquetStore:
             target.mkdir(parents=True, exist_ok=True)
             path = target / COMPACTED_RAW_CALLS_FILE
             temporary = path.with_suffix(".tmp.parquet")
-            pl.DataFrame(rows).write_parquet(temporary)
+            pl.DataFrame(
+                [_parquet_safe_row(row) for row in rows],
+                infer_schema_length=None,
+            ).write_parquet(temporary)
             temporary.replace(path)
             starts = [_parse_source_ts(row.get("source_ts_start")) for row in rows]
             ends = [_parse_source_ts(row.get("source_ts_end")) for row in rows]
@@ -699,6 +713,37 @@ def _coverage_message(missing_days: list[date]) -> str:
     if len(missing_days) == 1:
         return f"Falta 1 dia para completar el periodo: {missing_days[0].isoformat()}."
     return f"Faltan {len(missing_days)} dias para completar el periodo."
+
+
+def _sample_row(scan: pl.LazyFrame) -> dict[str, Any]:
+    try:
+        rows = scan.head(1).collect().to_dicts()
+    except Exception:
+        return {}
+    return rows[0] if rows else {}
+
+
+def _entity_category(relative: str) -> str:
+    if relative == "raw_api_calls" or "/raw_api_calls" in relative:
+        return "RAW"
+    if relative == "visual_contracts":
+        return "Visual Contracts"
+    if relative == "dashboard_cards":
+        return "Dashboard Metadata"
+    if relative.startswith("derived/"):
+        return "Derived"
+    if relative.startswith("regression/"):
+        return "Regression"
+    if relative.startswith("manifests"):
+        return "Manifest"
+    return "Config"
+
+
+def _text_or_none(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def _merge_source_ranges(

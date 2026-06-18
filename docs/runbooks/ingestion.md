@@ -41,3 +41,11 @@ No hay reproduccion local de sesiones ni rutas de video.
 - El boton de un pais queda deshabilitado si ese pais ya tiene ingesta activa.
 - La UI muestra una card solo para la ingesta activa y el historico en tabla.
 - Al finalizar se actualizan particiones diarias y `day_coverage.parquet`.
+
+# Iteracion 9
+
+- La ingesta usa el dashboard default validado del pais.
+- Si no hay dashboard validado, falla con mensaje accionable y no marca `completed`.
+- Solo se persisten roles de widgets habilitados.
+- Los widgets deshabilitados no se derivan ni entran en regresion.
+- Los errores de ingesta guardan etapa, endpoint, chunk y rango sanitizados.

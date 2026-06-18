@@ -93,14 +93,14 @@ def test_parquet_store_export_import_includes_quantum_config(tmp_path: Path) -> 
 
     exported = store.export_countries(["MX"])
     with zipfile.ZipFile(exported) as archive:
-        assert "config/quantum.json" in archive.namelist()
-        assert "Cookie" not in archive.read("config/quantum.json").decode()
+        assert "config/quantum_config.json" in archive.namelist()
+        assert "Cookie" not in archive.read("config/quantum_config.json").decode()
 
     target = ParquetStore(Settings(qm_data_dir=tmp_path / "target"))
     imported = target.import_zip(exported)
 
     assert imported["imported_files"] == 1
-    assert (target.settings.config_dir / "quantum.json").exists()
+    assert (target.settings.config_dir / "quantum_config.json").exists()
 
 
 def test_parquet_store_recovers_from_corrupt_manifest(tmp_path: Path) -> None:

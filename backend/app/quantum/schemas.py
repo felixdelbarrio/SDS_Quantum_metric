@@ -62,6 +62,54 @@ def country_label(country: str | Country) -> str:
     return COUNTRY_LABELS.get(code, code)
 
 
+type WidgetTab = Literal["summary", "errors"]
+type WidgetType = Literal["CHART", "TABLE", "DONUT", "KPI", "UNKNOWN"]
+
+
+class QuantumWidgetConfig(BaseModel):
+    role: str
+    title: str = ""
+    widget_id: str = ""
+    widget_type: WidgetType = "UNKNOWN"
+    tab: WidgetTab = "summary"
+    enabled: bool = True
+    discovered_at: datetime | None = None
+
+    @field_validator("role", "title", "widget_id", "widget_type", mode="before")
+    @classmethod
+    def _strip_widget_text(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
+
+
+class QuantumDashboardConfig(BaseModel):
+    dashboard_id: str = ""
+    name: str = ""
+    dashboard_type: str = "dashboard"
+    team_id: str = ""
+    summary_tab: int = Field(default=0, ge=0)
+    errors_tab: int = Field(default=1, ge=0)
+    is_default: bool = False
+    is_manual: bool = False
+    validated: bool = False
+    validation_status: Literal["not_tested", "ok", "ko"] = "not_tested"
+    discovered_at: datetime | None = None
+    widgets: list[QuantumWidgetConfig] = Field(default_factory=list)
+
+    @field_validator("dashboard_id", "name", "dashboard_type", "team_id", mode="before")
+    @classmethod
+    def _strip_dashboard_text(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
+
+    @model_validator(mode="after")
+    def _seed_widgets(self) -> QuantumDashboardConfig:
+        if not self.widgets:
+            self.widgets = default_widget_configs()
+        return self
+
+    def enabled_widget_roles(self) -> list[str]:
+        return [widget.role for widget in self.widgets if widget.enabled]
+
+
 class QuantumCountryConfig(BaseModel):
     country: Country
     base_url: str = ""
@@ -69,23 +117,69 @@ class QuantumCountryConfig(BaseModel):
     team_id: str = ""
     tab: int = Field(default=0, ge=0)
     enabled: bool = True
+    dashboards: list[QuantumDashboardConfig] = Field(default_factory=list)
 
     @field_validator("base_url", "dashboard_id", "team_id", mode="before")
     @classmethod
     def _strip_text(cls, value: object) -> object:
         return value.strip() if isinstance(value, str) else value
 
+    @model_validator(mode="after")
+    def _migrate_dashboard_fields(self) -> QuantumCountryConfig:
+        if not self.dashboards and self.dashboard_id:
+            self.dashboards = [
+                QuantumDashboardConfig(
+                    dashboard_id=self.dashboard_id,
+                    name="Dashboard default",
+                    team_id=self.team_id,
+                    summary_tab=self.tab,
+                    errors_tab=1,
+                    is_default=True,
+                    validated=True,
+                    validation_status="ok",
+                )
+            ]
+        if self.dashboards and not any(item.is_default for item in self.dashboards):
+            self.dashboards[0].is_default = True
+        for dashboard in self.dashboards:
+            if dashboard.is_default:
+                self.dashboard_id = dashboard.dashboard_id
+                self.team_id = dashboard.team_id
+                self.tab = dashboard.summary_tab
+                break
+        return self
+
     def is_ready_for_ingestion(self) -> bool:
-        return bool(self.enabled and self.base_url and self.dashboard_id)
+        dashboard = self.default_dashboard()
+        return bool(
+            self.enabled
+            and self.base_url
+            and dashboard
+            and dashboard.dashboard_id
+            and dashboard.validated
+        )
+
+    def default_dashboard(self) -> QuantumDashboardConfig | None:
+        return next((item for item in self.dashboards if item.is_default), None)
+
+    def enabled_widget_roles(self) -> list[str]:
+        dashboard = self.default_dashboard()
+        if dashboard is None:
+            return [widget.role for widget in default_widget_configs()]
+        return dashboard.enabled_widget_roles()
 
     def dashboard_url(self) -> str:
-        if not self.base_url or not self.dashboard_id:
+        dashboard = self.default_dashboard()
+        dashboard_id = dashboard.dashboard_id if dashboard else self.dashboard_id
+        team_id = dashboard.team_id if dashboard else self.team_id
+        summary_tab = dashboard.summary_tab if dashboard else self.tab
+        if not self.base_url or not dashboard_id:
             raise ValueError("Country config needs base_url and dashboard_id.")
-        fragment_path = f"/dashboard/{self.dashboard_id}"
+        fragment_path = f"/dashboard/{dashboard_id}"
         query = urlencode(
             {
-                "tab": self.tab,
-                **({"teamID": self.team_id} if self.team_id else {}),
+                "tab": summary_tab,
+                **({"teamID": team_id} if team_id else {}),
             }
         )
         fragment = f"{fragment_path}?{query}" if query else fragment_path
@@ -95,6 +189,7 @@ class QuantumCountryConfig(BaseModel):
 
 
 class QuantumConfig(BaseModel):
+    schema_version: int = 2
     browser: BrowserName = BrowserName.chrome
     session_mode: SessionMode = SessionMode.browser
     country: Country = Country.MX
@@ -108,8 +203,10 @@ class QuantumConfig(BaseModel):
     def _migrate_legacy_single_country(cls, value: object) -> object:
         if not isinstance(value, dict):
             return value
+        migrated = dict(value)
+        migrated.setdefault("schema_version", 2)
         if value.get("countries"):
-            return value
+            return migrated
 
         country = value.get("country") or Country.MX.value
         dashboard_parts = _dashboard_parts(str(value.get("dashboard_url") or ""))
@@ -120,7 +217,6 @@ class QuantumConfig(BaseModel):
             team_id=str(dashboard_parts["team_id"]),
             tab=int(dashboard_parts["tab"]),
         )
-        migrated = dict(value)
         migrated["countries"] = [legacy]
         migrated.pop("base_url", None)
         migrated.pop("dashboard_url", None)
@@ -161,7 +257,9 @@ class QuantumPublicCountryConfig(BaseModel):
     country: Country
     base_url: str = ""
     enabled: bool = True
+    is_default: bool = False
     dashboard_resolved: bool = False
+    dashboards: list[QuantumDashboardConfig] = Field(default_factory=list)
 
 
 class QuantumPublicConfig(BaseModel):
@@ -210,17 +308,27 @@ def public_quantum_config(config: QuantumConfig) -> QuantumPublicConfig:
         session_mode=config.session_mode,
         country=config.country,
         countries=[
-            QuantumPublicCountryConfig(
-                country=item.country,
-                base_url=item.base_url,
-                enabled=item.country == config.country,
-                dashboard_resolved=bool(item.dashboard_id),
-            )
+            _public_country_config(item, item.country == config.country)
             for item in config.countries
         ],
         verify_tls=config.verify_tls,
         ingestion_depth_days=config.ingestion_depth_days,
         theme_preference=config.theme_preference,
+    )
+
+
+def _public_country_config(
+    item: QuantumCountryConfig,
+    is_default: bool,
+) -> QuantumPublicCountryConfig:
+    dashboard = item.default_dashboard()
+    return QuantumPublicCountryConfig(
+        country=item.country,
+        base_url=item.base_url,
+        enabled=item.enabled,
+        is_default=is_default,
+        dashboard_resolved=bool(dashboard and dashboard.validated),
+        dashboards=item.dashboards,
     )
 
 
@@ -237,17 +345,20 @@ def merge_public_quantum_update(
     countries: list[QuantumCountryConfig] = []
     for item in update.countries:
         previous = existing_by_country.get(item.country)
+        dashboards = item.dashboards or (previous.dashboards if previous else [])
         countries.append(
             QuantumCountryConfig(
                 country=item.country,
                 base_url=item.base_url,
-                dashboard_id=previous.dashboard_id if previous else "",
-                team_id=previous.team_id if previous else "",
-                tab=previous.tab if previous else 0,
-                enabled=item.country == default_country,
+                dashboard_id=(previous.dashboard_id if previous else ""),
+                team_id=(previous.team_id if previous else ""),
+                tab=(previous.tab if previous else 0),
+                enabled=item.enabled,
+                dashboards=_normalized_dashboards(dashboards),
             )
         )
     return QuantumConfigUpdate(
+        schema_version=existing.schema_version,
         browser=update.browser,
         session_mode=update.session_mode,
         country=default_country,
@@ -257,6 +368,82 @@ def merge_public_quantum_update(
         theme_preference=update.theme_preference,
         manual_cookie=update.manual_cookie,
     )
+
+
+def default_widget_configs() -> list[QuantumWidgetConfig]:
+    return [
+        QuantumWidgetConfig(
+            role="summary.page_views",
+            title="Paginas vistas",
+            widget_type="CHART",
+            tab="summary",
+        ),
+        QuantumWidgetConfig(
+            role="summary.sessions",
+            title="Sesiones",
+            widget_type="CHART",
+            tab="summary",
+        ),
+        QuantumWidgetConfig(
+            role="summary.converted_sessions",
+            title="Sesiones con conversion",
+            widget_type="CHART",
+            tab="summary",
+        ),
+        QuantumWidgetConfig(
+            role="summary.avg_session_duration",
+            title="Tiempo medio de sesion",
+            widget_type="CHART",
+            tab="summary",
+        ),
+        QuantumWidgetConfig(
+            role="summary.detail_by_app_name_os",
+            title="Detalle App Name / SO",
+            widget_type="TABLE",
+            tab="summary",
+        ),
+        QuantumWidgetConfig(
+            role="errors.error_sessions_percentage_evolution",
+            title="Evolutivo - % Sesiones con Error",
+            widget_type="CHART",
+            tab="errors",
+        ),
+        QuantumWidgetConfig(
+            role="errors.top_errors_by_error_name",
+            title="Top errores",
+            widget_type="TABLE",
+            tab="errors",
+        ),
+        QuantumWidgetConfig(
+            role="errors.error_sessions_by_app_name_comparison",
+            title="Comparativa App Name",
+            widget_type="DONUT",
+            tab="errors",
+        ),
+        QuantumWidgetConfig(
+            role="errors.error_session_percentage_by_app_name",
+            title="% error por App Name",
+            widget_type="TABLE",
+            tab="errors",
+        ),
+    ]
+
+
+def _normalized_dashboards(
+    dashboards: list[QuantumDashboardConfig],
+) -> list[QuantumDashboardConfig]:
+    if not dashboards:
+        return []
+    default_seen = False
+    normalized: list[QuantumDashboardConfig] = []
+    for dashboard in dashboards:
+        is_default = dashboard.is_default and not default_seen
+        if is_default:
+            default_seen = True
+        normalized.append(dashboard.model_copy(update={"is_default": is_default}))
+    if not default_seen and normalized:
+        normalized[0] = normalized[0].model_copy(update={"is_default": True})
+    return normalized
 
 
 def _first_text(values: list[str] | None, default: str) -> str:

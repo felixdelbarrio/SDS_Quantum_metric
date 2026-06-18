@@ -6,7 +6,7 @@ from typing import Any
 
 from backend.app.analytics.normalizer import canonicalize_key, parse_json_object
 from backend.app.quantum_dashboard.card_mapper import card_title_for_role, map_card_role
-from backend.app.quantum_dashboard.catalog import MANDATORY_CARDS, ROLE_SPECS, required_roles
+from backend.app.quantum_dashboard.catalog import ROLE_SPECS, required_roles
 from backend.app.quantum_dashboard.models import (
     CardContract,
     DashboardPeriod,
@@ -49,10 +49,20 @@ def build_derived_datasets(
     *,
     raw_calls: list[dict[str, Any]] | None = None,
     ingestion_id: str | None = None,
+    enabled_roles: set[str] | list[str] | None = None,
 ) -> DerivedBuildResult:
     calls = raw_calls if raw_calls is not None else _read_raw_calls(store, country)
+    enabled_role_set: set[str] = (
+        set(enabled_roles)
+        if enabled_roles is not None
+        else {str(role) for role in required_roles()}
+    )
     selected = _latest_call_by_role(calls)
+    selected = {role: call for role, call in selected.items() if str(role) in enabled_role_set}
     timeseries_by_role = _timeseries_call_by_role(calls)
+    timeseries_by_role = {
+        role: call for role, call in timeseries_by_role.items() if str(role) in enabled_role_set
+    }
     now = datetime.now(UTC).isoformat()
     contracts: list[CardContract] = []
     snapshots: list[WebSnapshot] = []
@@ -96,7 +106,9 @@ def build_derived_datasets(
             chart_payload_rows=chart_payload_rows,
         )
 
-    validation_errors = _validate_required_chart_payloads(selected, summary_widgets, errors_widgets)
+    validation_errors = _validate_required_chart_payloads(
+        selected, summary_widgets, errors_widgets, enabled_role_set
+    )
     parser_errors.extend(validation_errors)
 
     store.write_country_dataset(
@@ -125,8 +137,9 @@ def build_derived_datasets(
     store.write_country_dataset(country, DATASET_TIMESERIES, timeseries_rows)
     store.write_country_dataset(country, DATASET_CHART_PAYLOADS, chart_payload_rows)
 
-    missing = [role for role in required_roles() if role not in selected]
-    mandatory_captured = len([role for role in required_roles() if role in selected])
+    expected_roles = [role for role in required_roles() if str(role) in enabled_role_set]
+    missing = [role for role in expected_roles if role not in selected]
+    mandatory_captured = len([role for role in expected_roles if role in selected])
     regression_status: RegressionStatus = (
         "passed" if not missing and not parser_errors else "failed_missing_card"
     )
@@ -141,7 +154,7 @@ def build_derived_datasets(
         raw_calls=len(calls),
         raw_rows=sum(int(call.get("row_count") or 0) for call in calls),
         captured_cards=len(selected),
-        mandatory_cards=len(MANDATORY_CARDS),
+        mandatory_cards=len(expected_roles),
         mandatory_cards_captured=mandatory_captured,
         derived_datasets=sum(
             bool(rows)
@@ -475,10 +488,13 @@ def _validate_required_chart_payloads(
     selected: dict[VisualRole, dict[str, Any]],
     summary_widgets: list[dict[str, Any]],
     errors_widgets: list[dict[str, Any]],
+    enabled_roles: set[str],
 ) -> list[dict[str, str]]:
     widgets = {str(row.get("card_role")): row for row in [*summary_widgets, *errors_widgets]}
     errors: list[dict[str, str]] = []
     for role in REQUIRED_CHART_ROLES:
+        if str(role) not in enabled_roles:
+            continue
         if role not in selected:
             continue
         payload = widgets.get(role, {}).get("chart_payload")

@@ -25,7 +25,11 @@ export type DashboardCoverage = {
   country: CountryCode;
   start: string | null;
   end: string | null;
+  range_key?: string;
   complete: boolean;
+  completeness?: "complete" | "partial" | "empty";
+  warning_level?: "none" | "info" | "warning" | "blocking";
+  required_days?: string[];
   covered_days: string[];
   missing_days: string[];
   message: string;

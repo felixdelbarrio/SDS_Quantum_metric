@@ -18,6 +18,7 @@ type DashboardParams = {
   segment?: string | null;
   startDate?: string | null;
   endDate?: string | null;
+  rangeKey?: string | null;
 };
 
 type TableParams = DashboardParams & {
@@ -97,6 +98,7 @@ function toCoverageQuery(params: DashboardParams) {
     country: params.country,
     start: params.startDate,
     end: params.endDate,
+    rangeKey: params.rangeKey,
   });
 }
 
