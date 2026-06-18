@@ -17,6 +17,7 @@ from backend.app.quantum_dashboard.models import (
     WebSnapshot,
 )
 from backend.app.quantum_dashboard.parsers import parse_card
+from backend.app.quantum_dashboard.periods import format_period_label, parse_datetime
 from backend.app.quantum_dashboard.semantics import semantic_intent, semantic_state
 from backend.app.storage.parquet_store import ParquetStore, hash_json
 
@@ -648,12 +649,12 @@ def _text(value: Any) -> str | None:
 
 
 def _period_label(start: Any, end: Any, timezone: Any) -> str | None:
-    start_text = _text(start)
-    end_text = _text(end)
     tz = _text(timezone) or "CST"
-    if not start_text or not end_text:
+    start_dt = parse_datetime(start, tz)
+    end_dt = parse_datetime(end, tz)
+    if not start_dt or not end_dt:
         return None
-    return f"{start_text} - {end_text} {tz}"
+    return format_period_label(start_dt, end_dt, tz)
 
 
 def _float_or_none(value: Any) -> float | None:

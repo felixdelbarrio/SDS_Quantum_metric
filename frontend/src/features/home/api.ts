@@ -1,7 +1,8 @@
-import { apiGet } from "../../shared/api/client";
+import { apiGet, apiPost } from "../../shared/api/client";
 import {
   CountriesResponse,
   CountryCode,
+  DashboardCoverage,
   DetailTableResponse,
   DimensionsResponse,
   ErrorTableResponse,
@@ -27,6 +28,16 @@ type TableParams = DashboardParams & {
 
 export function getCountries() {
   return apiGet<CountriesResponse>("/local-dashboard/countries");
+}
+
+export function getCoverage(params: DashboardParams) {
+  return apiGet<DashboardCoverage>(
+    `/local-dashboard/coverage?${toCoverageQuery(params)}`,
+  );
+}
+
+export function ingestMissingDays(country: CountryCode, days: string[]) {
+  return apiPost("/ingestions/missing-days", { country, days });
 }
 
 export function getSummary(params: DashboardParams) {
@@ -79,6 +90,14 @@ function toQuery(values: Record<string, string | null | undefined>) {
     }
   });
   return params.toString();
+}
+
+function toCoverageQuery(params: DashboardParams) {
+  return toQuery({
+    country: params.country,
+    start: params.startDate,
+    end: params.endDate,
+  });
 }
 
 function toSnakeCase(value: string) {

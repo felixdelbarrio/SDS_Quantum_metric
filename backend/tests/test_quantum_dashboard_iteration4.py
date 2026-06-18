@@ -13,6 +13,7 @@ from backend.app.quantum.config_store import QuantumConfigStore
 from backend.app.quantum.schemas import Country, QuantumCountryConfig
 from backend.app.quantum_dashboard.builder import build_derived_datasets
 from backend.app.quantum_dashboard.card_mapper import map_card_role
+from backend.app.quantum_dashboard.catalog import SUMMARY_DETAIL_TABLE
 from backend.app.quantum_dashboard.discovery import (
     discover_dashboard_from_config,
     parse_dashboard_url,
@@ -225,6 +226,80 @@ def test_regression_fails_when_chart_payload_is_missing(tmp_path: Path) -> None:
 
     assert report.verdict == "FAILED"
     assert any(card.status == "failed_chart_contract_incomplete" for card in report.cards)
+
+
+def test_summary_detail_parser_does_not_duplicate_parent_as_null_child() -> None:
+    result = parse_card(
+        {
+            "response_json": json.dumps(
+                {
+                    "rows": [
+                        {
+                            "app_name": "affiliation basica",
+                            "operating_system": None,
+                            "page_views": 10,
+                            "sessions": 3,
+                            "conversions": 1,
+                        },
+                        {
+                            "app_name": "affiliation basica",
+                            "operating_system": "Android",
+                            "page_views": 7,
+                            "sessions": 2,
+                            "conversions": 1,
+                        },
+                    ]
+                }
+            )
+        },
+        SUMMARY_DETAIL_TABLE,
+    )
+
+    rows = result.data["rows"]
+
+    assert result.status == "ok"
+    assert [row["depth"] for row in rows] == [0, 1]
+    assert rows[0]["name"] == "affiliation basica"
+    assert rows[1]["operating_system"] == "Android"
+
+
+def test_summary_detail_parser_preserves_web_hierarchy() -> None:
+    result = parse_card(
+        {
+            "response_json": json.dumps(
+                {
+                    "rows": [
+                        {
+                            "row_id": "app:pagos",
+                            "parent_row_id": None,
+                            "depth": 0,
+                            "is_expandable": True,
+                            "name": "pagos",
+                            "app_name": "pagos",
+                            "page_views": 10,
+                        },
+                        {
+                            "row_id": "app:pagos:os:iOS",
+                            "parent_row_id": "app:pagos",
+                            "depth": 1,
+                            "name": "iOS",
+                            "app_name": "pagos",
+                            "operating_system": "iOS",
+                            "page_views": 6,
+                        },
+                    ]
+                }
+            )
+        },
+        SUMMARY_DETAIL_TABLE,
+    )
+
+    rows = result.data["rows"]
+
+    assert result.status == "ok"
+    assert len(rows) == 2
+    assert rows[0]["row_id"] == "app:pagos"
+    assert rows[1]["parent_row_id"] == "app:pagos"
 
 
 def test_local_dashboard_endpoints_do_not_call_quantum(

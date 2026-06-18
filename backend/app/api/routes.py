@@ -12,7 +12,7 @@ from backend.app.analytics.service import AnalyticsService
 from backend.app.auth.browser_cookies import BrowserCookieProvider
 from backend.app.auth.session_store import secret_store
 from backend.app.config.settings import Settings, get_settings
-from backend.app.ingestion.models import IngestionCreate
+from backend.app.ingestion.models import IngestionCreate, MissingDaysIngestionCreate
 from backend.app.ingestion.service import IngestionService
 from backend.app.quantum.client import QuantumClient
 from backend.app.quantum.config_store import QuantumConfigStore
@@ -92,10 +92,11 @@ def test_connection(
     store: Annotated[QuantumConfigStore, Depends(config_store_dep)],
     cookie_provider: Annotated[BrowserCookieProvider, Depends(cookie_provider_dep)],
     settings: Annotated[Settings, Depends(settings_dep)],
+    country: str | None = None,
 ) -> dict[str, object]:
     config = store.read()
     try:
-        country_config = config.required_country_config()
+        country_config = config.required_country_config(country)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not country_config.base_url:
@@ -174,6 +175,20 @@ async def create_ingestion(
     return service.start(request).model_dump(mode="json")
 
 
+@router.post("/ingestions/missing-days")
+async def create_missing_days_ingestion(
+    request: MissingDaysIngestionCreate,
+    service: Annotated[IngestionService, Depends(ingestion_service_dep)],
+) -> dict[str, object]:
+    try:
+        job = service.start_missing_days(
+            IngestionCreate(country=request.country, days=request.days)
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job.model_dump(mode="json")
+
+
 @router.get("/ingestions")
 def list_ingestions(
     service: Annotated[IngestionService, Depends(ingestion_service_dep)],
@@ -181,7 +196,7 @@ def list_ingestions(
 ) -> dict[str, object]:
     active = [job.model_dump(mode="json") for job in service.list()]
     persisted = store.list_ingestions()
-    return {"active": active, "persisted": persisted}
+    return {"active": active, "history": persisted, "persisted": persisted}
 
 
 @router.get("/ingestions/{ingestion_id}")
@@ -446,6 +461,19 @@ def local_dashboard_status(
     country: str = "MX",
 ) -> dict[str, object]:
     return LocalDashboardService(store).status(country)
+
+
+@router.get("/local-dashboard/coverage")
+def local_dashboard_coverage(
+    store: Annotated[ParquetStore, Depends(parquet_store_dep)],
+    country: str = "MX",
+    start: str | None = None,
+    end: str | None = None,
+) -> dict[str, object]:
+    try:
+        return store.day_coverage(country, start, end)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/local-dashboard/summary")

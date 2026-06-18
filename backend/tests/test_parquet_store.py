@@ -68,6 +68,41 @@ def test_parquet_store_rejects_unsafe_import_paths(tmp_path: Path) -> None:
         store.import_zip(zip_path)
 
 
+def test_parquet_store_export_import_includes_quantum_config(tmp_path: Path) -> None:
+    store = ParquetStore(Settings(qm_data_dir=tmp_path / "source"))
+    store.settings.config_dir.mkdir(parents=True, exist_ok=True)
+    store.settings.config_dir.joinpath("quantum.json").write_text(
+        json.dumps(
+            {
+                "browser": "chrome",
+                "session_mode": "browser",
+                "country": "MX",
+                "countries": [
+                    {
+                        "country": "MX",
+                        "base_url": "https://bbvamx.quantummetric.com",
+                        "dashboard_id": "dash",
+                        "team_id": "team",
+                        "tab": 0,
+                        "enabled": True,
+                    }
+                ],
+            }
+        )
+    )
+
+    exported = store.export_countries(["MX"])
+    with zipfile.ZipFile(exported) as archive:
+        assert "config/quantum.json" in archive.namelist()
+        assert "Cookie" not in archive.read("config/quantum.json").decode()
+
+    target = ParquetStore(Settings(qm_data_dir=tmp_path / "target"))
+    imported = target.import_zip(exported)
+
+    assert imported["imported_files"] == 1
+    assert (target.settings.config_dir / "quantum.json").exists()
+
+
 def test_parquet_store_recovers_from_corrupt_manifest(tmp_path: Path) -> None:
     store = ParquetStore(Settings(qm_data_dir=tmp_path))
     manifest_path = store.settings.manifests_dir / "ingestion_manifest.parquet"
@@ -149,6 +184,41 @@ def test_parquet_store_lists_merged_covered_source_ranges(tmp_path: Path) -> Non
     assert len(ranges) == 1
     assert ranges[0][0].isoformat() == "2026-06-15T00:00:00+00:00"
     assert ranges[0][1].isoformat() == "2026-06-17T00:00:00+00:00"
+
+
+def test_parquet_store_writes_daily_partitions_and_day_coverage(tmp_path: Path) -> None:
+    store = ParquetStore(Settings(qm_data_dir=tmp_path))
+    store.merge_raw_calls(
+        "MX",
+        [
+            _raw_call(
+                ingestion_id="ing-1",
+                card_id="mx-day-15",
+                source_ts_start="2026-06-15T06:00:00Z",
+                source_ts_end="2026-06-16T05:59:59Z",
+            ),
+            _raw_call(
+                ingestion_id="ing-1",
+                card_id="mx-day-17",
+                source_ts_start="2026-06-17T06:00:00Z",
+                source_ts_end="2026-06-18T05:59:59Z",
+            ),
+        ],
+    )
+
+    root = tmp_path / "parquet" / "country=MX"
+
+    assert (root / "day=2026-06-15" / "raw_api_calls" / "raw_api_calls.parquet").exists()
+    assert (root / "manifests" / "day_coverage.parquet").exists()
+    assert store.day_coverage("MX", "2026-06-15", "2026-06-17") == {
+        "country": "MX",
+        "start": "2026-06-15",
+        "end": "2026-06-17",
+        "complete": False,
+        "covered_days": ["2026-06-15", "2026-06-17"],
+        "missing_days": ["2026-06-16"],
+        "message": "Falta 1 dia para completar el periodo: 2026-06-16.",
+    }
 
 
 def _raw_call(

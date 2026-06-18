@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Play, RefreshCcw, Square } from "lucide-react";
+import { Play, Square } from "lucide-react";
 import { FormEvent, useEffect, useMemo } from "react";
 import { apiGet, apiPost } from "../../shared/api/client";
 import { CountryCode, countryLabel } from "../../shared/countries";
@@ -64,6 +64,7 @@ type IngestionJob = {
 
 type IngestionsResponse = {
   active: IngestionJob[];
+  history?: IngestionJob[];
   persisted: IngestionJob[];
 };
 
@@ -92,7 +93,7 @@ export function IngestionPage() {
   });
 
   const configuredCountries = useMemo(
-    () => config.data?.countries.filter((country) => country.enabled) ?? [],
+    () => config.data?.countries ?? [],
     [config.data?.countries],
   );
   const selectedConfig = configuredCountries.find(
@@ -107,7 +108,14 @@ export function IngestionPage() {
     onSuccess: () => void ingestions.refetch(),
   });
 
-  const canIngest = Boolean(selectedConfig?.base_url && !create.isPending);
+  const activeJobs = (ingestions.data?.active ?? []).filter(
+    (job) => !isTerminalJob(job),
+  );
+  const activeJob = activeJobs.find((job) => job.country === activeCountry);
+  const countryBusy = Boolean(activeJob);
+  const canIngest = Boolean(
+    selectedConfig?.base_url && !create.isPending && !countryBusy,
+  );
 
   const cancel = useMutation({
     mutationFn: (id: string) =>
@@ -130,21 +138,15 @@ export function IngestionPage() {
     create.mutate();
   }
 
-  const jobs = [
-    ...(ingestions.data?.active ?? []),
-    ...(ingestions.data?.persisted ?? []),
-  ];
+  const history = mergeHistory(
+    ingestions.data?.history ?? ingestions.data?.persisted ?? [],
+    ingestions.data?.active ?? [],
+  );
 
   return (
     <>
       <header className="page-header">
         <h1>Ingesta</h1>
-        <button
-          className="command-button"
-          onClick={() => void ingestions.refetch()}
-        >
-          <RefreshCcw size={16} /> Actualizar
-        </button>
       </header>
 
       <form className="card toolbar" onSubmit={onSubmit}>
@@ -167,7 +169,7 @@ export function IngestionPage() {
           </select>
         </label>
         <button className="button" type="submit" disabled={!canIngest}>
-          <Play size={16} /> Ingestar
+          <Play size={16} /> {countryBusy ? "Ingesta en curso" : "Ingestar"}
         </button>
       </form>
 
@@ -177,17 +179,27 @@ export function IngestionPage() {
         </div>
       )}
 
-      <section className="card section-offset">
-        {jobs.length ? (
-          <div className="ingestion-list">
-            {jobs.map((job) => (
-              <IngestionCard
-                key={job.ingestion_id}
-                job={job}
-                onCancel={cancel.mutate}
-              />
-            ))}
+      {activeJob ? (
+        <section className="card section-offset">
+          <div className="section-heading">
+            <div>
+              <h2>Ingesta en curso</h2>
+              <span>{countryLabel(activeJob.country as CountryCode)}</span>
+            </div>
           </div>
+          <IngestionCard job={activeJob} onCancel={cancel.mutate} />
+        </section>
+      ) : null}
+
+      <section className="card section-offset">
+        <div className="section-heading">
+          <div>
+            <h2>Historico de ingestas</h2>
+            <span>{history.length} ejecuciones</span>
+          </div>
+        </div>
+        {history.length ? (
+          <IngestionHistoryTable jobs={history} />
         ) : (
           <div className="empty">Sin ingestas</div>
         )}
@@ -223,13 +235,12 @@ function IngestionCard({
           {job.status}
         </span>
       </header>
-      <div className="progress-track" aria-label="Progreso de ingesta">
-        <span
-          style={{
-            width: `${Math.max(0, Math.min(100, job.progress_percent ?? 0))}%`,
-          }}
-        />
-      </div>
+      <progress
+        className="progress-meter"
+        aria-label="Progreso de ingesta"
+        value={Math.max(0, Math.min(100, job.progress_percent ?? 0))}
+        max={100}
+      />
       <div className="dataset-facts compact">
         <span>
           {job.completed_chunks}/{job.planned_chunks} chunks
@@ -283,6 +294,58 @@ function IngestionCard({
         </button>
       )}
     </article>
+  );
+}
+
+function IngestionHistoryTable({ jobs }: { jobs: IngestionJob[] }) {
+  return (
+    <div className="table-scroll">
+      <table className="table dashboard-table ingestion-history-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Pais</th>
+            <th>Estado</th>
+            <th>Inicio</th>
+            <th>Fin</th>
+            <th>Resultado</th>
+          </tr>
+        </thead>
+        <tbody>
+          {jobs.map((job) => (
+            <tr key={job.ingestion_id}>
+              <td>{job.ingestion_id.slice(0, 8)}</td>
+              <td>{job.country}</td>
+              <td>{job.status}</td>
+              <td>{formatDate(job.started_at)}</td>
+              <td>{formatDate(job.finished_at)}</td>
+              <td>
+                {job.regression_status ??
+                  String(job.details?.regression_status ?? "-")}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function mergeHistory(history: IngestionJob[], active: IngestionJob[]) {
+  const byId = new Map<string, IngestionJob>();
+  [...history, ...active.filter(isTerminalJob)].forEach((job) => {
+    byId.set(job.ingestion_id, job);
+  });
+  return [...byId.values()].sort(
+    (left, right) =>
+      new Date(right.started_at).valueOf() -
+      new Date(left.started_at).valueOf(),
+  );
+}
+
+function isTerminalJob(job: IngestionJob) {
+  return ["completed", "failed", "failed_regression", "cancelled"].includes(
+    job.status,
   );
 }
 

@@ -581,6 +581,39 @@ textarea:focus-visible {
   background: var(--color-chip-ok-bg);
 }
 
+.coverage-pill {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  width: fit-content;
+  max-width: 100%;
+  margin-top: var(--space-3);
+  border: 1px solid var(--semantic-warning);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  background: var(--semantic-negative-soft);
+  color: var(--color-text);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.text-command {
+  min-height: 28px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-2);
+  background: var(--color-accent);
+  color: var(--color-on-action);
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.text-command:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .dashboard-tabs {
   display: inline-flex;
   width: fit-content;
@@ -754,6 +787,55 @@ textarea:focus-visible {
 .chart-swatch-4 {
   stroke: var(--chart-donut-5);
   background: var(--chart-donut-5);
+}
+
+.quantum-chart-point {
+  fill: var(--surface-dashboard-elevated);
+  stroke-width: 2;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.quantum-chart:hover .quantum-chart-point,
+.quantum-chart-point:focus-visible {
+  opacity: 1;
+}
+
+.quantum-chart-tooltip {
+  display: grid;
+  gap: var(--space-1);
+  width: fit-content;
+  max-width: 100%;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-dashboard-elevated);
+  color: var(--color-text);
+  box-shadow: var(--shadow-dashboard-card);
+  font-size: 12px;
+}
+
+.chart-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.icon-text-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  min-height: 30px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-2);
+  background: var(--color-button-secondary-bg);
+  color: var(--color-button-secondary-text);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .quantum-donut-track {
@@ -1306,6 +1388,44 @@ textarea:focus-visible {
   gap: var(--space-3);
 }
 
+.dashboard-config-list {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.dashboard-config-item {
+  display: grid;
+  gap: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-4);
+  background: var(--surface-dashboard-elevated);
+}
+
+.dashboard-config-item > header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.widget-config-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--space-2);
+}
+
+.widget-config-grid label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--color-muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .config-table {
   min-width: 980px;
 }
@@ -1442,6 +1562,13 @@ textarea:focus-visible {
   overflow: auto;
 }
 
+.data-grid th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface-dashboard-elevated);
+}
+
 .confirm-dialog {
   display: grid;
   gap: var(--space-4);
@@ -1548,6 +1675,34 @@ textarea:focus-visible {
   display: block;
   height: 100%;
   background: var(--color-accent);
+}
+
+.progress-meter {
+  width: 100%;
+  height: 10px;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--surface-dashboard-muted);
+}
+
+.progress-meter::-webkit-progress-bar {
+  background: var(--surface-dashboard-muted);
+}
+
+.progress-meter::-webkit-progress-value {
+  background: var(--color-accent);
+}
+
+.progress-meter::-moz-progress-bar {
+  background: var(--color-accent);
+}
+
+.ingestion-history-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface-dashboard-elevated);
 }
 
 .dataset-kpi-grid {
