@@ -20,6 +20,18 @@ describe("QuantumChart", () => {
 
     expect(screen.getByText("Jun 16, 2026 (CST)")).toBeInTheDocument();
   });
+
+  it("normaliza etiquetas antiguas con epoch antes de mostrarlas", () => {
+    render(<QuantumChart payload={rawEpochPayload()} title="Paginas vistas" />);
+
+    expect(
+      screen.getByText("Jun 17, 2026, 00:00 - 02:58 CST"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/1781676000/)).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Mobile 02:50: 180" }),
+    ).toBeInTheDocument();
+  });
 });
 
 function chartPayload(): ChartPayload {
@@ -57,5 +69,31 @@ function chartPayload(): ChartPayload {
     legends: [{ id: "mobile", label: "Mobile" }],
     period_label: "Jun 16, 2026 (CST)",
     timezone: "CST",
+  };
+}
+
+function rawEpochPayload(): ChartPayload {
+  return {
+    ...chartPayload(),
+    x_axis: {
+      ticks: [
+        { value: "1781676000", label: "1781676000", position: 0 },
+        { value: "1781686680", label: "1781686680", position: 1 },
+      ],
+    },
+    series: [
+      {
+        id: "mobile",
+        label: "Mobile",
+        kind: "line",
+        device: "mobile",
+        visible: true,
+        points: [
+          { ts: "1781686200", label: "1781686200", value: 180 },
+          { ts: "1781686680", label: "1781686680", value: 95 },
+        ],
+      },
+    ],
+    period_label: "1781676000 - 1781686680 CST",
   };
 }

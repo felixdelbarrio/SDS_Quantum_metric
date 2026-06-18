@@ -646,11 +646,13 @@ textarea:focus-visible {
 
 .dashboard-widget-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
   gap: var(--space-4);
 }
 
 .dashboard-card {
+  position: relative;
+  overflow: hidden;
   background: var(--surface-dashboard-elevated);
   border: 1px solid var(--border-dashboard);
   border-radius: var(--radius-md);
@@ -658,9 +660,18 @@ textarea:focus-visible {
   padding: var(--space-5);
 }
 
+.dashboard-card::before {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 3px;
+  background: var(--color-accent);
+  content: "";
+}
+
 .kpi-card {
   display: grid;
-  min-height: 260px;
+  min-height: 390px;
+  align-content: start;
   gap: var(--space-3);
 }
 
@@ -689,14 +700,29 @@ textarea:focus-visible {
   font-weight: 700;
 }
 
+.kpi-header h2 {
+  margin: var(--space-1) 0 0;
+  color: var(--color-text);
+  font-size: 16px;
+  line-height: 1.25;
+}
+
 .section-heading h2 {
   margin: 0 0 var(--space-1);
   font-size: 17px;
 }
 
+.kpi-value-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
 .kpi-value {
-  font-size: 30px;
+  font-size: 38px;
   line-height: 1;
+  letter-spacing: 0;
 }
 
 .delta {
@@ -713,18 +739,35 @@ textarea:focus-visible {
 
 .quantum-chart {
   display: grid;
-  gap: var(--space-2);
+  gap: var(--space-3);
   margin: 0;
 }
 
-.quantum-chart svg {
-  width: 100%;
-  height: auto;
-  min-height: 150px;
+.quantum-chart-stage {
+  position: relative;
+  min-width: 0;
+  border: 1px solid var(--border-dashboard);
+  border-radius: var(--radius-sm);
+  background: color-mix(
+    in srgb,
+    var(--surface-dashboard-elevated) 88%,
+    var(--color-bg)
+  );
+  padding: var(--space-2);
 }
 
-.quantum-chart-expanded svg {
+.quantum-chart-stage > svg,
+.quantum-chart-donut > svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  min-height: 180px;
+  max-height: 260px;
+}
+
+.quantum-chart-expanded .quantum-chart-stage > svg {
   min-height: 320px;
+  max-height: 420px;
 }
 
 .quantum-chart-axis line {
@@ -734,7 +777,7 @@ textarea:focus-visible {
 
 .quantum-chart-axis text {
   fill: var(--chart-axis);
-  font-size: 10px;
+  font-size: 8px;
   font-weight: 700;
   text-anchor: middle;
 }
@@ -756,7 +799,8 @@ textarea:focus-visible {
 .quantum-chart-series,
 .quantum-donut-segment {
   fill: none;
-  stroke-width: 2.5;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
 }
 
 .quantum-chart-series-0,
@@ -790,22 +834,31 @@ textarea:focus-visible {
 }
 
 .quantum-chart-point {
-  fill: var(--surface-dashboard-elevated);
-  stroke-width: 2;
+  fill: color-mix(in srgb, var(--surface-dashboard-elevated) 88%, transparent);
+  stroke-width: 1.6;
+  vector-effect: non-scaling-stroke;
   cursor: pointer;
   opacity: 0;
+  transition:
+    opacity var(--motion-duration-fast) var(--motion-ease-standard),
+    r var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
-.quantum-chart:hover .quantum-chart-point,
-.quantum-chart-point:focus-visible {
+.quantum-chart-point:hover,
+.quantum-chart-point:focus-visible,
+.quantum-chart-point[data-active="true"] {
   opacity: 1;
 }
 
 .quantum-chart-tooltip {
+  position: absolute;
+  left: var(--space-3);
+  bottom: var(--space-3);
+  z-index: 1;
   display: grid;
   gap: var(--space-1);
-  width: fit-content;
-  max-width: 100%;
+  min-width: 132px;
+  max-width: min(260px, calc(100% - var(--space-6)));
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   padding: var(--space-2) var(--space-3);
@@ -820,6 +873,7 @@ textarea:focus-visible {
   flex-wrap: wrap;
   gap: var(--space-2);
   align-items: center;
+  justify-content: flex-end;
 }
 
 .icon-text-button {
@@ -836,6 +890,25 @@ textarea:focus-visible {
   cursor: pointer;
   font-size: 12px;
   font-weight: 800;
+}
+
+.icon-text-button > svg,
+.icon-button > svg,
+.command-button > svg,
+.button > svg {
+  flex: 0 0 auto;
+}
+
+.icon-text-button > svg {
+  width: 14px;
+  height: 14px;
+}
+
+.icon-button > svg,
+.command-button > svg,
+.button > svg {
+  width: 16px;
+  height: 16px;
 }
 
 .quantum-donut-track {
@@ -1210,6 +1283,17 @@ textarea:focus-visible {
   cursor: pointer;
 }
 
+.icon-button.subtle {
+  background: var(--color-chip-bg);
+  color: var(--color-muted);
+  box-shadow: none;
+}
+
+.icon-button.subtle:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent-strong);
+}
+
 .panel-actions {
   display: flex;
   justify-content: flex-end;
@@ -1372,6 +1456,20 @@ textarea:focus-visible {
   gap: var(--space-4);
 }
 
+.config-page-header {
+  align-items: flex-end;
+}
+
+.config-page-header p {
+  margin: var(--space-2) 0 0;
+  color: var(--color-muted);
+  font-weight: 700;
+}
+
+.config-premium-surface {
+  gap: var(--space-5);
+}
+
 .config-panel {
   display: grid;
   gap: var(--space-4);
@@ -1382,10 +1480,133 @@ textarea:focus-visible {
   padding: var(--space-5);
 }
 
+.config-control-panel {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-panel) 92%, var(--color-accent-2)),
+    var(--color-panel)
+  );
+}
+
+.config-control-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(180px, 1fr));
+  gap: var(--space-3);
+}
+
+.config-field-card {
+  position: relative;
+  min-width: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-input-bg);
+  padding: var(--space-4);
+}
+
+.config-field-card > svg {
+  color: var(--color-accent-strong);
+}
+
+.config-field-card input,
+.config-field-card select {
+  margin-top: var(--space-1);
+}
+
 .config-actions {
+  position: sticky;
+  bottom: var(--space-4);
+  z-index: 5;
   display: flex;
   justify-content: flex-end;
   gap: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-panel) 92%, transparent);
+  box-shadow: var(--shadow-soft);
+  padding: var(--space-3);
+  backdrop-filter: blur(8px);
+}
+
+.config-country-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+  gap: var(--space-4);
+}
+
+.config-country-card {
+  display: grid;
+  gap: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--surface-dashboard-elevated);
+  box-shadow: var(--shadow-soft);
+  padding: var(--space-4);
+}
+
+.config-country-card > header,
+.config-country-card > footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.config-country-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.config-country-title strong,
+.dashboard-config-item > header strong {
+  display: block;
+  margin-top: var(--space-1);
+  font-size: 18px;
+}
+
+.config-country-icon {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-chip-bg);
+  color: var(--color-accent-strong);
+}
+
+.config-country-fields {
+  display: grid;
+  grid-template-columns: minmax(160px, 0.75fr) minmax(260px, 1.25fr);
+  gap: var(--space-3);
+}
+
+.config-default-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 38px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-chip-bg);
+  padding: 0 var(--space-3);
+  color: var(--color-muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.config-default-toggle input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--color-accent);
+}
+
+.config-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 .dashboard-config-list {
@@ -1395,11 +1616,12 @@ textarea:focus-visible {
 
 .dashboard-config-item {
   display: grid;
-  gap: var(--space-3);
+  gap: var(--space-4);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   padding: var(--space-4);
   background: var(--surface-dashboard-elevated);
+  box-shadow: var(--shadow-soft);
 }
 
 .dashboard-config-item > header {
@@ -1412,8 +1634,28 @@ textarea:focus-visible {
 
 .widget-config-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: var(--space-2);
+}
+
+.widget-config-section-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: var(--space-3);
+}
+
+.widget-config-group {
+  display: grid;
+  gap: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-panel) 90%, var(--color-bg));
+  padding: var(--space-4);
+}
+
+.widget-config-group h3 {
+  margin: 0;
+  font-size: 15px;
 }
 
 .widget-config-grid label {
@@ -1421,9 +1663,17 @@ textarea:focus-visible {
   align-items: center;
   gap: var(--space-2);
   min-width: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-chip-bg);
+  padding: var(--space-2) var(--space-3);
   color: var(--color-muted);
   font-size: 13px;
   font-weight: 700;
+}
+
+.widget-config-grid input {
+  accent-color: var(--color-accent);
 }
 
 .config-table {
@@ -1846,10 +2096,18 @@ textarea:focus-visible {
 
   .dashboard-widget-grid,
   .errors-widget-grid,
+  .config-control-grid,
+  .config-country-grid,
+  .config-country-fields,
+  .widget-config-section-grid,
   .dataset-kpi-grid,
   .dataset-business-grid,
   .donut-layout {
     grid-template-columns: 1fr;
+  }
+
+  .config-actions {
+    position: static;
   }
 }
 
