@@ -1,4 +1,4 @@
-import { Download } from "lucide-react";
+import { Download, FileDown, ImageDown } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import { ChartPayload, ChartSeriesPoint } from "../../types";
 import { QuantumChartAxis } from "./QuantumChartAxis";
@@ -6,6 +6,8 @@ import { QuantumChartBands } from "./QuantumChartBands";
 import { QuantumChartLegend } from "./QuantumChartLegend";
 import { QuantumChartTooltip } from "./QuantumChartTooltip";
 import { QuantumChartProps } from "./chartTypes";
+
+const MEXICO_TIMEZONE = "America/Mexico_City";
 
 const COMPACT_SIZE = {
   width: 320,
@@ -55,71 +57,83 @@ export function QuantumChart({
 
   return (
     <figure className={`quantum-chart quantum-chart-${mode}`}>
-      <svg
-        ref={svgRef}
-        viewBox={`0 0 ${size.width} ${size.height}`}
-        role="img"
-        aria-label={ariaLabel}
-        onMouseLeave={() => setActivePoint(null)}
-      >
-        <QuantumChartBands
-          bands={payload.bands}
-          width={size.width}
-          height={size.height}
-          padding={size.padding}
-        />
-        <QuantumChartAxis
-          ticks={payload.y_axis.ticks}
-          orientation="y"
-          width={size.width}
-          height={size.height}
-          padding={size.padding}
-        />
-        <QuantumChartAxis
-          ticks={payload.x_axis.ticks}
-          orientation="x"
-          width={size.width}
-          height={size.height}
-          padding={size.padding}
-        />
-        {renderModel.paths.map((path, index) => (
-          <path
-            key={path.id}
-            className={`quantum-chart-series quantum-chart-series-${index % 5}`}
-            d={path.d}
+      <div className="quantum-chart-stage">
+        <svg
+          ref={svgRef}
+          viewBox={`0 0 ${size.width} ${size.height}`}
+          role="img"
+          aria-label={ariaLabel}
+          onMouseLeave={() => setActivePoint(null)}
+        >
+          <QuantumChartBands
+            bands={payload.bands}
+            width={size.width}
+            height={size.height}
+            padding={size.padding}
           />
-        ))}
-        <g className="quantum-chart-points">
-          {renderModel.points.map((point) => (
-            <circle
-              key={`${point.seriesId}-${point.index}`}
-              className={`quantum-chart-point quantum-chart-series-${point.seriesIndex % 5}`}
-              cx={point.x}
-              cy={point.y}
-              r="4"
-              tabIndex={0}
-              role="button"
-              aria-label={`${point.seriesLabel} ${point.label}: ${formatNumber(point.value)}`}
-              onMouseEnter={() => setActivePoint(point)}
-              onFocus={() => setActivePoint(point)}
-              onBlur={() => setActivePoint(null)}
+          <QuantumChartAxis
+            ticks={payload.y_axis.ticks}
+            orientation="y"
+            width={size.width}
+            height={size.height}
+            padding={size.padding}
+          />
+          <QuantumChartAxis
+            ticks={payload.x_axis.ticks}
+            orientation="x"
+            width={size.width}
+            height={size.height}
+            padding={size.padding}
+          />
+          {renderModel.paths.map((path, index) => (
+            <path
+              key={path.id}
+              className={`quantum-chart-series quantum-chart-series-${index % 5}`}
+              d={path.d}
             />
           ))}
-        </g>
-      </svg>
-      {activePoint ? <ChartTooltip point={activePoint} /> : null}
+          <g className="quantum-chart-points">
+            {renderModel.points.map((point) => {
+              const isActive =
+                activePoint?.seriesId === point.seriesId &&
+                activePoint.index === point.index;
+              return (
+                <circle
+                  key={`${point.seriesId}-${point.index}`}
+                  className={`quantum-chart-point quantum-chart-series-${point.seriesIndex % 5}`}
+                  data-active={isActive ? "true" : "false"}
+                  cx={point.x}
+                  cy={point.y}
+                  r="3"
+                  tabIndex={0}
+                  role="button"
+                  aria-label={`${point.seriesLabel} ${point.label}: ${formatNumber(point.value)}`}
+                  onMouseEnter={() => setActivePoint(point)}
+                  onFocus={() => setActivePoint(point)}
+                  onBlur={() => setActivePoint(null)}
+                />
+              );
+            })}
+          </g>
+        </svg>
+        {activePoint ? <ChartTooltip point={activePoint} /> : null}
+      </div>
       <QuantumChartLegend payload={payload} />
       <div className="chart-actions" aria-label="Descargas de grafica">
         <button
           className="icon-text-button"
           type="button"
+          title="Descargar CSV"
+          aria-label="Descargar CSV"
           onClick={() => downloadCsv(payload, title)}
         >
-          <Download size={14} /> CSV
+          <FileDown size={14} /> CSV
         </button>
         <button
           className="icon-text-button"
           type="button"
+          title="Descargar SVG"
+          aria-label="Descargar SVG"
           onClick={() => downloadSvg(svgRef.current, title)}
         >
           <Download size={14} /> SVG
@@ -127,12 +141,16 @@ export function QuantumChart({
         <button
           className="icon-text-button"
           type="button"
+          title="Descargar PNG"
+          aria-label="Descargar PNG"
           onClick={() => downloadPng(svgRef.current, title)}
         >
-          <Download size={14} /> PNG
+          <ImageDown size={14} /> PNG
         </button>
       </div>
-      {payload.period_label && <figcaption>{payload.period_label}</figcaption>}
+      {payload.period_label && (
+        <figcaption>{formatPeriodCaption(payload.period_label)}</figcaption>
+      )}
       <QuantumChartTooltip label={ariaLabel} />
     </figure>
   );
@@ -180,7 +198,9 @@ function buildLineRenderModel(
           seriesLabel: series.label,
           seriesIndex,
           index,
-          label: point.label ?? point.ts ?? `Punto ${index + 1}`,
+          label: formatPointLabel(
+            point.label ?? point.ts ?? `Punto ${index + 1}`,
+          ),
           ts: point.ts,
           value: point.value,
           x,
@@ -331,7 +351,61 @@ function QuantumDonutChart({
         })}
       </svg>
       <QuantumChartLegend payload={payload} />
-      {payload.period_label && <figcaption>{payload.period_label}</figcaption>}
+      {payload.period_label && (
+        <figcaption>{formatPeriodCaption(payload.period_label)}</figcaption>
+      )}
     </figure>
   );
+}
+
+function formatPointLabel(value: string | number) {
+  const date = dateFromEpochLike(value);
+  if (!date) return String(value);
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: MEXICO_TIMEZONE,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date);
+}
+
+function formatPeriodCaption(value: string) {
+  const match = value.match(
+    /(\d{10,13})\s*-\s*(\d{10,13})(?:\s+([A-Z]{2,4}))?/,
+  );
+  if (!match) return value;
+  const start = dateFromEpochLike(match[1]);
+  const end = dateFromEpochLike(match[2]);
+  if (!start || !end) return value;
+  const timezoneLabel = match[3] ?? "CST";
+  const dateFormatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: MEXICO_TIMEZONE,
+    month: "short",
+    day: "2-digit",
+    year: "numeric",
+  });
+  const timeFormatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: MEXICO_TIMEZONE,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  const startDate = dateFormatter.format(start);
+  const endDate = dateFormatter.format(end);
+  const startTime = timeFormatter.format(start);
+  const endTime = timeFormatter.format(end);
+  if (startDate === endDate) {
+    return `${startDate}, ${startTime} - ${endTime} ${timezoneLabel}`;
+  }
+  return `${startDate} ${startTime} - ${endDate} ${endTime} ${timezoneLabel}`;
+}
+
+function dateFromEpochLike(value: string | number) {
+  const numeric = Number(String(value).trim());
+  if (!Number.isFinite(numeric) || Math.abs(numeric) < 1_000_000) {
+    return null;
+  }
+  const millis = Math.abs(numeric) > 10_000_000_000 ? numeric : numeric * 1000;
+  const date = new Date(millis);
+  return Number.isNaN(date.getTime()) ? null : date;
 }

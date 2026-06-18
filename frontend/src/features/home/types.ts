@@ -145,6 +145,7 @@ export type ChartPayload = {
 
 export type KpiWidget = {
   id: string;
+  role?: string;
   title: string;
   value?: number | null;
   unit: "count" | "seconds" | "percent";
