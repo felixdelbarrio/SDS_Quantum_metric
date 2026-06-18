@@ -10,6 +10,7 @@ import polars as pl
 from backend.app.analytics.models import TableColumn
 from backend.app.analytics.normalizer import humanize_key
 from backend.app.analytics.segments import parse_segment
+from backend.app.quantum.config_store import QuantumConfigStore
 from backend.app.quantum.schemas import COUNTRY_LABELS, COUNTRY_ORDER, Country
 from backend.app.quantum_dashboard.builder import (
     DATASET_CHART_PAYLOADS,
@@ -62,8 +63,9 @@ ERROR_APP_COLUMNS = [
 
 
 class LocalDashboardService:
-    def __init__(self, store: ParquetStore) -> None:
+    def __init__(self, store: ParquetStore, config_store: QuantumConfigStore | None = None) -> None:
         self.store = store
+        self.config_store = config_store
 
     def countries(self) -> dict[str, Any]:
         countries = []
@@ -93,6 +95,8 @@ class LocalDashboardService:
         raw_calls = self._raw_calls(country)
         contracts = self.store.read_country_dataset(country, DATASET_VISUAL_CONTRACTS)
         contract_roles = {str(row.get("visual_role")) for row in contracts}
+        enabled_roles = self._enabled_roles(country)
+        contract_roles = {role for role in contract_roles if role in enabled_roles}
         regression = self._latest_regression(country)
         summary_ready = self._tab_ready("summary", contract_roles) and (
             self.store.country_dataset_exists(country, DATASET_SUMMARY_WIDGETS)
@@ -103,7 +107,11 @@ class LocalDashboardService:
             and self.store.country_dataset_exists(country, DATASET_ERRORS_TOP_ERRORS)
             and self.store.country_dataset_exists(country, DATASET_ERRORS_APP_NAME)
         )
-        missing_roles = [role for role in required_roles() if role not in contract_roles]
+        missing_roles = [
+            role
+            for role in required_roles()
+            if role in enabled_roles and role not in contract_roles
+        ]
         reason = None
         if raw_calls and missing_roles:
             reason = (
@@ -126,7 +134,7 @@ class LocalDashboardService:
             "rows": sum(int(row.get("row_count") or 0) for row in raw_calls),
             "cards": len(contract_roles),
             "captured_cards": len(contract_roles),
-            "mandatory_cards": len(MANDATORY_CARDS),
+            "mandatory_cards": len([role for role in required_roles() if role in enabled_roles]),
             "mandatory_cards_captured": len(required_roles()) - len(missing_roles),
             "summary_ready": summary_ready,
             "errors_ready": errors_ready,
@@ -158,6 +166,7 @@ class LocalDashboardService:
         widgets = [
             _widget_from_row(row)
             for row in self.store.read_country_dataset(country, DATASET_SUMMARY_WIDGETS)
+            if str(row.get("card_role")) in self._enabled_roles(country)
         ]
         if segment:
             widgets = _summary_widgets_for_segment(
@@ -208,6 +217,7 @@ class LocalDashboardService:
                 "derived/summary_detail_table",
             )
         rows = self.store.read_country_dataset(country, DATASET_SUMMARY_TABLE)
+        rows = [row for row in rows if str(row.get("card_role")) in self._enabled_roles(country)]
         rows = _apply_segment(rows, segment)
         rows = _filter_rows(rows, search, ("name", "app_name", "operating_system"))
         rows = _sort_rows(
@@ -248,6 +258,7 @@ class LocalDashboardService:
         widgets = [
             _widget_from_row(row)
             for row in self.store.read_country_dataset(country, DATASET_ERRORS_WIDGETS)
+            if str(row.get("card_role")) in self._enabled_roles(country)
         ]
         if segment:
             widgets = _error_widgets_for_segment(
@@ -350,6 +361,7 @@ class LocalDashboardService:
                 required_dataset,
             )
         rows = self.store.read_country_dataset(country, dataset)
+        rows = [row for row in rows if str(row.get("card_role")) in self._enabled_roles(country)]
         rows = _apply_segment(rows, segment)
         rows = _filter_rows(rows, search, ("name", "error_name", "app_name"))
         rows = _sort_rows(rows, sort, direction, {column.key for column in columns}, default_sort)
@@ -547,7 +559,7 @@ class LocalDashboardService:
             *self.store.read_country_dataset(country, DATASET_ERRORS_WIDGETS),
         ]
         for row in rows:
-            if row.get("card_role") == card_role:
+            if row.get("card_role") == card_role and card_role in self._enabled_roles(country):
                 return _widget_from_row(row)
         return None
 
@@ -563,8 +575,20 @@ class LocalDashboardService:
         return [
             row
             for row in self.store.read_country_dataset(country, dataset)
-            if row.get("card_role") == card_role
+            if row.get("card_role") == card_role and card_role in self._enabled_roles(country)
         ]
+
+    def _enabled_roles(self, country: str) -> set[str]:
+        if self.config_store is None:
+            return set(required_roles())
+        try:
+            config = self.config_store.read()
+            country_config = config.country_config(country)
+        except Exception:
+            return set(required_roles())
+        if country_config is None:
+            return set(required_roles())
+        return set(country_config.enabled_widget_roles())
 
 
 def _widget_from_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -611,9 +635,21 @@ def _with_period_label(value: Any, period: dict[str, Any]) -> dict[str, Any] | N
     if not isinstance(value, dict):
         return None
     payload = dict(value)
-    payload["period_label"] = payload.get("period_label") or period.get("label")
+    current_label = _text(payload.get("period_label"))
+    payload["period_label"] = (
+        period.get("label") if _is_epoch_period_label(current_label) else current_label
+    ) or period.get("label")
     payload["timezone"] = payload.get("timezone") or period.get("timezone")
     return payload
+
+
+def _is_epoch_period_label(value: str | None) -> bool:
+    if not value:
+        return False
+    parts = value.replace("CST", "").replace("UTC", "").split("-")
+    if len(parts) < 2:
+        return False
+    return all(part.strip().isdigit() and len(part.strip()) in {10, 13} for part in parts[:2])
 
 
 def _chart_points(value: Any) -> list[dict[str, Any]]:

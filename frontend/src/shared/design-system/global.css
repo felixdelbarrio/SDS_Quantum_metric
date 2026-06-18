@@ -598,6 +598,17 @@ textarea:focus-visible {
   font-weight: 700;
 }
 
+.coverage-pill.info {
+  border-color: var(--color-border-strong);
+  background: var(--color-chip-bg);
+}
+
+.coverage-pill.warning,
+.coverage-pill.blocking {
+  border-color: var(--semantic-warning);
+  background: var(--semantic-negative-soft);
+}
+
 .text-command {
   min-height: 28px;
   border: 0;
@@ -1632,6 +1643,51 @@ textarea:focus-visible {
   gap: var(--space-3);
 }
 
+.dashboard-card-stack {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.dashboard-config-card {
+  display: grid;
+  gap: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: color-mix(
+    in srgb,
+    var(--surface-dashboard-elevated) 92%,
+    var(--color-bg)
+  );
+  padding: var(--space-4);
+}
+
+.dashboard-config-card-header,
+.dashboard-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.dashboard-config-card h3 {
+  margin: var(--space-1) 0 0;
+  font-size: 17px;
+}
+
+.dashboard-fields-grid {
+  display: grid;
+  grid-template-columns:
+    minmax(220px, 1.2fr) minmax(180px, 0.8fr) minmax(160px, 0.7fr)
+    minmax(180px, 0.9fr);
+  gap: var(--space-3);
+}
+
+.dashboard-fields-grid input[readonly] {
+  color: var(--color-muted);
+  background: var(--color-chip-bg);
+}
+
 .widget-config-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -1653,12 +1709,14 @@ textarea:focus-visible {
   padding: var(--space-4);
 }
 
-.widget-config-group h3 {
+.widget-config-group h3,
+.widget-config-group h4 {
   margin: 0;
   font-size: 15px;
 }
 
-.widget-config-grid label {
+.widget-config-grid label,
+.widget-config-row {
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -1670,6 +1728,42 @@ textarea:focus-visible {
   color: var(--color-muted);
   font-size: 13px;
   font-weight: 700;
+}
+
+.widget-config-row {
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.widget-config-row > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.widget-config-row strong,
+.widget-config-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.widget-config-row small {
+  color: var(--color-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.widget-config-row em {
+  flex: 0 0 auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 2px var(--space-2);
+  color: var(--color-accent-strong);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 900;
 }
 
 .widget-config-grid input {
@@ -1773,6 +1867,66 @@ textarea:focus-visible {
 .metric-badge strong {
   color: var(--color-text);
   font-size: 15px;
+}
+
+.dataset-entity-groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: var(--space-3);
+}
+
+.dataset-entity-group {
+  display: grid;
+  gap: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-chip-bg);
+  padding: var(--space-3);
+}
+
+.dataset-entity-group h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.dataset-entity-group > div {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.entity-chip {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-panel);
+  color: var(--color-text);
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+  cursor: pointer;
+}
+
+.entity-chip.active {
+  border-color: var(--color-accent);
+  box-shadow: inset 3px 0 0 var(--color-accent);
+}
+
+.entity-chip span,
+.entity-chip small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.entity-chip span {
+  font-weight: 900;
+}
+
+.entity-chip small {
+  color: var(--color-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
 }
 
 .entity-tabs {
@@ -2099,6 +2253,7 @@ textarea:focus-visible {
   .config-control-grid,
   .config-country-grid,
   .config-country-fields,
+  .dashboard-fields-grid,
   .widget-config-section-grid,
   .dataset-kpi-grid,
   .dataset-business-grid,

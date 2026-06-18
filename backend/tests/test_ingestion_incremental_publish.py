@@ -54,7 +54,9 @@ async def test_ingestion_publishes_dashboard_after_each_completed_chunk(
         country: str,
         rows: list[dict[str, Any]],
         ingestion_id: str,
+        enabled_roles: set[str],
     ) -> tuple[RawCallMergeResult, _Build, _Report]:
+        assert "summary.page_views" in enabled_roles
         published_chunks.append(rows)
         return (
             RawCallMergeResult(

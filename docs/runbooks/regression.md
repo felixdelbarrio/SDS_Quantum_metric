@@ -39,3 +39,13 @@ Validar y conservar reportes para:
 - `docs/regression/last-7-days-web-vs-local.md`
 
 Cada reporte debe terminar en `PASSED`.
+
+# Evidencia
+
+Para investigar una discrepancia:
+
+```bash
+curl http://127.0.0.1:8765/api/datasets/MX/evidence
+```
+
+El reporte enlaza valor Web visible, hashes Quantum, RAW Parquet, derivado y valor API local. El primer punto de divergencia indica si el problema esta en parser, agregacion o API/UI local.

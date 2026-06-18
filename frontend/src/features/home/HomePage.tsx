@@ -115,6 +115,7 @@ export function HomePage() {
         country: selectedCountry,
         startDate: dateRange.startDate,
         endDate: dateRange.endDate,
+        rangeKey: dateRange.preset,
       }),
     enabled: hasDashboardData,
   });

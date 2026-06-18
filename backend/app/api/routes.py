@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import shutil
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, cast
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -17,14 +18,23 @@ from backend.app.ingestion.service import IngestionService
 from backend.app.quantum.client import QuantumClient
 from backend.app.quantum.config_store import QuantumConfigStore
 from backend.app.quantum.schemas import (
+    QuantumConfig,
     QuantumConfigUpdate,
+    QuantumCountryConfig,
+    QuantumDashboardConfig,
     QuantumPublicConfig,
     QuantumPublicConfigUpdate,
+    QuantumWidgetConfig,
+    WidgetType,
     merge_public_quantum_update,
     public_quantum_config,
 )
 from backend.app.quantum_dashboard.builder import build_derived_datasets
+from backend.app.quantum_dashboard.catalog import MANDATORY_CARDS
 from backend.app.quantum_dashboard.discovery import discover_dashboard_from_config
+from backend.app.quantum_dashboard.evidence import build_evidence_report
+from backend.app.quantum_dashboard.models import DashboardDiscoveryResult
+from backend.app.quantum_dashboard.range_query import range_resolution_payload, resolve_range
 from backend.app.quantum_dashboard.regression import run_regression
 from backend.app.quantum_dashboard.service import LocalDashboardService
 from backend.app.storage.parquet_store import ParquetStore
@@ -63,6 +73,103 @@ def ingestion_service_dep(
             settings, config_store, parquet_store, cookie_provider
         )
     return _INGESTION_SERVICE
+
+
+def _dashboard_from_discovery(
+    discovery: DashboardDiscoveryResult,
+    *,
+    manual: bool,
+) -> QuantumDashboardConfig:
+    discovered_at = datetime.now(UTC)
+    dashboard_id = str(discovery.dashboard_id or "")
+    return QuantumDashboardConfig(
+        dashboard_id=dashboard_id,
+        name="Dashboard manual" if manual else "Dashboard default",
+        dashboard_type="Quantum dashboard",
+        team_id=str(discovery.team_id or ""),
+        summary_tab=int(discovery.summary_tab or 0),
+        errors_tab=int(discovery.errors_tab or 1),
+        is_default=not manual,
+        is_manual=manual,
+        validated=bool(dashboard_id),
+        validation_status="ok" if dashboard_id else "ko",
+        discovered_at=discovered_at,
+        widgets=[
+            QuantumWidgetConfig(
+                role=spec.role,
+                title=spec.title,
+                widget_id=f"role:{spec.role}",
+                widget_type=cast(
+                    WidgetType,
+                    "DONUT" if spec.card_type == "DONUT" else spec.card_type,
+                ),
+                tab=spec.tab,
+                enabled=True,
+                discovered_at=discovered_at,
+            )
+            for spec in MANDATORY_CARDS
+        ],
+    )
+
+
+def _upsert_dashboard(
+    dashboards: list[QuantumDashboardConfig],
+    dashboard: QuantumDashboardConfig,
+) -> list[QuantumDashboardConfig]:
+    next_dashboards: list[QuantumDashboardConfig] = []
+    replaced = False
+    for existing in dashboards:
+        if existing.dashboard_id == dashboard.dashboard_id:
+            widgets_by_role = {widget.role: widget for widget in existing.widgets}
+            merged_widgets = [
+                widget.model_copy(
+                    update={
+                        "enabled": widgets_by_role.get(widget.role, widget).enabled,
+                        "widget_id": widgets_by_role.get(widget.role, widget).widget_id
+                        or widget.widget_id,
+                    }
+                )
+                for widget in dashboard.widgets
+            ]
+            next_dashboards.append(
+                dashboard.model_copy(
+                    update={
+                        "widgets": merged_widgets,
+                        "is_default": dashboard.is_default or existing.is_default,
+                        "is_manual": dashboard.is_manual or existing.is_manual,
+                    }
+                )
+            )
+            replaced = True
+            continue
+        if dashboard.is_default:
+            next_dashboards.append(existing.model_copy(update={"is_default": False}))
+        else:
+            next_dashboards.append(existing)
+    if not replaced:
+        next_dashboards.append(dashboard)
+    if next_dashboards and not any(item.is_default for item in next_dashboards):
+        next_dashboards[0] = next_dashboards[0].model_copy(update={"is_default": True})
+    return next_dashboards
+
+
+def _write_config(
+    store: QuantumConfigStore,
+    config: QuantumConfig,
+    countries: list[QuantumCountryConfig],
+) -> None:
+    store.write(
+        QuantumConfigUpdate(
+            schema_version=config.schema_version,
+            browser=config.browser,
+            session_mode=config.session_mode,
+            country=config.country,
+            countries=countries,
+            verify_tls=config.verify_tls,
+            ingestion_depth_days=config.ingestion_depth_days,
+            theme_preference=config.theme_preference,
+        )
+    )
 
 
 @router.get("/health")
@@ -119,36 +226,54 @@ def test_connection(
 def discover_dashboard(
     store: Annotated[QuantumConfigStore, Depends(config_store_dep)],
     settings: Annotated[Settings, Depends(settings_dep)],
+    country: str | None = None,
+    dashboard_id: str | None = None,
+    manual: bool = False,
 ) -> dict[str, object]:
     config = store.read()
-    country_config = config.required_country_config()
-    discovery = discover_dashboard_from_config(settings=settings, country_config=country_config)
+    country_config = config.required_country_config(country)
+    discovery_country = country_config
+    if dashboard_id:
+        discovery_country = country_config.model_copy(update={"dashboard_id": dashboard_id})
+    discovery = discover_dashboard_from_config(settings=settings, country_config=discovery_country)
     if discovery.dashboard_id:
         updated_countries = []
         for item in config.countries:
             if item.country == country_config.country:
+                dashboard = _dashboard_from_discovery(
+                    discovery, manual=manual or bool(dashboard_id)
+                )
                 updated_countries.append(
                     item.model_copy(
                         update={
                             "base_url": discovery.base_url,
-                            "dashboard_id": discovery.dashboard_id or item.dashboard_id,
-                            "team_id": discovery.team_id or item.team_id,
-                            "tab": discovery.summary_tab,
+                            "dashboard_id": dashboard.dashboard_id,
+                            "team_id": dashboard.team_id,
+                            "tab": dashboard.summary_tab,
+                            "dashboards": _upsert_dashboard(item.dashboards, dashboard),
                         }
                     )
                 )
             else:
                 updated_countries.append(item)
-        store.write(
-            QuantumConfigUpdate(
-                browser=config.browser,
-                session_mode=config.session_mode,
-                country=config.country,
-                countries=updated_countries,
-                verify_tls=config.verify_tls,
-            )
-        )
+        _write_config(store, config, updated_countries)
     return discovery.model_dump(mode="json")
+
+
+@router.post("/quantum/test-dashboard")
+def test_dashboard(
+    store: Annotated[QuantumConfigStore, Depends(config_store_dep)],
+    settings: Annotated[Settings, Depends(settings_dep)],
+    country: str,
+    dashboard_id: str,
+) -> dict[str, object]:
+    return discover_dashboard(
+        store=store,
+        settings=settings,
+        country=country,
+        dashboard_id=dashboard_id,
+        manual=True,
+    )
 
 
 @router.post("/quantum/validate-access")
@@ -278,6 +403,18 @@ def dataset_entities(
     store: Annotated[ParquetStore, Depends(parquet_store_dep)],
 ) -> dict[str, object]:
     return {"country": country, "entities": store.list_country_entities(country)}
+
+
+@router.get("/datasets/{country}/evidence")
+def dataset_evidence(
+    country: str,
+    store: Annotated[ParquetStore, Depends(parquet_store_dep)],
+) -> dict[str, object]:
+    evidence = build_evidence_report(store, country)
+    return {
+        "country": country,
+        "evidence": [item.model_dump(mode="json") for item in evidence],
+    }
 
 
 @router.get("/datasets/{country}/entities/{entity:path}/schema")
@@ -451,16 +588,18 @@ def analytics_dashboard_errors_table(
 @router.get("/local-dashboard/countries")
 def local_dashboard_countries(
     store: Annotated[ParquetStore, Depends(parquet_store_dep)],
+    config_store: Annotated[QuantumConfigStore, Depends(config_store_dep)],
 ) -> dict[str, object]:
-    return LocalDashboardService(store).countries()
+    return LocalDashboardService(store, config_store).countries()
 
 
 @router.get("/local-dashboard/status")
 def local_dashboard_status(
     store: Annotated[ParquetStore, Depends(parquet_store_dep)],
+    config_store: Annotated[QuantumConfigStore, Depends(config_store_dep)],
     country: str = "MX",
 ) -> dict[str, object]:
-    return LocalDashboardService(store).status(country)
+    return LocalDashboardService(store, config_store).status(country)
 
 
 @router.get("/local-dashboard/coverage")
@@ -469,9 +608,18 @@ def local_dashboard_coverage(
     country: str = "MX",
     start: str | None = None,
     end: str | None = None,
+    range_key: str = "custom",
 ) -> dict[str, object]:
     try:
-        return store.day_coverage(country, start, end)
+        resolution = resolve_range(
+            store,
+            country,
+            range_key=range_key,
+            start=start,
+            end=end,
+            timezone="CST",
+        )
+        return range_resolution_payload(resolution)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -479,13 +627,14 @@ def local_dashboard_coverage(
 @router.get("/local-dashboard/summary")
 def local_dashboard_summary(
     store: Annotated[ParquetStore, Depends(parquet_store_dep)],
+    config_store: Annotated[QuantumConfigStore, Depends(config_store_dep)],
     country: str = "MX",
     dimension: str | None = None,
     segment: str | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
 ) -> dict[str, object]:
-    return LocalDashboardService(store).summary(
+    return LocalDashboardService(store, config_store).summary(
         country,
         dimension=dimension,
         segment=segment,
@@ -497,6 +646,7 @@ def local_dashboard_summary(
 @router.get("/local-dashboard/summary/table")
 def local_dashboard_summary_table(
     store: Annotated[ParquetStore, Depends(parquet_store_dep)],
+    config_store: Annotated[QuantumConfigStore, Depends(config_store_dep)],
     country: str = "MX",
     search: str | None = None,
     sort: str = "page_views",
@@ -506,7 +656,7 @@ def local_dashboard_summary_table(
     start_date: str | None = None,
     end_date: str | None = None,
 ) -> dict[str, object]:
-    return LocalDashboardService(store).summary_table(
+    return LocalDashboardService(store, config_store).summary_table(
         country,
         search=search,
         sort=sort,
@@ -521,13 +671,14 @@ def local_dashboard_summary_table(
 @router.get("/local-dashboard/errors")
 def local_dashboard_errors(
     store: Annotated[ParquetStore, Depends(parquet_store_dep)],
+    config_store: Annotated[QuantumConfigStore, Depends(config_store_dep)],
     country: str = "MX",
     dimension: str | None = None,
     segment: str | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
 ) -> dict[str, object]:
-    return LocalDashboardService(store).errors(
+    return LocalDashboardService(store, config_store).errors(
         country,
         dimension=dimension,
         segment=segment,
@@ -539,6 +690,7 @@ def local_dashboard_errors(
 @router.get("/local-dashboard/errors/top-errors")
 def local_dashboard_top_errors(
     store: Annotated[ParquetStore, Depends(parquet_store_dep)],
+    config_store: Annotated[QuantumConfigStore, Depends(config_store_dep)],
     country: str = "MX",
     search: str | None = None,
     sort: str = "error_sessions",
@@ -548,7 +700,7 @@ def local_dashboard_top_errors(
     start_date: str | None = None,
     end_date: str | None = None,
 ) -> dict[str, object]:
-    return LocalDashboardService(store).top_errors_table(
+    return LocalDashboardService(store, config_store).top_errors_table(
         country,
         search=search,
         sort=sort,
@@ -563,6 +715,7 @@ def local_dashboard_top_errors(
 @router.get("/local-dashboard/errors/app-name")
 def local_dashboard_error_app_name(
     store: Annotated[ParquetStore, Depends(parquet_store_dep)],
+    config_store: Annotated[QuantumConfigStore, Depends(config_store_dep)],
     country: str = "MX",
     search: str | None = None,
     sort: str = "error_session_percent",
@@ -572,7 +725,7 @@ def local_dashboard_error_app_name(
     start_date: str | None = None,
     end_date: str | None = None,
 ) -> dict[str, object]:
-    return LocalDashboardService(store).app_name_error_table(
+    return LocalDashboardService(store, config_store).app_name_error_table(
         country,
         search=search,
         sort=sort,
@@ -588,11 +741,12 @@ def local_dashboard_error_app_name(
 def local_dashboard_card_detail(
     card_role: str,
     store: Annotated[ParquetStore, Depends(parquet_store_dep)],
+    config_store: Annotated[QuantumConfigStore, Depends(config_store_dep)],
     country: str = "MX",
     start_date: str | None = None,
     end_date: str | None = None,
 ) -> dict[str, object]:
-    return LocalDashboardService(store).card_detail(
+    return LocalDashboardService(store, config_store).card_detail(
         country, card_role, start_date=start_date, end_date=end_date
     )
 
@@ -601,18 +755,20 @@ def local_dashboard_card_detail(
 def local_dashboard_card_breakdown(
     card_role: str,
     store: Annotated[ParquetStore, Depends(parquet_store_dep)],
+    config_store: Annotated[QuantumConfigStore, Depends(config_store_dep)],
     country: str = "MX",
 ) -> dict[str, object]:
-    return LocalDashboardService(store).card_breakdown(country, card_role)
+    return LocalDashboardService(store, config_store).card_breakdown(country, card_role)
 
 
 @router.get("/local-dashboard/cards/{card_role}/points")
 def local_dashboard_card_points(
     card_role: str,
     store: Annotated[ParquetStore, Depends(parquet_store_dep)],
+    config_store: Annotated[QuantumConfigStore, Depends(config_store_dep)],
     country: str = "MX",
 ) -> dict[str, object]:
-    return LocalDashboardService(store).card_points(country, card_role)
+    return LocalDashboardService(store, config_store).card_points(country, card_role)
 
 
 @router.get("/analytics/dimensions")

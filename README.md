@@ -22,15 +22,17 @@ make kill
 ## Configuracion Quantum
 
 La app configura Quantum por pais con una pantalla funcional: browser, modo de sesion,
-Base URL, pais por defecto, test por pais, dashboards/widgets visibles, apariencia,
-profundidad de ingesta y accion de guardar.
+Base URL, pais por defecto, test por pais, dashboards por pais, dashboard manual,
+widgets con ID/tipo/enabled, apariencia, profundidad de ingesta y accion de guardar.
 
-Dashboard ID, Team ID, tabs, card IDs y hashes no se muestran al usuario. Se resuelven internamente
-desde `.env`, configuracion local o URL de Quantum Web cuando es posible.
+Dashboard ID, Team ID, tabs, widget IDs y tipos se muestran cuando forman parte de la
+configuracion auditable. El dashboard default descubierto no edita su ID; los dashboards
+manuales permiten editarlo hasta validarlo.
 
 `.env.example` incluye Mexico. Para Espana, Colombia, Argentina o Peru se anade una fila en
-Quantum y, al guardar, la configuracion queda sincronizada en `QM_COUNTRY_CONFIGS` dentro de
-`.env`. Las cookies de navegador o manuales no se escriben en disco.
+Quantum y, al guardar, la configuracion principal queda en `config/quantum_config.json`.
+La sincronizacion `.env` solo incluye valores operativos no secretos. Las cookies de navegador
+o manuales no se escriben en disco.
 
 ## Dashboard local
 
@@ -64,8 +66,9 @@ accionable. La UI no rellena datos falsos ni oculta discrepancias.
 ## Datasets
 
 Datasets permite ver entidades Parquet por pais: RAW calls, contratos visuales, snapshots,
-derivados, chart payloads y regresion. Las entidades se leen paginadas, tienen cabeceras fijas
-y CSV por entidad. El ZIP de export/import incluye datos y `config/quantum.json` sin secretos.
+derivados, chart payloads y regresion. Las entidades se agrupan por categoria, dashboard ID y
+widget role, se leen paginadas, tienen cabeceras fijas y CSV por entidad. El ZIP de export/import
+incluye datos y `config/quantum_config.json` sin secretos.
 El borrado exige confirmacion exacta del pais.
 
 Por defecto los datos viven en la ruta persistente del usuario calculada con `platformdirs`. `QM_DATA_DIR` queda reservado como override explicito. Si se detecta `./data` legacy, Datasets muestra aviso y permite migrarlo.
@@ -95,6 +98,9 @@ recarga Home: el dashboard debe seguir funcionando sobre Parquet local.
 - Modelo diario en `docs/to-be/daily-parquet-model.md`.
 - Faltantes async en `docs/to-be/missing-days-ingestion.md`.
 - Import/export en `docs/to-be/export-import-contract.md`.
+- Iteracion 9 storage audit en `docs/as-is/iteration-9-storage-audit.md`.
+- Iteracion 9 RCA de ingesta en `docs/as-is/iteration-9-ingestion-failure-rca.md`.
+- Evidencia Web/Local en `docs/to-be/web-local-evidence-chain.md`.
 - Backend local versionado bajo `/api`.
 - Persistencia Parquet en la ruta de usuario activa bajo `parquet/country=<pais>`.
 - Export/import ZIP en la ruta de usuario activa bajo `exports`.

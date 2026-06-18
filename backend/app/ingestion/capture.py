@@ -59,13 +59,23 @@ class QuantumAnalyticsCaptureSession:
         self.wait_seconds = wait_seconds
         self.ingestion_id = ingestion_id or str(uuid.uuid4())
         self.quantum_host = urlparse(str(base_url)).hostname
+        self._playwright_manager: Any | None = None
         self._playwright: Any | None = None
         self._browser: Any | None = None
         self._context: Any | None = None
 
     def __enter__(self) -> QuantumAnalyticsCaptureSession:
         _configure_playwright_browser_path()
-        self._playwright = sync_playwright().start()
+        self._playwright_manager = sync_playwright()
+        try:
+            self._playwright = self._playwright_manager.start()
+        except AttributeError as exc:
+            if "_playwright" in str(exc):
+                raise RuntimeError(
+                    "Playwright could not start its browser driver for ingestion capture. "
+                    "Run `make setup` to reinstall browser assets and retry ingestion."
+                ) from exc
+            raise
         self._browser = _launch_headless_browser(self._playwright, self.settings)
         self._context = self._browser.new_context(
             ignore_https_errors=not self.settings.qm_verify_tls

@@ -47,6 +47,9 @@ type DatasetsResponse = {
 type DatasetEntity = {
   id: string;
   label: string;
+  category?: string | null;
+  dashboard_id?: string | null;
+  widget_role?: string | null;
   rows: number;
   files: number;
   bytes: number;
@@ -97,6 +100,14 @@ export function DatasetsPage() {
       ),
     enabled: Boolean(activeCountry && activeEntity),
   });
+  const entityGroups = useMemo(() => {
+    const grouped = new Map<string, DatasetEntity[]>();
+    for (const entity of entities.data?.entities ?? []) {
+      const key = entity.category ?? "Entidad";
+      grouped.set(key, [...(grouped.get(key) ?? []), entity]);
+    }
+    return Array.from(grouped.entries());
+  }, [entities.data?.entities]);
 
   const remove = useMutation({
     mutationFn: (country: string) =>
@@ -285,6 +296,33 @@ export function DatasetsPage() {
           </div>
           {entities.data?.entities.length ? (
             <>
+              <div className="dataset-entity-groups">
+                {entityGroups.map(([category, items]) => (
+                  <section className="dataset-entity-group" key={category}>
+                    <h3>{category}</h3>
+                    <div>
+                      {items.slice(0, 6).map((entity) => (
+                        <button
+                          type="button"
+                          key={entity.id}
+                          className={
+                            entity.id === activeEntity
+                              ? "entity-chip active"
+                              : "entity-chip"
+                          }
+                          onClick={() => setSelectedEntity(entity.id)}
+                        >
+                          <span>{entity.id}</span>
+                          <small>
+                            {entity.dashboard_id ?? "dashboard local"} ·{" "}
+                            {entity.widget_role ?? "config"}
+                          </small>
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+                ))}
+              </div>
               <EntityTabs
                 tabs={entities.data.entities.map((entity) => ({
                   id: entity.id,

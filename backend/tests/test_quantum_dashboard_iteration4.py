@@ -58,7 +58,7 @@ def test_discovery_uses_env_defaults_as_fallback(tmp_path: Path) -> None:
     ]
 
 
-def test_config_api_hides_dashboard_team_and_tab(tmp_path: Path) -> None:
+def test_config_api_exposes_auditable_dashboard_widget_metadata(tmp_path: Path) -> None:
     settings = Settings(qm_data_dir=tmp_path)
     app.dependency_overrides[settings_dep] = lambda: settings
     app.dependency_overrides[config_store_dep] = lambda: QuantumConfigStore(settings)
@@ -69,11 +69,12 @@ def test_config_api_hides_dashboard_team_and_tab(tmp_path: Path) -> None:
     finally:
         app.dependency_overrides.clear()
 
-    serialized = json.dumps(payload)
-    assert "dashboard_id" not in serialized
-    assert "team_id" not in serialized
-    assert '"tab"' not in serialized
     assert payload["countries"][0]["dashboard_resolved"] is True
+    dashboard = payload["countries"][0]["dashboards"][0]
+    assert dashboard["dashboard_id"]
+    assert dashboard["team_id"]
+    assert dashboard["widgets"][0]["role"] == "summary.page_views"
+    assert dashboard["widgets"][0]["widget_type"] == "CHART"
 
 
 def test_builder_persists_contracts_snapshots_derived_and_no_cookies(tmp_path: Path) -> None:
@@ -171,6 +172,28 @@ def test_local_dashboard_apis_read_derived_data_offline(tmp_path: Path) -> None:
     }
     assert top_errors["rows"][0]["name"] == "TypeError"
     assert app_name["rows"][0]["name"] == "pagos"
+
+
+def test_local_dashboard_rewrites_legacy_epoch_period_label(tmp_path: Path) -> None:
+    store = _store_with_fixtures(tmp_path)
+    build_derived_datasets(store, "MX")
+    run_regression(store, "MX")
+    rows = store.read_country_dataset("MX", "derived/summary_widgets")
+    for row in rows:
+        if row.get("card_role") == "summary.page_views":
+            row["period_start"] = "1781676000"
+            row["period_end"] = "1781686680"
+            payload = dict(row["chart_payload"])
+            payload["period_label"] = "1781676000 - 1781686680 CST"
+            row["chart_payload"] = payload
+    store.write_country_dataset("MX", "derived/summary_widgets", rows)
+
+    summary = LocalDashboardService(store).summary("MX")
+    widget = next(item for item in summary["widgets"] if item["role"] == "summary.page_views")
+
+    assert widget["chart_payload"]["period_label"] != "1781676000 - 1781686680 CST"
+    assert "1781676000" not in widget["chart_payload"]["period_label"]
+    assert "CST" in widget["chart_payload"]["period_label"]
 
 
 def test_local_dashboard_card_detail_breakdown_and_points(tmp_path: Path) -> None:

@@ -36,6 +36,7 @@ def run_regression(
     *,
     ingestion_id: str | None = None,
     tolerance_percent: float | None = None,
+    enabled_roles: set[str] | list[str] | None = None,
 ) -> RegressionReport:
     tolerance = (
         store.settings.quantum_regression_tolerance_percent
@@ -47,8 +48,13 @@ def run_regression(
     contract_roles = {str(row.get("visual_role")) for row in contracts}
     snapshot_by_role = {str(row.get("card_role")): row for row in snapshots}
     cards: list[RegressionCardResult] = []
+    enabled_role_set = (
+        set(enabled_roles) if enabled_roles is not None else {spec.role for spec in MANDATORY_CARDS}
+    )
 
     for spec in MANDATORY_CARDS:
+        if spec.role not in enabled_role_set:
+            continue
         if spec.role not in contract_roles:
             cards.append(
                 _card_result(
