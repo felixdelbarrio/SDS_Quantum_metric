@@ -1,3 +1,4 @@
+import { Maximize2 } from "lucide-react";
 import { useState } from "react";
 import { MetricDelta } from "../../../shared/components/MetricDelta";
 import { SemanticValue } from "../../../shared/components/SemanticValue";
@@ -19,21 +20,35 @@ export function KpiWidget({ widget }: Props) {
       onDoubleClick={() => setExpanded(true)}
     >
       <div className="kpi-header">
-        <span>{widget.title}</span>
+        <div>
+          <span className="eyebrow">{domainLabel(widget)}</span>
+          <h2>{widget.title}</h2>
+        </div>
         <MetricDelta
           value={widget.comparison?.delta_percent}
           intent={widget.semantic_intent}
         />
       </div>
-      <strong className="kpi-value">
-        {hasValue ? (
-          <SemanticValue intent={widget.semantic_intent}>
-            {formatValue(widget.value ?? 0, widget.unit)}
-          </SemanticValue>
-        ) : (
-          "-"
-        )}
-      </strong>
+      <div className="kpi-value-row">
+        <strong className="kpi-value">
+          {hasValue ? (
+            <SemanticValue intent={widget.semantic_intent}>
+              {formatValue(widget.value ?? 0, widget.unit)}
+            </SemanticValue>
+          ) : (
+            "-"
+          )}
+        </strong>
+        <button
+          className="icon-button subtle"
+          type="button"
+          aria-label={`Abrir detalle de ${widget.title}`}
+          title="Abrir detalle"
+          onClick={() => setExpanded(true)}
+        >
+          <Maximize2 size={16} />
+        </button>
+      </div>
       {hasValue ? (
         <>
           <QuantumChart payload={widget.chart_payload} title={widget.title} />
@@ -64,6 +79,12 @@ export function KpiWidget({ widget }: Props) {
       />
     </article>
   );
+}
+
+function domainLabel(widget: KpiWidgetType) {
+  return widget.role?.startsWith("errors.") || widget.id.includes("error")
+    ? "Errores"
+    : "Resumen";
 }
 
 function formatValue(value: number, unit: KpiWidgetType["unit"]) {

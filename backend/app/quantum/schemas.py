@@ -213,7 +213,7 @@ def public_quantum_config(config: QuantumConfig) -> QuantumPublicConfig:
             QuantumPublicCountryConfig(
                 country=item.country,
                 base_url=item.base_url,
-                enabled=item.enabled,
+                enabled=item.country == config.country,
                 dashboard_resolved=bool(item.dashboard_id),
             )
             for item in config.countries
@@ -229,6 +229,11 @@ def merge_public_quantum_update(
     update: QuantumPublicConfigUpdate,
 ) -> QuantumConfigUpdate:
     existing_by_country = {item.country: item for item in existing.countries}
+    default_country = (
+        update.country
+        if any(item.country == update.country for item in update.countries)
+        else (update.countries[0].country if update.countries else update.country)
+    )
     countries: list[QuantumCountryConfig] = []
     for item in update.countries:
         previous = existing_by_country.get(item.country)
@@ -239,13 +244,13 @@ def merge_public_quantum_update(
                 dashboard_id=previous.dashboard_id if previous else "",
                 team_id=previous.team_id if previous else "",
                 tab=previous.tab if previous else 0,
-                enabled=item.enabled,
+                enabled=item.country == default_country,
             )
         )
     return QuantumConfigUpdate(
         browser=update.browser,
         session_mode=update.session_mode,
-        country=update.country,
+        country=default_country,
         countries=countries,
         verify_tls=update.verify_tls,
         ingestion_depth_days=update.ingestion_depth_days,

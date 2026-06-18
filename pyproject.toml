@@ -19,6 +19,7 @@ dependencies = [
   "truststore>=0.9.0",
   "python-multipart>=0.0.9",
   "platformdirs>=4.3.0",
+  "tzdata>=2025.2",
 ]
 
 [project.optional-dependencies]

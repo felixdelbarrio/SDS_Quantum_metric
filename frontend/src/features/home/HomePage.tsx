@@ -1,12 +1,13 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { RefreshCcw } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import {
   getCountries,
+  getCoverage,
   getDimensions,
   getErrors,
   getSegments,
   getSummary,
+  ingestMissingDays,
 } from "./api";
 import { DashboardHeader } from "./components/DashboardHeader";
 import { DateRange } from "./components/DashboardHeader";
@@ -60,10 +61,6 @@ export function HomePage() {
     );
     return defaultCountry?.code ?? countries.data.countries[0].code;
   }, [countries.data, country]);
-  const selectedCountryStatus = countries.data?.countries.find(
-    (item) => item.code === selectedCountry,
-  );
-
   useEffect(() => {
     if (!countries.data?.countries.length) return;
     if (
@@ -105,6 +102,23 @@ export function HomePage() {
     enabled: hasDashboardData,
   });
 
+  const coverage = useQuery({
+    queryKey: [
+      "dashboard",
+      "coverage",
+      selectedCountry,
+      dateRange.startDate,
+      dateRange.endDate,
+    ],
+    queryFn: () =>
+      getCoverage({
+        country: selectedCountry,
+        startDate: dateRange.startDate,
+        endDate: dateRange.endDate,
+      }),
+    enabled: hasDashboardData,
+  });
+
   const errors = useQuery({
     queryKey: [
       "dashboard",
@@ -138,6 +152,15 @@ export function HomePage() {
     enabled: hasDashboardData,
   });
 
+  const missingDaysMutation = useMutation({
+    mutationFn: () =>
+      ingestMissingDays(selectedCountry, coverage.data?.missing_days ?? []),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      void queryClient.invalidateQueries({ queryKey: ["ingestions"] });
+    },
+  });
+
   const appliedDimension = useMemo(
     () =>
       summary.data?.applied_dimension ??
@@ -150,11 +173,6 @@ export function HomePage() {
       findSegmentSelection(segments.data?.segments ?? [], segment),
     [segment, segments.data?.segments, summary.data?.applied_segment],
   );
-
-  function refreshDashboard() {
-    void countries.refetch();
-    void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-  }
 
   function applyDimension(nextDimension: string) {
     setDimension(nextDimension);
@@ -194,9 +212,6 @@ export function HomePage() {
       <div className="dashboard-page">
         <header className="page-header">
           <h1>Dashboard General {selectedCountry}</h1>
-          <button className="command-button primary" onClick={refreshDashboard}>
-            <RefreshCcw size={16} /> Actualizar
-          </button>
         </header>
         <EmptyAnalyticsState
           title="Sin datos ingestados"
@@ -211,16 +226,16 @@ export function HomePage() {
       <DashboardHeader
         country={selectedCountry}
         countries={countries.data.countries}
-        countryStatus={selectedCountryStatus}
         appliedDimension={appliedDimension}
         appliedSegment={appliedSegment}
         dateRange={dateRange}
+        coverage={coverage.data}
+        missingIngestionPending={missingDaysMutation.isPending}
         onCountryChange={setActiveCountry}
         onDateRangeChange={setDateRange}
         onOpenDimensions={() => setDimensionPanelOpen(true)}
         onOpenSegments={() => setSegmentPanelOpen(true)}
-        onRefresh={refreshDashboard}
-        isRefreshing={summary.isFetching || errors.isFetching}
+        onIngestMissingDays={() => missingDaysMutation.mutate()}
       />
 
       <DashboardTabs active={activeTab} onChange={setActiveTab} />

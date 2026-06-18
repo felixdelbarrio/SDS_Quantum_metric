@@ -1,7 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Palette, Plus, Save, Trash2 } from "lucide-react";
+import {
+  CheckCircle2,
+  Database,
+  Globe2,
+  Monitor,
+  Palette,
+  Plus,
+  Save,
+  Settings2,
+  ShieldCheck,
+  Trash2,
+} from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
-import { apiGet, apiPut } from "../../shared/api/client";
+import { apiGet, apiPost, apiPut } from "../../shared/api/client";
 import {
   COUNTRY_OPTIONS,
   CountryCode,
@@ -39,7 +50,7 @@ export function QuantumPage() {
 
   const current = form ?? config.data;
   const countryRows = current?.countries ?? [];
-  const activeCountryExists = countryRows.some(
+  const defaultCountryExists = countryRows.some(
     (row) => row.country === current?.country,
   );
   const depthDaysInvalid =
@@ -55,6 +66,13 @@ export function QuantumPage() {
       setManualCookie("");
       void queryClient.invalidateQueries({ queryKey: ["quantum-config"] });
     },
+  });
+
+  const testCountry = useMutation({
+    mutationFn: (country: CountryCode) =>
+      apiPost(`/quantum/test-connection?country=${country}`),
+    onSuccess: () =>
+      void queryClient.invalidateQueries({ queryKey: ["quantum-config"] }),
   });
 
   useEffect(() => {
@@ -95,7 +113,10 @@ export function QuantumPage() {
     setForm({
       ...current,
       country: current.countries.length ? current.country : nextCountry,
-      countries: [...current.countries, emptyCountryConfig(nextCountry)],
+      countries: [
+        ...current.countries,
+        emptyCountryConfig(nextCountry, current.countries.length === 0),
+      ],
     });
   }
 
@@ -115,9 +136,13 @@ export function QuantumPage() {
     if (!current) return;
     save.mutate({
       ...current,
-      country: activeCountryExists
+      country: defaultCountryExists
         ? current.country
         : (current.countries[0]?.country ?? current.country),
+      countries: current.countries.map((row) => ({
+        ...row,
+        enabled: row.country === current.country,
+      })),
       manual_cookie:
         current.session_mode === "manual" ? manualCookie : undefined,
     });
@@ -127,14 +152,34 @@ export function QuantumPage() {
 
   return (
     <>
-      <header className="page-header">
-        <h1>Quantum</h1>
+      <header className="page-header config-page-header">
+        <div>
+          <span className="eyebrow">Configuracion local</span>
+          <h1>Quantum</h1>
+          <p>
+            Conexiones, apariencia y widgets disponibles para la experiencia
+            offline.
+          </p>
+        </div>
+        <span className={`status ${defaultCountryExists ? "ok" : "ko"}`}>
+          {defaultCountryExists ? "Default preparado" : "Define un default"}
+        </span>
       </header>
 
-      <form className="config-surface" onSubmit={onSubmit}>
-        <section className="config-panel">
-          <div className="toolbar">
-            <label className="field">
+      <form
+        className="config-surface config-premium-surface"
+        onSubmit={onSubmit}
+      >
+        <section className="config-panel config-control-panel">
+          <div className="section-heading compact">
+            <h2 className="heading-with-icon">
+              <Settings2 size={18} aria-hidden="true" />
+              Operativa local
+            </h2>
+          </div>
+          <div className="config-control-grid">
+            <label className="field config-field-card">
+              <Monitor size={18} aria-hidden="true" />
               <span>Browser</span>
               <select
                 value={current.browser}
@@ -151,7 +196,8 @@ export function QuantumPage() {
                 <option value="firefox">Firefox</option>
               </select>
             </label>
-            <label className="field">
+            <label className="field config-field-card">
+              <ShieldCheck size={18} aria-hidden="true" />
               <span>Sesion</span>
               <select
                 value={current.session_mode}
@@ -166,72 +212,49 @@ export function QuantumPage() {
                 <option value="manual">Manual</option>
               </select>
             </label>
-            <label className="field">
-              <span>Pais activo</span>
+            <label className="field config-field-card theme-select">
+              <Palette size={18} aria-hidden="true" />
+              <span>Tema</span>
               <select
-                value={current.country}
-                disabled={!countryRows.length}
-                onChange={(event) =>
-                  update("country", event.target.value as CountryCode)
-                }
+                value={themePreference}
+                onChange={(event) => {
+                  const nextTheme = event.target.value as ThemePreference;
+                  setThemePreference(nextTheme);
+                  update("theme_preference", nextTheme);
+                }}
               >
-                {countryRows.map((row) => (
-                  <option key={row.country} value={row.country}>
-                    {countryLabel(row.country)}
-                  </option>
-                ))}
+                <option value="system">Sistema</option>
+                <option value="light">Claro</option>
+                <option value="dark">Oscuro</option>
               </select>
+            </label>
+            <label className="field config-field-card">
+              <Database size={18} aria-hidden="true" />
+              <span>Profundidad de ingesta</span>
+              <input
+                type="number"
+                min={1}
+                max={3650}
+                required
+                value={current.ingestion_depth_days || ""}
+                onChange={(event) =>
+                  update(
+                    "ingestion_depth_days",
+                    event.target.value === "" ? 0 : Number(event.target.value),
+                  )
+                }
+              />
+              <small>dias</small>
             </label>
           </div>
         </section>
 
-        <section className="config-panel">
+        <section className="config-panel config-country-panel">
           <div className="section-heading compact">
             <h2 className="heading-with-icon">
-              <Palette size={18} aria-hidden="true" />
-              Apariencia
+              <Globe2 size={18} aria-hidden="true" />
+              Paises Quantum
             </h2>
-          </div>
-          <label className="field theme-select">
-            <span>Tema</span>
-            <select
-              value={themePreference}
-              onChange={(event) => {
-                const nextTheme = event.target.value as ThemePreference;
-                setThemePreference(nextTheme);
-                update("theme_preference", nextTheme);
-              }}
-            >
-              <option value="system">Sistema</option>
-              <option value="light">Claro</option>
-              <option value="dark">Oscuro</option>
-            </select>
-          </label>
-        </section>
-
-        <section className="config-panel">
-          <label className="field">
-            <span>Profundidad de datos a ingestar</span>
-            <input
-              type="number"
-              min={1}
-              max={3650}
-              required
-              value={current.ingestion_depth_days || ""}
-              onChange={(event) =>
-                update(
-                  "ingestion_depth_days",
-                  event.target.value === "" ? 0 : Number(event.target.value),
-                )
-              }
-            />
-            <small>dias</small>
-          </label>
-        </section>
-
-        <section className="config-panel">
-          <div className="section-heading compact">
-            <h2>Paises Quantum</h2>
             <button
               className="command-button"
               type="button"
@@ -243,86 +266,154 @@ export function QuantumPage() {
           </div>
 
           {countryRows.length ? (
-            <div className="table-scroll">
-              <table className="table config-table">
-                <thead>
-                  <tr>
-                    <th>Pais</th>
-                    <th>Base URL</th>
-                    <th>Activo</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {countryRows.map((row, index) => (
-                    <tr key={`${row.country}-${index}`}>
-                      <td>
-                        <select
-                          value={row.country}
-                          aria-label={`Pais ${index + 1}`}
-                          onChange={(event) =>
-                            updateCountryRow(index, {
-                              country: event.target.value as CountryCode,
-                            })
-                          }
-                        >
-                          {COUNTRY_OPTIONS.map((option) => (
-                            <option
-                              key={option.code}
-                              value={option.code}
-                              disabled={countryRows.some(
-                                (candidate, rowIndex) =>
-                                  rowIndex !== index &&
-                                  candidate.country === option.code,
-                              )}
-                            >
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
-                      </td>
-                      <td>
-                        <input
-                          value={row.base_url}
-                          aria-label={`Base URL ${row.country}`}
-                          onChange={(event) =>
-                            updateCountryRow(index, {
-                              base_url: event.target.value,
-                            })
-                          }
-                        />
-                      </td>
-                      <td>
-                        <input
-                          type="checkbox"
-                          checked={row.enabled}
-                          aria-label={`Activo ${row.country}`}
-                          onChange={(event) =>
-                            updateCountryRow(index, {
-                              enabled: event.target.checked,
-                            })
-                          }
-                        />
-                      </td>
-                      <td>
-                        <button
-                          className="icon-button danger"
-                          type="button"
-                          aria-label={`Eliminar ${row.country}`}
-                          title={`Eliminar ${row.country}`}
-                          onClick={() => removeCountry(index)}
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="config-country-grid">
+              {countryRows.map((row, index) => (
+                <article
+                  className="config-country-card"
+                  key={`${row.country}-${index}`}
+                >
+                  <header>
+                    <div className="config-country-title">
+                      <span className="config-country-icon" aria-hidden="true">
+                        <Globe2 size={18} />
+                      </span>
+                      <div>
+                        <span className="eyebrow">Pais</span>
+                        <strong>{countryLabel(row.country)}</strong>
+                      </div>
+                    </div>
+                    <span
+                      className={`status ${row.dashboard_resolved ? "ok" : ""}`}
+                    >
+                      {row.dashboard_resolved ? "Dashboard" : "Pendiente"}
+                    </span>
+                  </header>
+                  <div className="config-country-fields">
+                    <label className="field">
+                      <span>Pais</span>
+                      <select
+                        value={row.country}
+                        aria-label={`Pais ${index + 1}`}
+                        onChange={(event) =>
+                          updateCountryRow(index, {
+                            country: event.target.value as CountryCode,
+                          })
+                        }
+                      >
+                        {COUNTRY_OPTIONS.map((option) => (
+                          <option
+                            key={option.code}
+                            value={option.code}
+                            disabled={countryRows.some(
+                              (candidate, rowIndex) =>
+                                rowIndex !== index &&
+                                candidate.country === option.code,
+                            )}
+                          >
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="field config-url-field">
+                      <span>Base URL</span>
+                      <input
+                        value={row.base_url}
+                        aria-label={`Base URL ${row.country}`}
+                        onChange={(event) =>
+                          updateCountryRow(index, {
+                            base_url: event.target.value,
+                          })
+                        }
+                      />
+                    </label>
+                  </div>
+                  <footer>
+                    <label className="config-default-toggle">
+                      <input
+                        type="checkbox"
+                        checked={row.country === current.country}
+                        aria-label={`Default ${row.country}`}
+                        onChange={(event) =>
+                          event.target.checked
+                            ? update("country", row.country)
+                            : undefined
+                        }
+                      />
+                      <span>Default</span>
+                    </label>
+                    <div className="config-row-actions">
+                      <button
+                        className="command-button"
+                        type="button"
+                        disabled={!row.base_url || testCountry.isPending}
+                        onClick={() => testCountry.mutate(row.country)}
+                      >
+                        <CheckCircle2 size={16} /> Test pais
+                      </button>
+                      <button
+                        className="icon-button danger"
+                        type="button"
+                        aria-label={`Eliminar ${row.country}`}
+                        title={`Eliminar ${row.country}`}
+                        onClick={() => removeCountry(index)}
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  </footer>
+                </article>
+              ))}
             </div>
           ) : (
             <div className="empty compact">Sin paises configurados</div>
           )}
+        </section>
+
+        <section className="config-panel">
+          <div className="section-heading compact">
+            <h2 className="heading-with-icon">
+              <Database size={18} aria-hidden="true" />
+              Dashboards y widgets
+            </h2>
+          </div>
+          <div className="dashboard-config-list">
+            {countryRows.map((row) => (
+              <article className="dashboard-config-item" key={row.country}>
+                <header>
+                  <div>
+                    <span className="eyebrow">Preview operativo</span>
+                    <strong>{countryLabel(row.country)}</strong>
+                  </div>
+                  <span
+                    className={`status ${row.dashboard_resolved ? "ok" : ""}`}
+                  >
+                    {row.dashboard_resolved
+                      ? "Dashboard default resuelto"
+                      : "Test pais pendiente"}
+                  </span>
+                </header>
+                <div className="widget-config-section-grid">
+                  {WIDGET_CONFIG_GROUPS.map((group) => (
+                    <section
+                      className="widget-config-group"
+                      key={`${row.country}-${group.title}`}
+                    >
+                      <h3>{group.title}</h3>
+                      <div className="widget-config-grid">
+                        {group.widgets.map((widget) => (
+                          <label key={`${row.country}-${widget.id}`}>
+                            <input type="checkbox" checked readOnly />
+                            <span>{widget.title}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </section>
+                  ))}
+                </div>
+              </article>
+            ))}
+          </div>
         </section>
 
         {current.session_mode === "manual" && (
@@ -352,11 +443,45 @@ export function QuantumPage() {
   );
 }
 
-function emptyCountryConfig(country: CountryCode): QuantumCountryConfig {
+const WIDGET_CONFIG_GROUPS = [
+  {
+    title: "Resumen",
+    widgets: [
+      { id: "summary.page_views", title: "Paginas vistas" },
+      { id: "summary.sessions", title: "Sesiones" },
+      { id: "summary.converted_sessions", title: "Sesiones con conversion" },
+      { id: "summary.avg_session_duration", title: "Tiempo medio de sesion" },
+      { id: "summary.detail_by_app_name_os", title: "Detalle App Name / SO" },
+    ],
+  },
+  {
+    title: "Errores",
+    widgets: [
+      {
+        id: "errors.error_sessions_percentage_evolution",
+        title: "% sesiones con error",
+      },
+      { id: "errors.top_errors_by_error_name", title: "Top errores" },
+      {
+        id: "errors.error_sessions_by_app_name_comparison",
+        title: "Comparativa App Name",
+      },
+      {
+        id: "errors.error_session_percentage_by_app_name",
+        title: "% error por App Name",
+      },
+    ],
+  },
+];
+
+function emptyCountryConfig(
+  country: CountryCode,
+  enabled = true,
+): QuantumCountryConfig {
   return {
     country,
     base_url: "",
-    enabled: true,
+    enabled,
     dashboard_resolved: false,
   };
 }

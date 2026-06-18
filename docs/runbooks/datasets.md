@@ -26,3 +26,11 @@ Usar `Importar` con ZIP generado por la aplicacion. El backend valida `manifest.
 El borrado requiere confirmacion API `confirm={country}` y modal en UI. Elimina RAW, derivados y regresion del pais.
 
 La UI exige escribir exactamente el codigo de pais antes de habilitar el boton destructivo.
+# Datasets Iteracion 8
+
+- Datasets no ejecuta acciones tecnicas de regeneracion/regresion desde UI.
+- La pantalla muestra ruta local, paises, estado compacto, import/export, borrar y entidades.
+- Cada entidad usa paginacion backend y cabeceras fijas.
+- El boton CSV exporta la entidad visible.
+- Export ZIP incluye `config/quantum.json` y Parquet.
+- Import rechaza rutas peligrosas y secretos.

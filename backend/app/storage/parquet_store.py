@@ -6,14 +6,15 @@ import json
 import shutil
 import zipfile
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, cast
 
 import polars as pl
 
 from backend.app.config.settings import Settings
 from backend.app.observability.sanitizer import sanitize
+from backend.app.quantum_dashboard.periods import parse_date, zoneinfo_for
 
 DEDUPLICATION_COLUMNS = (
     "source_endpoint",
@@ -29,6 +30,7 @@ DEDUPLICATION_COLUMNS = (
 )
 COMPACTED_RAW_CALLS_FILE = "raw_api_calls.parquet"
 COMPACTED_DATASET_FILE = "part-000.parquet"
+DAY_COVERAGE_FILE = "day_coverage.parquet"
 
 
 @dataclass(frozen=True)
@@ -55,7 +57,7 @@ class ParquetStore:
         target = self.settings.parquet_dir / f"country={country}" / "raw_api_calls"
         target.mkdir(parents=True, exist_ok=True)
         path = target / COMPACTED_RAW_CALLS_FILE
-        files = self._raw_call_files(country)
+        files = self._legacy_raw_call_files(country)
         new_frame = pl.DataFrame(rows)
         existing = self._read_parquet_files(files)
         kept_existing, rows_replaced = self._drop_overlapping_source_range(existing, rows)
@@ -69,6 +71,7 @@ class ParquetStore:
         for file in files:
             file.unlink(missing_ok=True)
         temporary.replace(path)
+        self._publish_daily_raw_calls(country, frame)
         return RawCallMergeResult(
             path=path,
             rows_captured=len(rows),
@@ -253,12 +256,19 @@ class ParquetStore:
         target = self.settings.exports_dir / f"quantum_export_{safe_countries}_{timestamp}.zip"
         with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
             manifest = {
-                "schema_version": "1.0",
+                "schema_version": "1.1",
                 "created_at": datetime.now(UTC).isoformat(),
                 "countries": countries,
+                "includes": ["config/quantum.json", "data/parquet"],
                 "checksum": "",
             }
             archive.writestr("manifest.json", json.dumps(manifest, indent=2))
+            quantum_config = self.settings.config_dir / "quantum.json"
+            if quantum_config.exists():
+                archive.writestr(
+                    "config/quantum.json",
+                    json.dumps(_safe_json_file(quantum_config), indent=2),
+                )
             for country in countries:
                 root = self.settings.parquet_dir / f"country={country}"
                 if not root.exists():
@@ -270,6 +280,7 @@ class ParquetStore:
     def import_zip(self, zip_path: Path) -> dict[str, Any]:
         raw_rows_by_country: dict[str, list[dict[str, Any]]] = {}
         dataset_files: list[tuple[Path, bytes]] = []
+        config_files: list[tuple[Path, bytes]] = []
         with zipfile.ZipFile(zip_path) as archive:
             names = archive.namelist()
             if "manifest.json" not in names:
@@ -277,6 +288,21 @@ class ParquetStore:
             manifest = json.loads(archive.read("manifest.json"))
             countries = set(manifest.get("countries") or [])
             for name in names:
+                if name.startswith("config/"):
+                    relative = PurePosixPath(name)
+                    if ".." in relative.parts or relative.is_absolute():
+                        raise ValueError(f"Unsafe ZIP path: {name}")
+                    if name != "config/quantum.json":
+                        raise ValueError(f"Unexpected config path: {name}")
+                    config_payload = json.loads(archive.read(name))
+                    _reject_secret_config(config_payload)
+                    config_files.append(
+                        (
+                            self.settings.config_dir / "quantum.json",
+                            json.dumps(config_payload, indent=2).encode(),
+                        )
+                    )
+                    continue
                 if not name.startswith("parquet/") or not name.endswith(".parquet"):
                     continue
                 relative = PurePosixPath(name)
@@ -307,8 +333,11 @@ class ParquetStore:
         for destination, data in dataset_files:
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(data)
+        for destination, data in config_files:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(data)
         return {
-            "imported_files": imported_raw_files + len(dataset_files),
+            "imported_files": imported_raw_files + len(dataset_files) + len(config_files),
             "manifest": manifest,
         }
 
@@ -404,9 +433,59 @@ class ParquetStore:
         ]
         return _merge_source_ranges(ranges)
 
+    def day_coverage(
+        self,
+        country: str,
+        start: str | date | datetime | None,
+        end: str | date | datetime | None,
+    ) -> dict[str, Any]:
+        start_day = parse_date(start)
+        end_day = parse_date(end)
+        if start_day is None and end_day is None:
+            return {
+                "country": country,
+                "start": None,
+                "end": None,
+                "complete": True,
+                "covered_days": [],
+                "missing_days": [],
+                "message": "Sin rango seleccionado.",
+            }
+        start_day = start_day or end_day
+        end_day = end_day or start_day
+        if start_day is None or end_day is None:
+            raise ValueError("Invalid coverage date range.")
+        if end_day < start_day:
+            start_day, end_day = end_day, start_day
+        requested_days = _days_between(start_day, end_day)
+        covered = self._manifest_covered_days(country)
+        if not covered:
+            covered = self._covered_days_from_source_ranges(country, requested_days)
+        covered_days = [day for day in requested_days if day in covered]
+        missing_days = [day for day in requested_days if day not in covered]
+        return {
+            "country": country,
+            "start": start_day.isoformat(),
+            "end": end_day.isoformat(),
+            "complete": not missing_days,
+            "covered_days": [day.isoformat() for day in covered_days],
+            "missing_days": [day.isoformat() for day in missing_days],
+            "message": _coverage_message(missing_days),
+        }
+
     def _raw_call_files(self, country: str) -> list[Path]:
+        daily = self._daily_raw_call_files(country)
+        if daily:
+            return daily
+        return self._legacy_raw_call_files(country)
+
+    def _legacy_raw_call_files(self, country: str) -> list[Path]:
         root = self.settings.parquet_dir / f"country={country}" / "raw_api_calls"
         return sorted(root.glob("*.parquet")) if root.exists() else []
+
+    def _daily_raw_call_files(self, country: str) -> list[Path]:
+        root = self.settings.parquet_dir / f"country={country}"
+        return sorted(root.glob("day=*/raw_api_calls/*.parquet")) if root.exists() else []
 
     def _country_dataset_files(self, country: str, dataset_path: str) -> list[Path]:
         root = self.settings.parquet_dir / f"country={country}" / dataset_path
@@ -433,6 +512,81 @@ class ParquetStore:
         if kept:
             return pl.DataFrame(kept), replaced
         return pl.DataFrame(schema=frame.schema), replaced
+
+    def _publish_daily_raw_calls(self, country: str, frame: pl.DataFrame) -> None:
+        if frame.is_empty():
+            return
+        root = self.settings.parquet_dir / f"country={country}"
+        for day_dir in root.glob("day=*"):
+            if day_dir.is_dir():
+                shutil.rmtree(day_dir)
+        rows_by_day: dict[date, list[dict[str, Any]]] = {}
+        for row in frame.to_dicts():
+            day = _row_source_day(row)
+            if day is None:
+                continue
+            rows_by_day.setdefault(day, []).append(row)
+        if not rows_by_day:
+            return
+        coverage_rows: list[dict[str, Any]] = []
+        for day, rows in sorted(rows_by_day.items()):
+            target = root / f"day={day.isoformat()}" / "raw_api_calls"
+            target.mkdir(parents=True, exist_ok=True)
+            path = target / COMPACTED_RAW_CALLS_FILE
+            temporary = path.with_suffix(".tmp.parquet")
+            pl.DataFrame(rows).write_parquet(temporary)
+            temporary.replace(path)
+            starts = [_parse_source_ts(row.get("source_ts_start")) for row in rows]
+            ends = [_parse_source_ts(row.get("source_ts_end")) for row in rows]
+            coverage_rows.append(
+                {
+                    "country": country,
+                    "day": day.isoformat(),
+                    "status": "complete",
+                    "raw_calls": len(rows),
+                    "source_start": min(value for value in starts if value is not None)
+                    if any(starts)
+                    else None,
+                    "source_end": max(value for value in ends if value is not None)
+                    if any(ends)
+                    else None,
+                    "updated_at": datetime.now(UTC).isoformat(),
+                }
+            )
+        manifests = root / "manifests"
+        manifests.mkdir(parents=True, exist_ok=True)
+        path = manifests / DAY_COVERAGE_FILE
+        temporary = path.with_suffix(".tmp.parquet")
+        pl.DataFrame(coverage_rows).write_parquet(temporary)
+        temporary.replace(path)
+
+    def _manifest_covered_days(self, country: str) -> set[date]:
+        path = self.settings.parquet_dir / f"country={country}" / "manifests" / DAY_COVERAGE_FILE
+        if not path.exists():
+            return set()
+        try:
+            rows = pl.read_parquet(path).to_dicts()
+        except Exception:
+            return set()
+        days: set[date] = set()
+        for row in rows:
+            if row.get("status") != "complete":
+                continue
+            parsed = parse_date(row.get("day"))
+            if parsed:
+                days.add(parsed)
+        return days
+
+    def _covered_days_from_source_ranges(
+        self, country: str, requested_days: list[date]
+    ) -> set[date]:
+        ranges = self.covered_source_ranges(country)
+        covered: set[date] = set()
+        for day in requested_days:
+            start, end = _day_bounds(day)
+            if any(range_start <= start and range_end >= end for range_start, range_end in ranges):
+                covered.add(day)
+        return covered
 
 
 def hash_json(value: Any) -> str:
@@ -461,6 +615,21 @@ def _parquet_rich_row(row: dict[str, Any]) -> dict[str, Any]:
                 pass
         rich[key] = value
     return rich
+
+
+def _safe_json_file(path: Path) -> dict[str, Any]:
+    payload = json.loads(path.read_text())
+    if not isinstance(payload, dict):
+        raise ValueError("Config payload must be a JSON object.")
+    _reject_secret_config(payload)
+    return cast(dict[str, Any], sanitize(payload))
+
+
+def _reject_secret_config(payload: Any) -> None:
+    serialized = json.dumps(payload, sort_keys=True, default=str).casefold()
+    forbidden = ("cookie", "authorization", "secret", "token")
+    if any(item in serialized for item in forbidden):
+        raise ValueError("Config import/export payload contains secret-looking fields.")
 
 
 def _source_bounds(rows: list[dict[str, Any]]) -> tuple[datetime, datetime] | None:
@@ -501,6 +670,35 @@ def _parse_source_ts(value: Any) -> datetime | None:
         except ValueError:
             return None
     return None
+
+
+def _row_source_day(row: dict[str, Any]) -> date | None:
+    source = _parse_source_ts(row.get("source_ts_start")) or _parse_source_ts(
+        row.get("ingestion_ts")
+    )
+    if source is None:
+        return None
+    return source.astimezone(zoneinfo_for("CST")).date()
+
+
+def _days_between(start: date, end: date) -> list[date]:
+    total_days = (end - start).days
+    return [start + timedelta(days=index) for index in range(total_days + 1)]
+
+
+def _day_bounds(day: date) -> tuple[datetime, datetime]:
+    zone = zoneinfo_for("CST")
+    start = datetime.combine(day, time.min, tzinfo=zone).astimezone(UTC)
+    end = datetime.combine(day, time.max.replace(microsecond=0), tzinfo=zone).astimezone(UTC)
+    return start, end
+
+
+def _coverage_message(missing_days: list[date]) -> str:
+    if not missing_days:
+        return "Periodo completo en Parquet."
+    if len(missing_days) == 1:
+        return f"Falta 1 dia para completar el periodo: {missing_days[0].isoformat()}."
+    return f"Faltan {len(missing_days)} dias para completar el periodo."
 
 
 def _merge_source_ranges(

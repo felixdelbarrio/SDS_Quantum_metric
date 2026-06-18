@@ -1,3 +1,4 @@
+import { Maximize2 } from "lucide-react";
 import { useState } from "react";
 import { ErrorComparisonWidget } from "../types";
 import { CardExplorerModal } from "./CardExplorerModal";
@@ -18,9 +19,19 @@ export function ErrorDonut({ widget }: Props) {
     >
       <div className="section-heading">
         <div>
+          <span className="eyebrow">Distribucion</span>
           <h2>{widget.title}</h2>
           <span>Total: {widget.total?.toLocaleString() ?? "-"}</span>
         </div>
+        <button
+          className="icon-button subtle"
+          type="button"
+          aria-label={`Abrir detalle de ${widget.title}`}
+          title="Abrir detalle"
+          onClick={() => setExpanded(true)}
+        >
+          <Maximize2 size={16} />
+        </button>
       </div>
 
       {total > 0 ? (

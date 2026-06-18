@@ -18,8 +18,10 @@ La capa `backend/app/analytics` centraliza el dashboard offline:
 - `segments.py`: segmentos aplicables desde valores locales.
 - `errors.py`: calculo compartido de sesiones con error y porcentaje.
 
-El motor lee solo `data/parquet/country=<pais>/raw_api_calls/*.parquet`. No usa
-`QuantumClient`, Playwright ni clientes HTTP externos.
+El motor lee entidades Parquet locales. Desde Iteracion 8, la cobertura y la ingesta incremental
+prefieren particiones `parquet/country=<pais>/day=YYYY-MM-DD/raw_api_calls/*.parquet` y el
+manifest `parquet/country=<pais>/manifests/day_coverage.parquet`. No usa `QuantumClient`,
+Playwright ni clientes HTTP externos.
 
 ## Dashboard Quantum por cards
 
@@ -41,7 +43,7 @@ El motor lee solo `data/parquet/country=<pais>/raw_api_calls/*.parquet`. No usa
 3. Se resuelve dashboard/team/tabs internamente.
 4. Se navega `Resumen` y `Errores`.
 5. Se capturan respuestas reales de `/analytics` y `/analytics/historical`.
-6. Se guardan raw calls y manifests en Parquet particionado por pais dentro de la ruta persistente.
+6. Se guardan raw calls, particiones diarias y manifests en Parquet dentro de la ruta persistente.
 7. Se generan contratos visuales, snapshots web, datasets derivados y `derived/chart_payloads`.
 8. Se ejecuta regresion Web vs Local.
 9. La ingesta solo termina `completed` si la regresion pasa.
@@ -51,10 +53,10 @@ La politica de rango usa `QUANTUM_INGESTION_DEPTH_DAYS`, `QUANTUM_INCREMENTAL_RE
 ## Flujo del dashboard offline
 
 1. Home llama `/api/local-dashboard/countries` para elegir pais por defecto.
-2. El backend comprueba contratos, derivados y regresion.
+2. El backend comprueba contratos, derivados, coverage diario y regresion.
 3. Summary y Errors se sirven desde `derived/*`.
 4. Search y sort operan sobre Parquet derivado local.
-5. Si falta una card obligatoria o falla regresion, se devuelve error accionable.
+5. Si falta una card obligatoria, falla regresion o faltan dias, se devuelve error accionable.
 
 ## Contrato grafico
 
@@ -62,7 +64,7 @@ Las cards graficas no se renderizan desde agregados. Backend persiste `ChartPayl
 
 ## Datasets Auditables
 
-Datasets expone entidades Parquet por pais mediante `/api/datasets/{country}/entities` y `/api/datasets/{country}/entities/{entity}`. Las respuestas son paginadas; RAW completo solo se lee bajo demanda.
+Datasets expone entidades Parquet por pais mediante `/api/datasets/{country}/entities` y `/api/datasets/{country}/entities/{entity}`. Las respuestas son paginadas; RAW completo solo se lee bajo demanda. Export/import incluye `config/quantum.json` y datos Parquet, rechazando secretos y rutas peligrosas.
 
 ## Offline
 
