@@ -19,6 +19,11 @@ from backend.app.quantum_dashboard.catalog import (
     SUMMARY_PAGE_VIEWS,
     SUMMARY_SESSIONS,
 )
+from backend.app.quantum_dashboard.chart_axes import (
+    format_tick_label,
+    readable_x_ticks,
+    readable_y_ticks,
+)
 from backend.app.quantum_dashboard.models import ParserResult, VisualRole
 
 METRIC_ALIASES: dict[VisualRole, tuple[str, ...]] = {
@@ -179,6 +184,15 @@ def _parse_summary_table(role: VisualRole, response_json: dict[str, Any]) -> Par
                 flat, SUMMARY_TABLE_ALIASES["conversions_delta_percent"]
             ),
         }
+        for key in (
+            "row_id",
+            "parent_row_id",
+            "depth",
+            "is_expandable",
+            "is_expanded_default",
+        ):
+            if key in flat:
+                parsed[key] = flat[key]
         if isinstance(dimensions, list) and len(dimensions) > 1:
             parsed["operating_system"] = str(dimensions[1])
         if parsed["sessions"] is None and parsed["page_views"] is None:
@@ -668,41 +682,11 @@ def _donut_chart_payload(
 
 
 def _axis_ticks_from_points(points: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    if not points:
-        return []
-    if len(points) <= 6:
-        selected = list(enumerate(points))
-    else:
-        step = max(1, (len(points) - 1) // 5)
-        selected = [(index, points[index]) for index in range(0, len(points), step)]
-        if selected[-1][0] != len(points) - 1:
-            selected.append((len(points) - 1, points[-1]))
-    denominator = max(1, len(points) - 1)
-    ticks = []
-    for index, point in selected:
-        raw = point.get("ts")
-        ticks.append(
-            {
-                "value": str(raw),
-                "label": _short_ts_label(raw),
-                "position": round(index / denominator, 4),
-            }
-        )
-    return ticks
+    return readable_x_ticks(points, timezone="CST")
 
 
 def _numeric_ticks(min_value: float, max_value: float, unit: str) -> list[dict[str, Any]]:
-    if max_value < min_value:
-        min_value, max_value = max_value, min_value
-    span = max(max_value - min_value, 1)
-    return [
-        {
-            "value": round(min_value + span * ratio, 4),
-            "label": _format_tick(min_value + span * ratio, unit),
-            "position": ratio,
-        }
-        for ratio in (0, 0.5, 1)
-    ]
+    return readable_y_ticks(min_value, max_value, unit)
 
 
 def _format_tick(value: float, unit: str) -> str:
@@ -714,12 +698,7 @@ def _format_tick(value: float, unit: str) -> str:
 
 
 def _short_ts_label(value: Any) -> str:
-    text = "" if value is None else str(value)
-    if text.isdigit():
-        return text
-    if "T" in text:
-        return text.split("T", 1)[1][:5]
-    return text[:10] if len(text) > 10 else text
+    return format_tick_label(value, timezone="CST")
 
 
 def _bands(response_json: dict[str, Any]) -> list[dict[str, Any]]:
@@ -757,6 +736,8 @@ def _timezone(response_json: dict[str, Any]) -> str:
 
 
 def _expandable_summary_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if any(row.get("parent_row_id") is not None or row.get("depth") is not None for row in rows):
+        return [_with_hierarchy_defaults(row) for row in rows]
     grouped: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
         app_name = str(row.get("app_name") or row.get("name") or "Null")
@@ -784,7 +765,8 @@ def _expandable_summary_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]
         }
         parent.update(_semantic_states(parent))
         output.append(parent)
-        for child_index, child in enumerate(children):
+        child_rows = [child for child in children if _is_operating_system_child(child, app_name)]
+        for child_index, child in enumerate(child_rows):
             child_row = {
                 **child,
                 "row_id": f"{parent_id}:os:{child.get('operating_system') or child_index}",
@@ -797,6 +779,27 @@ def _expandable_summary_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]
             child_row.update(_semantic_states(child_row))
             output.append(child_row)
     return output
+
+
+def _with_hierarchy_defaults(row: dict[str, Any]) -> dict[str, Any]:
+    depth = int(_to_number(row.get("depth")) or 0)
+    normalized = {
+        **row,
+        "row_id": row.get("row_id") or f"row:{row.get('name') or row.get('app_name')}",
+        "parent_row_id": row.get("parent_row_id"),
+        "depth": depth,
+        "is_expandable": bool(row.get("is_expandable")) if depth == 0 else False,
+        "is_expanded_default": bool(row.get("is_expanded_default")),
+    }
+    normalized.update(_semantic_states(normalized))
+    return normalized
+
+
+def _is_operating_system_child(row: dict[str, Any], app_name: str) -> bool:
+    operating_system = str(row.get("operating_system") or "").strip()
+    if not operating_system or operating_system.casefold() == "null":
+        return False
+    return operating_system.casefold() != app_name.casefold()
 
 
 def _first_number(rows: list[dict[str, Any]], key: str) -> float | None:

@@ -34,3 +34,10 @@ La UI muestra chunks planificados/completados, rango temporal activo, llamadas, 
 4. Si una grafica aparece como fallo contractual, regenerar derivados o repetir ingesta antes de aceptar el resultado.
 
 No hay reproduccion local de sesiones ni rutas de video.
+# Ingesta diaria y faltantes
+
+- La ingesta normal planifica chunks de un dia.
+- `/api/ingestions/missing-days` acepta dias locales explicitos.
+- El boton de un pais queda deshabilitado si ese pais ya tiene ingesta activa.
+- La UI muestra una card solo para la ingesta activa y el historico en tabla.
+- Al finalizar se actualizan particiones diarias y `day_coverage.parquet`.

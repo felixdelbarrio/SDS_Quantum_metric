@@ -20,6 +20,7 @@ type MockOptions = {
     rows?: number;
   }>;
   empty?: boolean;
+  missingDays?: string[];
 };
 
 const requests: string[] = [];
@@ -105,6 +106,43 @@ describe("HomePage local dashboard", () => {
       expect(screen.getAllByText("portabilidad nomina").length).toBeGreaterThan(
         0,
       );
+    });
+  });
+
+  it("no muestra KPIs tecnicos ni boton Actualizar en Dashboard", async () => {
+    mockFetch();
+    renderHome();
+
+    expect(await screen.findByText("Dashboard General MX")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Actualizar/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/calls/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/filas/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/cards/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/passed/i)).not.toBeInTheDocument();
+  });
+
+  it("muestra coverage incompleta y lanza ingesta de dias faltantes", async () => {
+    mockFetch({ missingDays: ["2026-06-17"] });
+    renderHome();
+
+    expect(
+      await screen.findByText(
+        "Falta 1 dia para completar el periodo: 2026-06-17.",
+      ),
+    ).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Ingestar dias faltantes" }),
+    );
+
+    await waitFor(() => {
+      expect(
+        requests.some(
+          (request) => request === "POST /api/ingestions/missing-days",
+        ),
+      ).toBe(true);
     });
   });
 
@@ -251,9 +289,20 @@ function todayInMexico() {
 function mockFetch(options: MockOptions = {}) {
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input));
-      requests.push(`${url.pathname}${url.search}`);
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const rawUrl =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      const url = new URL(rawUrl, "http://localhost");
+      const method = init?.method ?? "GET";
+      requests.push(
+        method === "GET"
+          ? `${url.pathname}${url.search}`
+          : `${method} ${url.pathname}`,
+      );
       const payload = responseFor(url, options);
       return new Response(JSON.stringify(payload), {
         status: 200,
@@ -308,6 +357,23 @@ function responseFor(url: URL, options: MockOptions) {
         },
       ],
     };
+  }
+  if (url.pathname.endsWith("/local-dashboard/coverage")) {
+    const missingDays = options.missingDays ?? [];
+    return {
+      country,
+      start: url.searchParams.get("start"),
+      end: url.searchParams.get("end"),
+      complete: missingDays.length === 0,
+      covered_days: missingDays.length ? [] : [url.searchParams.get("start")],
+      missing_days: missingDays,
+      message: missingDays.length
+        ? "Falta 1 dia para completar el periodo: 2026-06-17."
+        : "Periodo completo en Parquet.",
+    };
+  }
+  if (url.pathname.endsWith("/api/ingestions/missing-days")) {
+    return { ingestion_id: "missing-days", status: "pending" };
   }
   if (options.empty) return emptyPayload(country);
   if (url.pathname.endsWith("/local-dashboard/summary/table")) {

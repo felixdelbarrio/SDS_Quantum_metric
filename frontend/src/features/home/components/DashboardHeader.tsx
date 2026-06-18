@@ -1,5 +1,10 @@
-import { CalendarDays, Filter, Layers3, RefreshCcw, Star } from "lucide-react";
-import { AvailableCountry, CountryCode, DashboardSelection } from "../types";
+import { CalendarDays, Filter, Layers3, Star } from "lucide-react";
+import {
+  AvailableCountry,
+  CountryCode,
+  DashboardCoverage,
+  DashboardSelection,
+} from "../types";
 import { CountrySelector } from "./CountrySelector";
 
 export type DatePreset = "today" | "yesterday" | "last_7_days" | "custom";
@@ -13,32 +18,33 @@ export type DateRange = {
 type Props = {
   country: CountryCode;
   countries: AvailableCountry[];
-  countryStatus?: AvailableCountry;
   appliedDimension?: DashboardSelection | null;
   appliedSegment?: DashboardSelection | null;
   dateRange: DateRange;
+  coverage?: DashboardCoverage | null;
+  missingIngestionPending: boolean;
   onCountryChange: (country: CountryCode) => void;
   onDateRangeChange: (range: DateRange) => void;
   onOpenDimensions: () => void;
   onOpenSegments: () => void;
-  onRefresh: () => void;
-  isRefreshing: boolean;
+  onIngestMissingDays: () => void;
 };
 
 export function DashboardHeader({
   country,
   countries,
-  countryStatus,
   appliedDimension,
   appliedSegment,
   dateRange,
+  coverage,
+  missingIngestionPending,
   onCountryChange,
   onDateRangeChange,
   onOpenDimensions,
   onOpenSegments,
-  onRefresh,
-  isRefreshing,
+  onIngestMissingDays,
 }: Props) {
+  const missingDays = coverage?.missing_days ?? [];
   return (
     <header className="dashboard-header">
       <div className="dashboard-title-group">
@@ -52,12 +58,21 @@ export function DashboardHeader({
             <span>Dimension: {appliedDimension?.label ?? "sin dimension"}</span>
             <span>Segmento: {appliedSegment?.label ?? "sin segmento"}</span>
           </div>
-          <div className="dataset-facts compact">
-            <span>{formatNumber(countryStatus?.raw_calls)} calls</span>
-            <span>{formatNumber(countryStatus?.rows)} filas</span>
-            <span>{formatNumber(countryStatus?.cards)} cards</span>
-            <span>{countryStatus?.regression_status ?? "sin regresion"}</span>
-          </div>
+          {missingDays.length > 0 ? (
+            <div className="coverage-pill" role="status">
+              <span>{coverage?.message}</span>
+              <button
+                className="text-command"
+                type="button"
+                onClick={onIngestMissingDays}
+                disabled={missingIngestionPending}
+              >
+                {missingIngestionPending
+                  ? "Ingestando"
+                  : "Ingestar dias faltantes"}
+              </button>
+            </div>
+          ) : null}
         </div>
       </div>
 
@@ -123,21 +138,10 @@ export function DashboardHeader({
           <button className="command-button" onClick={onOpenSegments}>
             <Filter size={16} /> Segmento
           </button>
-          <button
-            className="command-button primary"
-            onClick={onRefresh}
-            disabled={isRefreshing}
-          >
-            <RefreshCcw size={16} /> Actualizar
-          </button>
         </div>
       </div>
     </header>
   );
-}
-
-function formatNumber(value?: number | null) {
-  return value == null ? "0" : value.toLocaleString();
 }
 
 function rangeForPreset(preset: DatePreset, current: DateRange): DateRange {

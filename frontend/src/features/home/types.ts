@@ -21,6 +21,16 @@ export type CountriesResponse = {
   default_country: CountryCode;
 };
 
+export type DashboardCoverage = {
+  country: CountryCode;
+  start: string | null;
+  end: string | null;
+  complete: boolean;
+  covered_days: string[];
+  missing_days: string[];
+  message: string;
+};
+
 export type DashboardSelection = {
   id: string;
   label: string;

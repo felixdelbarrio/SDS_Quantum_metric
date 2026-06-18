@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 from backend.app.auth.browser_cookies import BrowserCookieProvider
@@ -11,7 +11,7 @@ from backend.app.auth.session_store import secret_store
 from backend.app.config.settings import Settings
 from backend.app.ingestion.models import IngestionCreate, IngestionJob
 from backend.app.ingestion.planner import IngestionChunk, plan_ingestion_chunks
-from backend.app.ingestion.policy import build_ingestion_range
+from backend.app.ingestion.policy import IngestionRange, build_ingestion_range
 from backend.app.ingestion.progress import update_progress
 from backend.app.observability.sanitizer import sanitize_error
 from backend.app.quantum.config_store import QuantumConfigStore
@@ -19,6 +19,7 @@ from backend.app.quantum_dashboard.builder import build_derived_datasets
 from backend.app.quantum_dashboard.capture import capture_quantum_dashboard_cards
 from backend.app.quantum_dashboard.discovery import discover_dashboard_from_config
 from backend.app.quantum_dashboard.models import DerivedBuildResult, RegressionReport
+from backend.app.quantum_dashboard.periods import parse_date, zoneinfo_for
 from backend.app.quantum_dashboard.regression import REGRESSION_REPORT_PATH, run_regression
 from backend.app.storage.parquet_store import ParquetStore, RawCallMergeResult
 
@@ -50,6 +51,11 @@ class IngestionService:
         self._tasks[ingestion_id] = asyncio.create_task(self._run(job, request))
         return job
 
+    def start_missing_days(self, request: IngestionCreate) -> IngestionJob:
+        if not request.days:
+            raise ValueError("Missing-days ingestion needs at least one day.")
+        return self.start(request)
+
     def list(self) -> list[IngestionJob]:
         return sorted(self.jobs.values(), key=lambda job: job.started_at, reverse=True)
 
@@ -78,11 +84,21 @@ class IngestionService:
         job.endpoint_current = "/analytics + /analytics/historical"
         config = self.config_store.read()
         try:
-            ingestion_range = build_ingestion_range(
-                self.parquet_store.latest_source_end(request.country.value),
-                depth_days=config.ingestion_depth_days,
-                incremental_reprocess_days=self.settings.quantum_incremental_reprocess_days,
-            )
+            day_chunks = _chunks_for_requested_days(request.days)
+            if day_chunks:
+                ingestion_range = IngestionRange(
+                    mode="backfill",
+                    start=min(chunk.start for chunk in day_chunks),
+                    end=max(chunk.end for chunk in day_chunks),
+                    latest_source_end=None,
+                    lookback_days=len(day_chunks),
+                )
+            else:
+                ingestion_range = build_ingestion_range(
+                    self.parquet_store.latest_source_end(request.country.value),
+                    depth_days=config.ingestion_depth_days,
+                    incremental_reprocess_days=self.settings.quantum_incremental_reprocess_days,
+                )
             country_config = config.required_country_config(request.country)
             discovery = discover_dashboard_from_config(
                 settings=self.settings,
@@ -101,13 +117,15 @@ class IngestionService:
                 )
             else:
                 cookies = self.cookie_provider.load(config.browser.value, str(discovery.base_url))
-            chunks = plan_ingestion_chunks(
+            chunks = day_chunks or plan_ingestion_chunks(
                 ingestion_range,
                 chunk_days=self.settings.quantum_ingestion_chunk_days,
             )
             covered_ranges = self.parquet_store.covered_source_ranges(request.country.value)
             chunks_to_capture = [
-                chunk for chunk in chunks if not _is_chunk_covered(chunk, covered_ranges)
+                chunk
+                for chunk in chunks
+                if day_chunks or not _is_chunk_covered(chunk, covered_ranges)
             ]
             job.planned_chunks = len(chunks)
             job.chunks = [
@@ -148,7 +166,7 @@ class IngestionService:
                 _set_chunk_status(job, index, "running")
                 update_progress(
                     job,
-                    status="capturing_chunk",
+                    status="capturing_day" if day_chunks else "capturing_chunk",
                     completed_chunks=skipped_chunks + capture_index - 1,
                     message=f"Capturando chunk {index}/{len(chunks)} {chunk.label}.",
                 )
@@ -267,6 +285,7 @@ class IngestionService:
                 "parser_errors": build.parser_errors,
                 "regression_report": REGRESSION_REPORT_PATH,
                 "range": ingestion_range.details(),
+                "requested_days": request.days,
                 "dashboard": discovery.model_dump(mode="json"),
             }
             if report.verdict == "FAILED":
@@ -296,6 +315,30 @@ def _is_chunk_covered(
         range_start <= chunk.start and range_end >= chunk.end
         for range_start, range_end in covered_ranges
     )
+
+
+def _chunks_for_requested_days(days: list[str]) -> list[IngestionChunk]:
+    parsed_days = sorted(
+        day for day in {_parse_requested_day(day) for day in days} if day is not None
+    )
+    chunks: list[IngestionChunk] = []
+    for day in parsed_days:
+        start, end = _day_bounds(day)
+        chunks.append(IngestionChunk(start=start, end=end, label=day.isoformat()))
+    return chunks
+
+
+def _parse_requested_day(value: str) -> date | None:
+    return parse_date(value)
+
+
+def _day_bounds(day: date) -> tuple[datetime, datetime]:
+    zone = zoneinfo_for("CST")
+    start = datetime.combine(day, datetime.min.time(), tzinfo=zone).astimezone(UTC)
+    end = datetime.combine(day, datetime.max.time().replace(microsecond=0), tzinfo=zone).astimezone(
+        UTC
+    )
+    return start, end
 
 
 def _publish_completed_chunk(

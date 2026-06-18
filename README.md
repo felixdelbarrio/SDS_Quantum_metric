@@ -21,8 +21,9 @@ make kill
 
 ## Configuracion Quantum
 
-La app configura Quantum por pais con una pantalla funcional: browser, modo de sesion, pais activo,
-Base URL, apariencia, profundidad de ingesta y accion de guardar.
+La app configura Quantum por pais con una pantalla funcional: browser, modo de sesion,
+Base URL, pais por defecto, test por pais, dashboards/widgets visibles, apariencia,
+profundidad de ingesta y accion de guardar.
 
 Dashboard ID, Team ID, tabs, card IDs y hashes no se muestran al usuario. Se resuelven internamente
 desde `.env`, configuracion local o URL de Quantum Web cuando es posible.
@@ -50,6 +51,11 @@ La ingesta captura tabs `Resumen` y `Errores`, persiste raw API calls, construye
 snapshots web, datasets derivados y ejecuta regresion Web vs Local. Home solo pinta datos derivados
 con regresion `passed` o `passed_with_tolerance`.
 
+La ingesta publica particiones diarias `parquet/country=<pais>/day=YYYY-MM-DD/raw_api_calls`
+y `parquet/country=<pais>/manifests/day_coverage.parquet`. Home consulta
+`/api/local-dashboard/coverage` y puede lanzar `/api/ingestions/missing-days` para completar
+dias ausentes sin bloquear la navegacion.
+
 Las graficas se renderizan desde `chart_payload`: ejes, leyenda, series Mobile/Desktop, bandas y periodo salen del backend y se persisten en `derived/chart_payloads`. React no fabrica curvas desde agregados.
 
 Si hay raw calls pero faltan cards obligatorias, derivados o regresion, la API devuelve un motivo
@@ -57,7 +63,10 @@ accionable. La UI no rellena datos falsos ni oculta discrepancias.
 
 ## Datasets
 
-Datasets permite auditar entidades Parquet por pais: RAW calls, contratos visuales, snapshots, derivados, chart payloads y regresion. Las entidades se leen paginadas y pueden exportarse/importarse por ZIP. El borrado exige confirmacion exacta del pais.
+Datasets permite ver entidades Parquet por pais: RAW calls, contratos visuales, snapshots,
+derivados, chart payloads y regresion. Las entidades se leen paginadas, tienen cabeceras fijas
+y CSV por entidad. El ZIP de export/import incluye datos y `config/quantum.json` sin secretos.
+El borrado exige confirmacion exacta del pais.
 
 Por defecto los datos viven en la ruta persistente del usuario calculada con `platformdirs`. `QM_DATA_DIR` queda reservado como override explicito. Si se detecta `./data` legacy, Datasets muestra aviso y permite migrarlo.
 
@@ -82,6 +91,10 @@ recarga Home: el dashboard debe seguir funcionando sobre Parquet local.
 - Ruta persistente en `docs/to-be/persistent-data-dir.md`.
 - Progreso de ingesta en `docs/to-be/ingestion-progress.md`.
 - Entidades auditables en `docs/to-be/dataset-entities.md`.
+- Cierre Iteracion 8 en `docs/to-be/iteration-8-product-finish.md`.
+- Modelo diario en `docs/to-be/daily-parquet-model.md`.
+- Faltantes async en `docs/to-be/missing-days-ingestion.md`.
+- Import/export en `docs/to-be/export-import-contract.md`.
 - Backend local versionado bajo `/api`.
 - Persistencia Parquet en la ruta de usuario activa bajo `parquet/country=<pais>`.
 - Export/import ZIP en la ruta de usuario activa bajo `exports`.

@@ -23,6 +23,7 @@ from backend.app.quantum_dashboard.builder import (
 )
 from backend.app.quantum_dashboard.catalog import MANDATORY_CARDS, required_roles
 from backend.app.quantum_dashboard.models import DashboardTab
+from backend.app.quantum_dashboard.periods import format_period_label, parse_datetime
 from backend.app.quantum_dashboard.regression import REGRESSION_REPORT_PATH
 from backend.app.storage.parquet_store import ParquetStore
 
@@ -835,19 +836,16 @@ def _parse_date(value: str | None) -> date | None:
 
 
 def _period_label(start: Any, end: Any, timezone: str | None) -> str | None:
-    start_date = _period_date(start, timezone)
-    end_date = _period_date(end, timezone)
     zone_label = timezone or "CST"
-    if start_date is None and end_date is None:
+    start_dt = parse_datetime(start, zone_label)
+    end_dt = parse_datetime(end, zone_label)
+    if start_dt is None and end_dt is None:
         return None
-    if start_date and end_date and start_date == end_date:
-        return f"{start_date.strftime('%b %d, %Y')} ({zone_label})"
-    if start_date and end_date:
-        return (
-            f"{start_date.strftime('%b %d, %Y')} - {end_date.strftime('%b %d, %Y')} ({zone_label})"
-        )
-    current = start_date or end_date
-    return f"{current.strftime('%b %d, %Y')} ({zone_label})" if current else None
+    start_dt = start_dt or end_dt
+    end_dt = end_dt or start_dt
+    if start_dt is None or end_dt is None:
+        return None
+    return format_period_label(start_dt, end_dt, zone_label)
 
 
 def _zone(timezone: str) -> ZoneInfo:

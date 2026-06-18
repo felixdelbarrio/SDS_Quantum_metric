@@ -2,7 +2,12 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from backend.app.api.routes import config_store_dep, parquet_store_dep, settings_dep
+from backend.app.api.routes import (
+    config_store_dep,
+    ingestion_service_dep,
+    parquet_store_dep,
+    settings_dep,
+)
 from backend.app.config.settings import Settings
 from backend.app.main import app
 from backend.app.quantum.config_store import QuantumConfigStore
@@ -23,3 +28,80 @@ def test_health_and_config(tmp_path: Path) -> None:
     assert response.json()["countries"][0]["country"] == "MX"
 
     app.dependency_overrides.clear()
+
+
+def test_local_dashboard_coverage_endpoint_reports_missing_days(tmp_path: Path) -> None:
+    settings = Settings(qm_data_dir=tmp_path)
+    store = ParquetStore(settings)
+    store.merge_raw_calls(
+        "MX",
+        [
+            {
+                "ingestion_id": "ing-coverage",
+                "country": "MX",
+                "source_endpoint": "/analytics",
+                "dashboard_id": "dash",
+                "card_id": "card",
+                "card_type": "LINE",
+                "view_name": "line",
+                "metric_ids": "[]",
+                "query_hash": "q",
+                "response_hash": "r",
+                "row_count": 1,
+                "source_ts_start": "2026-06-18T06:00:00Z",
+                "source_ts_end": "2026-06-19T05:59:59Z",
+            }
+        ],
+    )
+    app.dependency_overrides[settings_dep] = lambda: settings
+    app.dependency_overrides[parquet_store_dep] = lambda: store
+    client = TestClient(app)
+
+    response = client.get(
+        "/api/local-dashboard/coverage",
+        params={"country": "MX", "start": "2026-06-17", "end": "2026-06-18"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["complete"] is False
+    assert response.json()["covered_days"] == ["2026-06-18"]
+    assert response.json()["missing_days"] == ["2026-06-17"]
+
+    app.dependency_overrides.clear()
+
+
+def test_missing_days_endpoint_starts_async_job(tmp_path: Path) -> None:
+    settings = Settings(qm_data_dir=tmp_path)
+    app.dependency_overrides[settings_dep] = lambda: settings
+    app.dependency_overrides[ingestion_service_dep] = lambda: _FakeIngestionService()
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/ingestions/missing-days",
+        json={"country": "MX", "days": ["2026-06-17", "2026-06-18"]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "pending"
+    assert response.json()["details"]["requested_days"] == ["2026-06-17", "2026-06-18"]
+
+    app.dependency_overrides.clear()
+
+
+class _FakeIngestionService:
+    def start_missing_days(self, request: object) -> "_FakeJob":
+        return _FakeJob(request)
+
+
+class _FakeJob:
+    def __init__(self, request: object) -> None:
+        self.request = request
+
+    def model_dump(self, mode: str) -> dict[str, object]:
+        _ = mode
+        return {
+            "ingestion_id": "missing-days-job",
+            "country": "MX",
+            "status": "pending",
+            "details": {"requested_days": getattr(self.request, "days", [])},
+        }

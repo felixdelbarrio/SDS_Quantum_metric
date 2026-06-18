@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Palette, Plus, Save, Trash2 } from "lucide-react";
+import { CheckCircle2, Palette, Plus, Save, Trash2 } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
-import { apiGet, apiPut } from "../../shared/api/client";
+import { apiGet, apiPost, apiPut } from "../../shared/api/client";
 import {
   COUNTRY_OPTIONS,
   CountryCode,
@@ -39,7 +39,7 @@ export function QuantumPage() {
 
   const current = form ?? config.data;
   const countryRows = current?.countries ?? [];
-  const activeCountryExists = countryRows.some(
+  const defaultCountryExists = countryRows.some(
     (row) => row.country === current?.country,
   );
   const depthDaysInvalid =
@@ -55,6 +55,13 @@ export function QuantumPage() {
       setManualCookie("");
       void queryClient.invalidateQueries({ queryKey: ["quantum-config"] });
     },
+  });
+
+  const testCountry = useMutation({
+    mutationFn: (country: CountryCode) =>
+      apiPost(`/quantum/test-connection?country=${country}`),
+    onSuccess: () =>
+      void queryClient.invalidateQueries({ queryKey: ["quantum-config"] }),
   });
 
   useEffect(() => {
@@ -95,7 +102,10 @@ export function QuantumPage() {
     setForm({
       ...current,
       country: current.countries.length ? current.country : nextCountry,
-      countries: [...current.countries, emptyCountryConfig(nextCountry)],
+      countries: [
+        ...current.countries,
+        emptyCountryConfig(nextCountry, current.countries.length === 0),
+      ],
     });
   }
 
@@ -115,9 +125,13 @@ export function QuantumPage() {
     if (!current) return;
     save.mutate({
       ...current,
-      country: activeCountryExists
+      country: defaultCountryExists
         ? current.country
         : (current.countries[0]?.country ?? current.country),
+      countries: current.countries.map((row) => ({
+        ...row,
+        enabled: row.country === current.country,
+      })),
       manual_cookie:
         current.session_mode === "manual" ? manualCookie : undefined,
     });
@@ -164,22 +178,6 @@ export function QuantumPage() {
               >
                 <option value="browser">Browser</option>
                 <option value="manual">Manual</option>
-              </select>
-            </label>
-            <label className="field">
-              <span>Pais activo</span>
-              <select
-                value={current.country}
-                disabled={!countryRows.length}
-                onChange={(event) =>
-                  update("country", event.target.value as CountryCode)
-                }
-              >
-                {countryRows.map((row) => (
-                  <option key={row.country} value={row.country}>
-                    {countryLabel(row.country)}
-                  </option>
-                ))}
               </select>
             </label>
           </div>
@@ -249,8 +247,9 @@ export function QuantumPage() {
                   <tr>
                     <th>Pais</th>
                     <th>Base URL</th>
-                    <th>Activo</th>
-                    <th></th>
+                    <th>Default</th>
+                    <th>Estado</th>
+                    <th>Acciones</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -295,16 +294,31 @@ export function QuantumPage() {
                       <td>
                         <input
                           type="checkbox"
-                          checked={row.enabled}
-                          aria-label={`Activo ${row.country}`}
+                          checked={row.country === current.country}
+                          aria-label={`Default ${row.country}`}
                           onChange={(event) =>
-                            updateCountryRow(index, {
-                              enabled: event.target.checked,
-                            })
+                            event.target.checked
+                              ? update("country", row.country)
+                              : undefined
                           }
                         />
                       </td>
                       <td>
+                        <span
+                          className={`status ${row.dashboard_resolved ? "ok" : ""}`}
+                        >
+                          {row.dashboard_resolved ? "Dashboard" : "Pendiente"}
+                        </span>
+                      </td>
+                      <td>
+                        <button
+                          className="command-button"
+                          type="button"
+                          disabled={!row.base_url || testCountry.isPending}
+                          onClick={() => testCountry.mutate(row.country)}
+                        >
+                          <CheckCircle2 size={16} /> Test pais
+                        </button>
                         <button
                           className="icon-button danger"
                           type="button"
@@ -323,6 +337,36 @@ export function QuantumPage() {
           ) : (
             <div className="empty compact">Sin paises configurados</div>
           )}
+        </section>
+
+        <section className="config-panel">
+          <div className="section-heading compact">
+            <h2>Dashboards y widgets</h2>
+          </div>
+          <div className="dashboard-config-list">
+            {countryRows.map((row) => (
+              <article className="dashboard-config-item" key={row.country}>
+                <header>
+                  <strong>{countryLabel(row.country)}</strong>
+                  <span
+                    className={`status ${row.dashboard_resolved ? "ok" : ""}`}
+                  >
+                    {row.dashboard_resolved
+                      ? "Dashboard default resuelto"
+                      : "Test pais pendiente"}
+                  </span>
+                </header>
+                <div className="widget-config-grid">
+                  {WIDGET_CONFIG_PREVIEW.map((widget) => (
+                    <label key={`${row.country}-${widget.id}`}>
+                      <input type="checkbox" checked readOnly />
+                      <span>{widget.title}</span>
+                    </label>
+                  ))}
+                </div>
+              </article>
+            ))}
+          </div>
         </section>
 
         {current.session_mode === "manual" && (
@@ -352,11 +396,35 @@ export function QuantumPage() {
   );
 }
 
-function emptyCountryConfig(country: CountryCode): QuantumCountryConfig {
+const WIDGET_CONFIG_PREVIEW = [
+  { id: "summary.page_views", title: "Paginas vistas" },
+  { id: "summary.sessions", title: "Sesiones" },
+  { id: "summary.converted_sessions", title: "Sesiones con conversion" },
+  { id: "summary.avg_session_duration", title: "Tiempo medio de sesion" },
+  { id: "summary.detail_by_app_name_os", title: "Detalle App Name / SO" },
+  {
+    id: "errors.error_sessions_percentage_evolution",
+    title: "% sesiones con error",
+  },
+  { id: "errors.top_errors_by_error_name", title: "Top errores" },
+  {
+    id: "errors.error_sessions_by_app_name_comparison",
+    title: "Comparativa App Name",
+  },
+  {
+    id: "errors.error_session_percentage_by_app_name",
+    title: "% error por App Name",
+  },
+];
+
+function emptyCountryConfig(
+  country: CountryCode,
+  enabled = true,
+): QuantumCountryConfig {
   return {
     country,
     base_url: "",
-    enabled: true,
+    enabled,
     dashboard_resolved: false,
   };
 }
