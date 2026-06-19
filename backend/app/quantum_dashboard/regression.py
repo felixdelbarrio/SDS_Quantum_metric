@@ -129,8 +129,12 @@ def _compare_card(
     if spec.card_type == "TABLE":
         web_rows = _list(snapshot.get("visible_table_rows"))
         local_rows = _list(local.get("rows"))
-        if role == "summary.detail_by_app_name_os" and not any(
-            bool(row.get("parent_row_id")) for row in local_rows
+        web_has_expandable_children = any(bool(row.get("parent_row_id")) for row in web_rows)
+        local_has_expandable_children = any(bool(row.get("parent_row_id")) for row in local_rows)
+        if (
+            role == "summary.detail_by_app_name_os"
+            and web_has_expandable_children
+            and not local_has_expandable_children
         ):
             return _card_result(
                 spec.tab,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import time
@@ -7,6 +8,12 @@ import urllib.request
 from typing import Any
 
 from backend.app.config.settings import get_settings
+from desktop.backend_runtime import (
+    is_compatible_health,
+    next_available_port,
+    port_available,
+    read_health,
+)
 from desktop.icon import apply_macos_app_icon, resolve_icon_png
 
 
@@ -14,23 +21,55 @@ def main() -> None:
     settings = get_settings()
     runtime = settings.runtime_dir
     runtime.mkdir(parents=True, exist_ok=True)
-    backend = subprocess.Popen(
+
+    backend_port = settings.backend_port
+    backend_url = f"http://{settings.backend_host}:{backend_port}"
+    backend: subprocess.Popen[bytes] | None = None
+    health = read_health(f"{backend_url}/api/health")
+    if is_compatible_health(health):
+        print(f"Reusing compatible backend at {backend_url}")
+    else:
+        if health is not None or not port_available(settings.backend_host, backend_port):
+            backend_port = next_available_port(settings.backend_host, settings.backend_port + 1)
+            backend_url = f"http://{settings.backend_host}:{backend_port}"
+            print(f"Configured backend port is occupied by another service; using {backend_url}")
+        backend = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "uvicorn",
+                "backend.app.main:app",
+                "--host",
+                settings.backend_host,
+                "--port",
+                str(backend_port),
+            ]
+        )
+        (runtime / "backend.pid").write_text(str(backend.pid))
+
+    frontend_port = settings.frontend_port
+    if not port_available(settings.frontend_host, frontend_port):
+        frontend_port = next_available_port(settings.frontend_host, frontend_port + 1)
+    url = f"http://{settings.frontend_host}:{frontend_port}"
+    frontend_env = os.environ.copy()
+    frontend_env["VITE_API_BASE"] = f"{backend_url}/api"
+    frontend = subprocess.Popen(
         [
-            sys.executable,
-            "-m",
-            "uvicorn",
-            "backend.app.main:app",
+            "npm",
+            "--workspace",
+            "frontend",
+            "run",
+            "dev",
+            "--",
             "--host",
-            settings.backend_host,
+            settings.frontend_host,
             "--port",
-            str(settings.backend_port),
-        ]
+            str(frontend_port),
+        ],
+        env=frontend_env,
     )
-    (runtime / "backend.pid").write_text(str(backend.pid))
-    frontend = subprocess.Popen(["npm", "--workspace", "frontend", "run", "dev"])
     (runtime / "frontend.pid").write_text(str(frontend.pid))
-    url = f"http://{settings.frontend_host}:{settings.frontend_port}"
-    _wait_for(f"http://{settings.backend_host}:{settings.backend_port}/api/health")
+    _wait_for_backend(f"{backend_url}/api/health")
     _wait_for(url)
     try:
         import webview
@@ -41,13 +80,14 @@ def main() -> None:
     except Exception:
         print(f"SDS Quantum Metric: {url}")
         try:
-            while backend.poll() is None and frontend.poll() is None:
+            while (backend is None or backend.poll() is None) and frontend.poll() is None:
                 time.sleep(1)
         except KeyboardInterrupt:
             pass
     finally:
         _terminate(frontend)
-        _terminate(backend)
+        if backend is not None:
+            _terminate(backend)
 
 
 def _wait_for(url: str) -> None:
@@ -60,6 +100,15 @@ def _wait_for(url: str) -> None:
         except Exception:
             time.sleep(0.5)
     raise RuntimeError(f"Timed out waiting for {url}")
+
+
+def _wait_for_backend(url: str) -> None:
+    deadline = time.time() + 60
+    while time.time() < deadline:
+        if is_compatible_health(read_health(url)):
+            return
+        time.sleep(0.5)
+    raise RuntimeError(f"Timed out waiting for compatible backend {url}")
 
 
 def _create_window(webview: Any, url: str) -> object:

@@ -183,6 +183,33 @@ class IngestionService:
                     completed_chunks=skipped_chunks + capture_index - 1,
                     message=f"Capturando chunk {index}/{len(chunks)} {chunk.label}.",
                 )
+
+                chunk_label = chunk.label
+                chunk_count = len(chunks)
+                chunk_index = index
+
+                def progress_callback(
+                    tab_name: str,
+                    *,
+                    chunk_index: int = chunk_index,
+                    chunk_count: int = chunk_count,
+                    chunk_label: str = chunk_label,
+                ) -> None:
+                    tab_label = "Resumen" if tab_name == "summary" else "Errores"
+                    update_progress(
+                        job,
+                        status=(
+                            "capturing_summary_tab"
+                            if tab_name == "summary"
+                            else "capturing_errors_tab"
+                        ),
+                        current_tab=tab_label,
+                        message=(
+                            f"Capturando {tab_label} para chunk "
+                            f"{chunk_index}/{chunk_count} {chunk_label}."
+                        ),
+                    )
+
                 chunk_range = ingestion_range.__class__(
                     mode=ingestion_range.mode,
                     start=chunk.start,
@@ -202,6 +229,7 @@ class IngestionService:
                     errors_tab=discovery.errors_tab,
                     ingestion_id=job.ingestion_id,
                     ingestion_range=chunk_range,
+                    progress_callback=progress_callback,
                 )
                 captured = _filter_enabled_rows(captured, enabled_roles)
                 chunk_rows = sum(int(row.get("row_count") or 0) for row in captured)

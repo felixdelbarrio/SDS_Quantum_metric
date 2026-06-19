@@ -72,4 +72,4 @@ build:
 	. .venv/bin/activate && python scripts/smoke_test_desktop.py
 
 kill:
-	python scripts/kill_app.py
+	. .venv/bin/activate && python scripts/kill_app.py

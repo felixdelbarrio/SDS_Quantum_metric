@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from backend.app.config.paths import default_user_data_dir, frontend_dist_path
 from backend.app.main import create_app
+from backend.app.runtime import API_SCHEMA_VERSION, APP_ID
 
 
 def main() -> None:
@@ -24,7 +25,13 @@ def main() -> None:
     )
 
     client = TestClient(create_app())
-    _require(client.get("/api/health").json() == {"status": "ok"}, "Healthcheck failed.")
+    health = client.get("/api/health").json()
+    _require(health.get("status") == "ok", "Healthcheck failed.")
+    _require(health.get("app") == APP_ID, "Healthcheck app marker failed.")
+    _require(
+        health.get("api_schema") == API_SCHEMA_VERSION,
+        "Healthcheck API schema marker failed.",
+    )
     html = client.get("/").text
     _require("<!doctype html>" in html.lower(), "SPA index was not served.")
     _require("vite" not in html.lower(), "Packaged app must not depend on Vite.")

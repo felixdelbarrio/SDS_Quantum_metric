@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
@@ -37,6 +38,7 @@ from backend.app.quantum_dashboard.models import DashboardDiscoveryResult
 from backend.app.quantum_dashboard.range_query import range_resolution_payload, resolve_range
 from backend.app.quantum_dashboard.regression import run_regression
 from backend.app.quantum_dashboard.service import LocalDashboardService
+from backend.app.runtime import API_SCHEMA_VERSION, APP_ID, APP_NAME
 from backend.app.storage.parquet_store import ParquetStore
 
 router = APIRouter(prefix="/api")
@@ -173,8 +175,14 @@ def _write_config(
 
 
 @router.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
+def health() -> dict[str, str | int]:
+    return {
+        "status": "ok",
+        "app": APP_ID,
+        "name": APP_NAME,
+        "api_schema": API_SCHEMA_VERSION,
+        "pid": os.getpid(),
+    }
 
 
 @router.get("/config/quantum", response_model=QuantumPublicConfig)

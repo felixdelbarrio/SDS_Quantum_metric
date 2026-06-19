@@ -231,6 +231,36 @@ class ParquetStore:
         except Exception:
             return []
 
+    def delete_ingestion_history(self, country: str | None = None) -> int:
+        path = self.settings.manifests_dir / "ingestion_manifest.parquet"
+        if not path.exists():
+            return 0
+        try:
+            frame = pl.read_parquet(path)
+        except Exception:
+            path.unlink(missing_ok=True)
+            return 0
+        if frame.is_empty():
+            path.unlink(missing_ok=True)
+            return 0
+        if country is None:
+            removed = frame.height
+            path.unlink(missing_ok=True)
+            return removed
+        if "country" not in frame.columns:
+            return 0
+        keep = frame.filter(pl.col("country").cast(pl.Utf8) != country)
+        removed = frame.height - keep.height
+        if removed <= 0:
+            return 0
+        if keep.is_empty():
+            path.unlink(missing_ok=True)
+            return removed
+        temporary = path.with_suffix(".tmp.parquet")
+        keep.write_parquet(temporary)
+        temporary.replace(path)
+        return removed
+
     def list_datasets(self) -> list[dict[str, Any]]:
         datasets: list[dict[str, Any]] = []
         for country_dir in sorted(self.settings.parquet_dir.glob("country=*")):
@@ -254,10 +284,14 @@ class ParquetStore:
 
     def delete_country(self, country: str) -> bool:
         target = self.settings.parquet_dir / f"country={country}"
+        deleted = False
         if not target.exists():
-            return False
-        shutil.rmtree(target)
-        return True
+            deleted = False
+        else:
+            shutil.rmtree(target)
+            deleted = True
+        removed_history = self.delete_ingestion_history(country)
+        return deleted or removed_history > 0
 
     def export_countries(self, countries: list[str]) -> Path:
         timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
@@ -411,11 +445,13 @@ class ParquetStore:
         if not files:
             return None
         frame = self._read_parquet_files(files)
-        if "source_ts_end" not in frame.columns or frame.is_empty():
+        if frame.is_empty():
             return None
-        values = frame.get_column("source_ts_end").drop_nulls().to_list()
-        parsed = [_parse_source_ts(value) for value in values]
-        timestamps = [value for value in parsed if value is not None]
+        timestamps = [
+            value
+            for value in (_row_range_end(row) for row in frame.to_dicts())
+            if value is not None
+        ]
         return max(timestamps) if timestamps else None
 
     def covered_source_ranges(self, country: str) -> list[tuple[datetime, datetime]]:
@@ -423,22 +459,13 @@ class ParquetStore:
         if not files:
             return []
         try:
-            frame = (
-                pl.scan_parquet([str(file) for file in files])
-                .select(["source_ts_start", "source_ts_end"])
-                .drop_nulls()
-                .collect()
-            )
+            frame = self._read_parquet_files(files)
         except Exception:
             return []
         ranges = [
             (start, end)
             for start, end in (
-                (
-                    _parse_source_ts(row.get("source_ts_start")),
-                    _parse_source_ts(row.get("source_ts_end")),
-                )
-                for row in frame.to_dicts()
+                (_row_range_start(row), _row_range_end(row)) for row in frame.to_dicts()
             )
             if start is not None and end is not None and start <= end
         ]
@@ -550,8 +577,8 @@ class ParquetStore:
                 infer_schema_length=None,
             ).write_parquet(temporary)
             temporary.replace(path)
-            starts = [_parse_source_ts(row.get("source_ts_start")) for row in rows]
-            ends = [_parse_source_ts(row.get("source_ts_end")) for row in rows]
+            starts = [_row_range_start(row) for row in rows]
+            ends = [_row_range_end(row) for row in rows]
             coverage_rows.append(
                 {
                     "country": country,
@@ -647,8 +674,8 @@ def _reject_secret_config(payload: Any) -> None:
 
 
 def _source_bounds(rows: list[dict[str, Any]]) -> tuple[datetime, datetime] | None:
-    starts = [_parse_source_ts(row.get("source_ts_start")) for row in rows]
-    ends = [_parse_source_ts(row.get("source_ts_end")) for row in rows]
+    starts = [_row_range_start(row) for row in rows]
+    ends = [_row_range_end(row) for row in rows]
     valid_starts = [value for value in starts if value is not None]
     valid_ends = [value for value in ends if value is not None]
     if not valid_starts or not valid_ends:
@@ -657,8 +684,8 @@ def _source_bounds(rows: list[dict[str, Any]]) -> tuple[datetime, datetime] | No
 
 
 def _row_overlaps(row: dict[str, Any], bounds: tuple[datetime, datetime]) -> bool:
-    start = _parse_source_ts(row.get("source_ts_start"))
-    end = _parse_source_ts(row.get("source_ts_end"))
+    start = _row_range_start(row)
+    end = _row_range_end(row)
     if start is None or end is None:
         return False
     lower, upper = bounds
@@ -687,12 +714,22 @@ def _parse_source_ts(value: Any) -> datetime | None:
 
 
 def _row_source_day(row: dict[str, Any]) -> date | None:
-    source = _parse_source_ts(row.get("source_ts_start")) or _parse_source_ts(
-        row.get("ingestion_ts")
-    )
+    source = _row_range_start(row) or _parse_source_ts(row.get("ingestion_ts"))
     if source is None:
         return None
     return source.astimezone(zoneinfo_for("CST")).date()
+
+
+def _row_range_start(row: dict[str, Any]) -> datetime | None:
+    return _parse_source_ts(row.get("source_ts_start")) or _parse_source_ts(
+        row.get("capture_chunk_start")
+    )
+
+
+def _row_range_end(row: dict[str, Any]) -> datetime | None:
+    return _parse_source_ts(row.get("source_ts_end")) or _parse_source_ts(
+        row.get("capture_chunk_end")
+    )
 
 
 def _days_between(start: date, end: date) -> list[date]:

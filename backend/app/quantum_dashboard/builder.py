@@ -590,9 +590,9 @@ def _query_dimensions(request_json: dict[str, Any]) -> list[str]:
 
 
 def _period_from_call(call: dict[str, Any]) -> dict[str, str] | None:
-    start = _text(call.get("source_ts_start"))
-    end = _text(call.get("source_ts_end"))
-    timezone = "CST"
+    start = _text(call.get("source_ts_start")) or _text(call.get("capture_chunk_start"))
+    end = _text(call.get("source_ts_end")) or _text(call.get("capture_chunk_end"))
+    timezone = _text(call.get("source_timezone")) or "CST"
     request_json = parse_json_object(call.get("request_json"))
     query = request_json.get("query")
     container = query if isinstance(query, dict) else request_json

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from backend.app.auth.browser_cookies import BrowserCookie
@@ -22,6 +23,7 @@ def capture_quantum_dashboard_cards(
     ingestion_id: str,
     ingestion_range: IngestionRange | None,
     capture_session: QuantumAnalyticsCaptureSession | None = None,
+    progress_callback: Callable[[str], None] | None = None,
 ) -> list[dict[str, Any]]:
     if capture_session is None:
         with QuantumAnalyticsCaptureSession(
@@ -44,10 +46,13 @@ def capture_quantum_dashboard_cards(
                 ingestion_id=ingestion_id,
                 ingestion_range=ingestion_range,
                 capture_session=session,
+                progress_callback=progress_callback,
             )
 
     rows: list[dict[str, Any]] = []
     for tab_name, tab_index in (("summary", summary_tab), ("errors", errors_tab)):
+        if progress_callback is not None:
+            progress_callback(tab_name)
         dashboard_url = dashboard_tab_url(
             base_url=base_url,
             dashboard_id=dashboard_id,
