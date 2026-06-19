@@ -11,11 +11,17 @@ from backend.app.quantum.schemas import Country
 class IngestionCreate(BaseModel):
     country: Country
     days: list[str] = Field(default_factory=list)
+    range_key: str = "today"
+    start_date: str | None = None
+    end_date: str | None = None
 
 
 class MissingDaysIngestionCreate(BaseModel):
     country: Country
     days: list[str] = Field(min_length=1)
+    range_key: str = "custom"
+    start_date: str | None = None
+    end_date: str | None = None
 
 
 class IngestionJob(BaseModel):

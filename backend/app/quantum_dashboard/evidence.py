@@ -12,6 +12,7 @@ from backend.app.quantum_dashboard.builder import (
     DATASET_SUMMARY_WIDGETS,
     DATASET_VISUAL_CONTRACTS,
     DATASET_WEB_SNAPSHOTS,
+    range_dataset_path,
 )
 from backend.app.quantum_dashboard.catalog import MANDATORY_CARDS
 from backend.app.storage.parquet_store import ParquetStore
@@ -28,11 +29,15 @@ type EvidenceStatus = Literal[
 
 
 class WidgetEvidence(BaseModel):
+    range_key: str = "today"
     role: str
     web_visible_value: float | str | None = None
+    web_period_label: str | None = None
+    quantum_endpoint: str | None = None
     quantum_response_path: str | None = None
     raw_query_hash: str | None = None
     raw_response_hash: str | None = None
+    web_snapshot_hash: str | None = None
     parquet_path: str | None = None
     derived_path: str | None = None
     local_api_value: float | str | None = None
@@ -45,29 +50,34 @@ def build_evidence_report(
     country: str,
     *,
     roles: set[str] | list[str] | None = None,
+    range_key: str = "today",
 ) -> list[WidgetEvidence]:
     expected_roles = set(roles) if roles is not None else {spec.role for spec in MANDATORY_CARDS}
     contracts = {
         str(row.get("visual_role")): row
-        for row in store.read_country_dataset(country, DATASET_VISUAL_CONTRACTS)
+        for row in _read_dataset(store, country, DATASET_VISUAL_CONTRACTS, range_key)
     }
     snapshots = {
         str(row.get("card_role")): row
-        for row in store.read_country_dataset(country, DATASET_WEB_SNAPSHOTS)
+        for row in _read_dataset(store, country, DATASET_WEB_SNAPSHOTS, range_key)
     }
     evidence: list[WidgetEvidence] = []
     for role in sorted(expected_roles):
         contract = contracts.get(role)
         snapshot = snapshots.get(role)
-        local = _local_payload(store, country, role)
+        local = _local_payload(store, country, role, range_key)
         status, first_divergence = _status(snapshot, local, contract)
         evidence.append(
             WidgetEvidence(
+                range_key=range_key,
                 role=role,
                 web_visible_value=_web_value(snapshot),
+                web_period_label=_text(snapshot.get("period_label")) if snapshot else None,
+                quantum_endpoint=_text(contract.get("source_endpoint")) if contract else None,
                 quantum_response_path=f"country={country}/raw_api_calls" if contract else None,
                 raw_query_hash=_text(contract.get("request_hash")) if contract else None,
                 raw_response_hash=_text(contract.get("response_hash")) if contract else None,
+                web_snapshot_hash=_text(snapshot.get("web_snapshot_hash")) if snapshot else None,
                 parquet_path=f"parquet/country={country}/raw_api_calls",
                 derived_path=_derived_path(role) if local else None,
                 local_api_value=_local_value(local),
@@ -96,13 +106,18 @@ def _status(
     return "diverged_aggregation", "Derived -> Local API"
 
 
-def _local_payload(store: ParquetStore, country: str, role: str) -> dict[str, Any] | None:
+def _local_payload(
+    store: ParquetStore,
+    country: str,
+    role: str,
+    range_key: str,
+) -> dict[str, Any] | None:
     if role.startswith("summary.") and role != "summary.detail_by_app_name_os":
-        return _first_role(store.read_country_dataset(country, DATASET_SUMMARY_WIDGETS), role)
+        return _first_role(_read_dataset(store, country, DATASET_SUMMARY_WIDGETS, range_key), role)
     if role == "summary.detail_by_app_name_os":
         rows = [
             row
-            for row in store.read_country_dataset(country, DATASET_SUMMARY_TABLE)
+            for row in _read_dataset(store, country, DATASET_SUMMARY_TABLE, range_key)
             if row.get("card_role") == role
         ]
         return {"rows": rows} if rows else None
@@ -110,18 +125,18 @@ def _local_payload(store: ParquetStore, country: str, role: str) -> dict[str, An
         "errors.error_sessions_percentage_evolution",
         "errors.error_sessions_by_app_name_comparison",
     }:
-        return _first_role(store.read_country_dataset(country, DATASET_ERRORS_WIDGETS), role)
+        return _first_role(_read_dataset(store, country, DATASET_ERRORS_WIDGETS, range_key), role)
     if role == "errors.top_errors_by_error_name":
         rows = [
             row
-            for row in store.read_country_dataset(country, DATASET_ERRORS_TOP_ERRORS)
+            for row in _read_dataset(store, country, DATASET_ERRORS_TOP_ERRORS, range_key)
             if row.get("card_role") == role
         ]
         return {"rows": rows} if rows else None
     if role == "errors.error_session_percentage_by_app_name":
         rows = [
             row
-            for row in store.read_country_dataset(country, DATASET_ERRORS_APP_NAME)
+            for row in _read_dataset(store, country, DATASET_ERRORS_APP_NAME, range_key)
             if row.get("card_role") == role
         ]
         return {"rows": rows} if rows else None
@@ -187,3 +202,15 @@ def _text(value: object) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _read_dataset(
+    store: ParquetStore,
+    country: str,
+    dataset_path: str,
+    range_key: str,
+) -> list[dict[str, Any]]:
+    rows = store.read_country_dataset(country, range_dataset_path(dataset_path, range_key))
+    if not rows and range_key == "today":
+        return store.read_country_dataset(country, dataset_path)
+    return rows

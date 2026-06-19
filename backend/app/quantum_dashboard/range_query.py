@@ -19,7 +19,9 @@ class RangeResolution(BaseModel):
     covered_days: list[date]
     missing_days: list[date]
     completeness: Literal["complete", "partial", "empty"]
-    warning_level: Literal["none", "info", "warning", "blocking"]
+    data_quality: Literal["missing_days", "range_mismatch", "regression_failed", "complete"]
+    warning_level: Literal["none", "info", "warning", "error"]
+    last_regression_status: Literal["passed", "failed", "not_run"]
     message: str
 
 
@@ -32,6 +34,7 @@ def resolve_range(
     end: str | date | datetime | None,
     timezone: str = "CST",
     now: datetime | None = None,
+    last_regression_status: str | None = None,
 ) -> RangeResolution:
     zone = zoneinfo_for(timezone)
     today = (now.astimezone(zone) if now else datetime.now(zone)).date()
@@ -49,7 +52,9 @@ def resolve_range(
     covered_days = [day for day in _dates(coverage.get("covered_days")) if day in required_days]
     missing_days = [day for day in required_days if day not in set(covered_days)]
     completeness = _completeness(covered_days, missing_days)
-    warning_level = _warning_level(range_key, today, covered_days, missing_days)
+    regression_status = _regression_status(last_regression_status)
+    data_quality = _data_quality(missing_days, regression_status)
+    warning_level = _warning_level(range_key, missing_days, data_quality)
     return RangeResolution(
         country=country,
         range_key=range_key,
@@ -60,8 +65,10 @@ def resolve_range(
         covered_days=covered_days,
         missing_days=missing_days,
         completeness=completeness,
+        data_quality=data_quality,
         warning_level=warning_level,
-        message=_message(range_key, warning_level, missing_days),
+        last_regression_status=regression_status,
+        message=_message(range_key, warning_level, missing_days, data_quality),
     )
 
 
@@ -106,15 +113,14 @@ def _completeness(
 
 def _warning_level(
     range_key: str,
-    today: date,
-    covered_days: list[date],
     missing_days: list[date],
-) -> Literal["none", "info", "warning", "blocking"]:
+    data_quality: str,
+) -> Literal["none", "info", "warning", "error"]:
+    if data_quality == "regression_failed":
+        return "error"
     if not missing_days:
         return "none"
     if range_key == "today":
-        return "info"
-    if missing_days == [today] and today in covered_days:
         return "info"
     return "warning"
 
@@ -123,7 +129,10 @@ def _message(
     range_key: str,
     warning_level: str,
     missing_days: list[date],
+    data_quality: str,
 ) -> str:
+    if data_quality == "regression_failed":
+        return "El periodo tiene datos locales, pero la regresion Web vs Local no ha pasado."
     if warning_level == "none":
         return "Periodo completo en persistencia local."
     if range_key == "today":
@@ -131,3 +140,22 @@ def _message(
     if len(missing_days) == 1:
         return f"Falta 1 dia para completar el periodo: {missing_days[0].isoformat()}."
     return f"Faltan {len(missing_days)} dias para completar el periodo."
+
+
+def _regression_status(value: str | None) -> Literal["passed", "failed", "not_run"]:
+    if value in {"passed", "passed_with_tolerance"}:
+        return "passed"
+    if value:
+        return "failed"
+    return "not_run"
+
+
+def _data_quality(
+    missing_days: list[date],
+    regression_status: Literal["passed", "failed", "not_run"],
+) -> Literal["missing_days", "range_mismatch", "regression_failed", "complete"]:
+    if missing_days:
+        return "missing_days"
+    if regression_status == "failed":
+        return "regression_failed"
+    return "complete"

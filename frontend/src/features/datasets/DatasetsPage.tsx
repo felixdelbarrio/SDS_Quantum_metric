@@ -1,12 +1,7 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Download, Trash2, Upload } from "lucide-react";
 import { ChangeEvent, useMemo, useRef, useState } from "react";
-import {
-  apiDelete,
-  apiDownload,
-  apiGet,
-  apiUpload,
-} from "../../shared/api/client";
+import { apiDelete, apiGet, apiPost, apiUpload } from "../../shared/api/client";
 import { countryLabel } from "../../shared/countries";
 import { ConfirmDialog } from "../../shared/components/ConfirmDialog";
 import { DataGrid } from "../../shared/components/DataGrid";
@@ -68,12 +63,20 @@ type DatasetEntityRowsResponse = {
   total: number;
 };
 
+type ExportResponse = {
+  status: "exported" | "empty";
+  path?: string;
+  filename?: string;
+  size_bytes?: number;
+};
+
 export function DatasetsPage() {
   const fileInput = useRef<HTMLInputElement | null>(null);
   const [selectedCountry, setSelectedCountry] = useState<string | null>(null);
   const [selectedEntity, setSelectedEntity] = useState("raw_api_calls");
   const [deleteCountry, setDeleteCountry] = useState<string | null>(null);
   const [deleteConfirmation, setDeleteConfirmation] = useState("");
+  const [latestExport, setLatestExport] = useState<ExportResponse | null>(null);
   const datasets = useQuery({
     queryKey: ["datasets"],
     queryFn: () => apiGet<DatasetsResponse>("/datasets"),
@@ -121,14 +124,9 @@ export function DatasetsPage() {
 
   const exportData = useMutation({
     mutationFn: (countries: string[]) =>
-      apiDownload("/datasets/export", countries),
-    onSuccess: ({ blob, filename }) => {
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = filename;
-      anchor.click();
-      URL.revokeObjectURL(url);
+      apiPost<ExportResponse>("/datasets/export", { countries }),
+    onSuccess: (result) => {
+      setLatestExport(result);
     },
   });
 
@@ -271,6 +269,22 @@ export function DatasetsPage() {
         <div className="empty">Sin datos ingestados</div>
       )}
 
+      {latestExport?.status === "exported" && (
+        <section className="dataset-card export-result-card">
+          <div className="section-heading compact">
+            <div>
+              <h2>Export creado</h2>
+              <span>{latestExport.filename}</span>
+            </div>
+            <MetricBadge
+              label="Tamano"
+              value={formatBytes(latestExport.size_bytes ?? 0)}
+            />
+          </div>
+          <p className="page-subtitle">{latestExport.path}</p>
+        </section>
+      )}
+
       {activeCountry && (
         <section className="dataset-card section-offset">
           <div className="section-heading">
@@ -281,7 +295,7 @@ export function DatasetsPage() {
             <button
               className="command-button"
               type="button"
-              disabled={!entityRows.data?.rows.length}
+              disabled={!entityRows.data?.rows?.length}
               onClick={() =>
                 exportEntityCsv(
                   activeCountry,

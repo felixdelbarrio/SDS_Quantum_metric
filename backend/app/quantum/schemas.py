@@ -17,6 +17,7 @@ class BrowserName(StrEnum):
 
 class SessionMode(StrEnum):
     browser = "browser"
+    controlled = "controlled"
     manual = "manual"
 
 
@@ -191,12 +192,13 @@ class QuantumCountryConfig(BaseModel):
 class QuantumConfig(BaseModel):
     schema_version: int = 2
     browser: BrowserName = BrowserName.chrome
-    session_mode: SessionMode = SessionMode.browser
+    session_mode: SessionMode = SessionMode.controlled
     country: Country = Country.MX
     countries: list[QuantumCountryConfig] = Field(default_factory=list)
     verify_tls: bool = True
     ingestion_depth_days: int = Field(default=30, ge=1, le=3650)
     theme_preference: Literal["system", "light", "dark"] = "system"
+    export_path: str = ""
 
     @model_validator(mode="before")
     @classmethod
@@ -264,12 +266,13 @@ class QuantumPublicCountryConfig(BaseModel):
 
 class QuantumPublicConfig(BaseModel):
     browser: BrowserName = BrowserName.chrome
-    session_mode: SessionMode = SessionMode.browser
+    session_mode: SessionMode = SessionMode.controlled
     country: Country = Country.MX
     countries: list[QuantumPublicCountryConfig] = Field(default_factory=list)
     verify_tls: bool = True
     ingestion_depth_days: int = Field(default=30, ge=1, le=3650)
     theme_preference: Literal["system", "light", "dark"] = "system"
+    export_path: str = ""
 
 
 class QuantumPublicConfigUpdate(QuantumPublicConfig):
@@ -314,6 +317,7 @@ def public_quantum_config(config: QuantumConfig) -> QuantumPublicConfig:
         verify_tls=config.verify_tls,
         ingestion_depth_days=config.ingestion_depth_days,
         theme_preference=config.theme_preference,
+        export_path=config.export_path,
     )
 
 
@@ -366,6 +370,7 @@ def merge_public_quantum_update(
         verify_tls=update.verify_tls,
         ingestion_depth_days=update.ingestion_depth_days,
         theme_preference=update.theme_preference,
+        export_path=update.export_path,
         manual_cookie=update.manual_cookie,
     )
 

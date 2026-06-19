@@ -36,6 +36,10 @@ describe("QuantumPage configuration", () => {
     ).toBeNull();
     expect(await screen.findByText("Dashboard default")).toBeInTheDocument();
     expect(await screen.findByDisplayValue("dash-default")).toBeInTheDocument();
+    expect(await screen.findByDisplayValue("~/Downloads")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Sesion controlada de la aplicacion"),
+    ).toBeInTheDocument();
     expect(await screen.findByText("CHART")).toBeInTheDocument();
     expect(await screen.findByText("id: card-page-views")).toBeInTheDocument();
 
@@ -50,7 +54,7 @@ describe("QuantumPage configuration", () => {
   it("renderiza configuracion legacy sin dashboards sin pantalla en blanco", async () => {
     mockFetch({
       browser: "chrome",
-      session_mode: "browser",
+      session_mode: "controlled",
       country: "MX",
       countries: [
         {
@@ -98,7 +102,7 @@ function mockFetch(body: unknown = defaultQuantumConfig()) {
 function defaultQuantumConfig() {
   return {
     browser: "chrome",
-    session_mode: "browser",
+    session_mode: "controlled",
     country: "MX",
     countries: [
       {
@@ -136,6 +140,7 @@ function defaultQuantumConfig() {
     verify_tls: true,
     ingestion_depth_days: 30,
     theme_preference: "dark",
+    export_path: "~/Downloads",
   };
 }
 

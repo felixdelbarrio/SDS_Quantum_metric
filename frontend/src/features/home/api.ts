@@ -37,8 +37,18 @@ export function getCoverage(params: DashboardParams) {
   );
 }
 
-export function ingestMissingDays(country: CountryCode, days: string[]) {
-  return apiPost("/ingestions/missing-days", { country, days });
+export function ingestMissingDays(
+  country: CountryCode,
+  days: string[],
+  range: Pick<DashboardParams, "rangeKey" | "startDate" | "endDate">,
+) {
+  return apiPost("/ingestions/missing-days", {
+    country,
+    days,
+    range_key: range.rangeKey,
+    start_date: range.startDate,
+    end_date: range.endDate,
+  });
 }
 
 export function getSummary(params: DashboardParams) {

@@ -4,7 +4,11 @@ from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from backend.app.config.paths import default_user_data_dir, default_user_log_dir
+from backend.app.config.paths import (
+    default_downloads_dir,
+    default_user_data_dir,
+    default_user_log_dir,
+)
 
 
 class Settings(BaseSettings):
@@ -12,11 +16,12 @@ class Settings(BaseSettings):
 
     qm_base_url: str = "https://bbvamx.quantummetric.com"
     qm_browser: str = "chrome"
-    qm_session_mode: str = "browser"
+    qm_session_mode: str = "controlled"
     qm_country: str = "MX"
     qm_verify_tls: bool = True
     qm_data_dir: Path = Field(default_factory=default_user_data_dir)
     logs_dir: Path = Field(default_factory=default_user_log_dir)
+    qm_export_dir: Path = Field(default_factory=default_downloads_dir)
     qm_dashboard_id: str = ""
     qm_team_id: str = ""
     qm_dashboard_tab: int = 0

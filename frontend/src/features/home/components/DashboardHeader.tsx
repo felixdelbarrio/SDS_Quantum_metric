@@ -46,7 +46,8 @@ export function DashboardHeader({
 }: Props) {
   const missingDays = coverage?.missing_days ?? [];
   const warningLevel = coverage?.warning_level ?? "none";
-  const showCoverage = missingDays.length > 0 && warningLevel !== "none";
+  const showCoverage = warningLevel !== "none";
+  const canIngestCoverage = missingDays.length > 0;
   return (
     <header className="dashboard-header">
       <div className="dashboard-title-group">
@@ -67,11 +68,13 @@ export function DashboardHeader({
                 className="text-command"
                 type="button"
                 onClick={onIngestMissingDays}
-                disabled={missingIngestionPending}
+                disabled={missingIngestionPending || !canIngestCoverage}
               >
                 {missingIngestionPending
                   ? "Ingestando"
-                  : "Ingestar dias faltantes"}
+                  : dateRange.preset === "today"
+                    ? "Actualizar hoy"
+                    : "Ingestar periodo"}
               </button>
             </div>
           ) : null}
