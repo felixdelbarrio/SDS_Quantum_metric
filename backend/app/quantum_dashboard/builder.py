@@ -6,7 +6,7 @@ from typing import Any
 
 from backend.app.analytics.normalizer import canonicalize_key, parse_json_object
 from backend.app.quantum_dashboard.card_mapper import card_title_for_role, map_card_role
-from backend.app.quantum_dashboard.catalog import MANDATORY_CARDS, ROLE_SPECS, required_roles
+from backend.app.quantum_dashboard.catalog import ROLE_SPECS, required_roles
 from backend.app.quantum_dashboard.models import (
     CardContract,
     DashboardPeriod,
@@ -49,10 +49,22 @@ def build_derived_datasets(
     *,
     raw_calls: list[dict[str, Any]] | None = None,
     ingestion_id: str | None = None,
+    enabled_roles: set[str] | list[str] | None = None,
+    range_key: str = "today",
 ) -> DerivedBuildResult:
-    calls = raw_calls if raw_calls is not None else _read_raw_calls(store, country)
+    calls = raw_calls if raw_calls is not None else _read_raw_calls(store, country, range_key)
+    calls = _filter_calls_for_range(calls, range_key)
+    enabled_role_set: set[str] = (
+        set(enabled_roles)
+        if enabled_roles is not None
+        else {str(role) for role in required_roles()}
+    )
     selected = _latest_call_by_role(calls)
+    selected = {role: call for role, call in selected.items() if str(role) in enabled_role_set}
     timeseries_by_role = _timeseries_call_by_role(calls)
+    timeseries_by_role = {
+        role: call for role, call in timeseries_by_role.items() if str(role) in enabled_role_set
+    }
     now = datetime.now(UTC).isoformat()
     contracts: list[CardContract] = []
     snapshots: list[WebSnapshot] = []
@@ -66,7 +78,7 @@ def build_derived_datasets(
     parser_errors: list[dict[str, str]] = []
 
     for role, call in selected.items():
-        contract = _contract_from_call(country, role, call, now)
+        contract = _contract_from_call(country, role, call, now, range_key=range_key)
         result = parse_card(call, role)
         if result.status != "ok":
             parser_errors.append(
@@ -96,37 +108,56 @@ def build_derived_datasets(
             chart_payload_rows=chart_payload_rows,
         )
 
-    validation_errors = _validate_required_chart_payloads(selected, summary_widgets, errors_widgets)
+    validation_errors = _validate_required_chart_payloads(
+        selected, summary_widgets, errors_widgets, enabled_role_set
+    )
     parser_errors.extend(validation_errors)
 
-    store.write_country_dataset(
+    _write_range_dataset(
+        store,
         country,
         DATASET_VISUAL_CONTRACTS,
         [contract.model_dump(mode="json") for contract in contracts],
         file_name="visual_contracts.parquet",
+        range_key=range_key,
     )
-    store.write_country_dataset(
+    _write_range_dataset(
+        store,
         country,
         DATASET_DASHBOARD_CARDS,
         [_dashboard_card_row(contract) for contract in contracts],
         file_name="dashboard_cards.parquet",
+        range_key=range_key,
     )
-    store.write_country_dataset(
+    _write_range_dataset(
+        store,
         country,
         DATASET_WEB_SNAPSHOTS,
         [snapshot.model_dump(mode="json") for snapshot in snapshots],
         file_name="web_snapshots.parquet",
+        range_key=range_key,
     )
-    store.write_country_dataset(country, DATASET_SUMMARY_WIDGETS, summary_widgets)
-    store.write_country_dataset(country, DATASET_SUMMARY_TABLE, summary_rows)
-    store.write_country_dataset(country, DATASET_ERRORS_WIDGETS, errors_widgets)
-    store.write_country_dataset(country, DATASET_ERRORS_TOP_ERRORS, top_error_rows)
-    store.write_country_dataset(country, DATASET_ERRORS_APP_NAME, error_app_rows)
-    store.write_country_dataset(country, DATASET_TIMESERIES, timeseries_rows)
-    store.write_country_dataset(country, DATASET_CHART_PAYLOADS, chart_payload_rows)
+    _write_range_dataset(
+        store, country, DATASET_SUMMARY_WIDGETS, summary_widgets, range_key=range_key
+    )
+    _write_range_dataset(store, country, DATASET_SUMMARY_TABLE, summary_rows, range_key=range_key)
+    _write_range_dataset(
+        store, country, DATASET_ERRORS_WIDGETS, errors_widgets, range_key=range_key
+    )
+    _write_range_dataset(
+        store, country, DATASET_ERRORS_TOP_ERRORS, top_error_rows, range_key=range_key
+    )
+    _write_range_dataset(
+        store, country, DATASET_ERRORS_APP_NAME, error_app_rows, range_key=range_key
+    )
+    _write_range_dataset(store, country, DATASET_TIMESERIES, timeseries_rows, range_key=range_key)
+    _write_range_dataset(
+        store, country, DATASET_CHART_PAYLOADS, chart_payload_rows, range_key=range_key
+    )
 
-    missing = [role for role in required_roles() if role not in selected]
-    mandatory_captured = len([role for role in required_roles() if role in selected])
+    expected_roles = [role for role in required_roles() if str(role) in enabled_role_set]
+    missing = [role for role in expected_roles if role not in selected]
+    mandatory_captured = len([role for role in expected_roles if role in selected])
     regression_status: RegressionStatus = (
         "passed" if not missing and not parser_errors else "failed_missing_card"
     )
@@ -141,7 +172,7 @@ def build_derived_datasets(
         raw_calls=len(calls),
         raw_rows=sum(int(call.get("row_count") or 0) for call in calls),
         captured_cards=len(selected),
-        mandatory_cards=len(MANDATORY_CARDS),
+        mandatory_cards=len(expected_roles),
         mandatory_cards_captured=mandatory_captured,
         derived_datasets=sum(
             bool(rows)
@@ -267,6 +298,8 @@ def _contract_from_call(
     role: VisualRole,
     call: dict[str, Any],
     discovered_at: str,
+    *,
+    range_key: str,
 ) -> CardContract:
     spec = ROLE_SPECS[role]
     request_json = parse_json_object(call.get("request_json"))
@@ -275,10 +308,23 @@ def _contract_from_call(
     metric_ids = _metric_ids(call.get("metric_ids"), metadata.get("metricIds"))
     dimensions = _query_dimensions(request_json)
     period = _period_from_call(call)
+    period_label = _period_label(
+        period.get("start") if period else _text(call.get("range_start")),
+        period.get("end") if period else _text(call.get("range_end")),
+        (period.get("timezone") if period else None) or _text(call.get("range_timezone")) or "CST",
+    )
     return CardContract(
         country=country,
         dashboard_id=_text(call.get("dashboard_id") or metadata.get("dashboardId")),
         team_id=_text(call.get("team_id") or metadata.get("teamId") or metadata.get("teamID")),
+        range_key=_text(call.get("range_key")) or range_key,
+        range_start=_text(call.get("range_start") or call.get("source_ts_start")),
+        range_end=_text(call.get("range_end") or call.get("source_ts_end")),
+        range_timezone=_text(call.get("range_timezone") or call.get("source_timezone")) or "CST",
+        period_label=period_label,
+        capture_mode=_text(call.get("capture_mode")) or "range_contract",
+        source_query_hash=_text(call.get("query_hash")) or hash_json(request_json),
+        source_response_hash=_text(call.get("response_hash")) or hash_json(response_json),
         tab=spec.tab,
         tab_name="Resumen" if spec.tab == "summary" else "Errores",
         card_id=_text(call.get("card_id") or metadata.get("cardId")) or f"mapped:{role}",
@@ -322,11 +368,28 @@ def _snapshot_from_result(
     visible_value = widget.get("value")
     if visible_value is None:
         visible_value = widget.get("total")
+    snapshot_hash = hash_json(
+        {
+            "role": contract.visual_role,
+            "value": visible_value,
+            "breakdowns": widget.get("breakdown") or widget.get("series"),
+            "rows": rows[:10],
+            "period": contract.period_label,
+        }
+    )
     return WebSnapshot(
         ingestion_id=str(call.get("ingestion_id") or ""),
         country=country,
         dashboard_id=contract.dashboard_id,
         team_id=contract.team_id,
+        range_key=contract.range_key,
+        range_start=contract.range_start,
+        range_end=contract.range_end,
+        range_timezone=contract.range_timezone,
+        period_label=contract.period_label,
+        source_query_hash=contract.source_query_hash,
+        source_response_hash=contract.source_response_hash,
+        web_snapshot_hash=snapshot_hash,
         tab=contract.tab,
         card_role=contract.visual_role,
         card_title=contract.card_title,
@@ -364,6 +427,10 @@ def _append_derived_rows(
             timeseries_rows.append(
                 {
                     "country": contract.country,
+                    "range_key": contract.range_key,
+                    "range_start": contract.range_start,
+                    "range_end": contract.range_end,
+                    "range_timezone": contract.range_timezone,
                     "card_role": role,
                     "card_title": contract.card_title,
                     "ts": point.get("ts"),
@@ -379,6 +446,13 @@ def _append_derived_rows(
             row = {
                 **item,
                 "country": contract.country,
+                "range_key": contract.range_key,
+                "range_start": contract.range_start,
+                "range_end": contract.range_end,
+                "range_timezone": contract.range_timezone,
+                "period_label": contract.period_label,
+                "source_query_hash": contract.source_query_hash,
+                "source_response_hash": contract.source_response_hash,
                 "card_role": role,
                 "card_title": contract.card_title,
                 "row_index": index,
@@ -413,6 +487,14 @@ def _widget_row(contract: CardContract, widget: dict[str, Any]) -> dict[str, Any
     metric_id = str(widget.get("id") or contract.visual_role.split(".")[-1])
     return {
         "country": contract.country,
+        "range_key": contract.range_key,
+        "range_start": contract.range_start,
+        "range_end": contract.range_end,
+        "range_timezone": contract.range_timezone,
+        "capture_mode": contract.capture_mode,
+        "source_query_hash": contract.source_query_hash,
+        "source_response_hash": contract.source_response_hash,
+        "web_snapshot_hash": contract.web_snapshot_hash,
         "card_role": contract.visual_role,
         "card_title": contract.card_title,
         "id": widget.get("id"),
@@ -455,6 +537,11 @@ def _chart_payload_row(
         "ingestion_id": "",
         "dashboard_id": contract.dashboard_id,
         "team_id": contract.team_id,
+        "range_key": contract.range_key,
+        "range_start": contract.range_start,
+        "range_end": contract.range_end,
+        "range_timezone": contract.range_timezone,
+        "capture_mode": contract.capture_mode,
         "tab": contract.tab,
         "card_id": contract.card_id,
         "card_role": contract.visual_role,
@@ -463,6 +550,7 @@ def _chart_payload_row(
         "chart_payload": payload,
         "source_query_hash": contract.request_hash,
         "source_response_hash": contract.response_hash,
+        "web_snapshot_hash": contract.web_snapshot_hash,
         "period_start": widget_period.get("start") or contract.period.start,
         "period_end": widget_period.get("end") or contract.period.end,
         "timezone": widget_period.get("timezone") or contract.period.timezone,
@@ -475,10 +563,13 @@ def _validate_required_chart_payloads(
     selected: dict[VisualRole, dict[str, Any]],
     summary_widgets: list[dict[str, Any]],
     errors_widgets: list[dict[str, Any]],
+    enabled_roles: set[str],
 ) -> list[dict[str, str]]:
     widgets = {str(row.get("card_role")): row for row in [*summary_widgets, *errors_widgets]}
     errors: list[dict[str, str]] = []
     for role in REQUIRED_CHART_ROLES:
+        if str(role) not in enabled_roles:
+            continue
         if role not in selected:
             continue
         payload = widgets.get(role, {}).get("chart_payload")
@@ -509,6 +600,14 @@ def _dashboard_card_row(contract: CardContract) -> dict[str, Any]:
         "country": contract.country,
         "dashboard_id": contract.dashboard_id,
         "team_id": contract.team_id,
+        "range_key": contract.range_key,
+        "range_start": contract.range_start,
+        "range_end": contract.range_end,
+        "range_timezone": contract.range_timezone,
+        "capture_mode": contract.capture_mode,
+        "source_query_hash": contract.source_query_hash,
+        "source_response_hash": contract.source_response_hash,
+        "web_snapshot_hash": contract.web_snapshot_hash,
         "tab": contract.tab,
         "tab_name": contract.tab_name,
         "card_id": contract.card_id,
@@ -521,13 +620,60 @@ def _dashboard_card_row(contract: CardContract) -> dict[str, Any]:
     }
 
 
-def _read_raw_calls(store: ParquetStore, country: str) -> list[dict[str, Any]]:
+def range_dataset_path(dataset_path: str, range_key: str | None) -> str:
+    key = _safe_range_key(range_key)
+    return f"range_key={key}/{dataset_path}" if key else dataset_path
+
+
+def _write_range_dataset(
+    store: ParquetStore,
+    country: str,
+    dataset_path: str,
+    rows: list[dict[str, Any]],
+    *,
+    range_key: str,
+    file_name: str = "part-000.parquet",
+) -> None:
+    store.write_country_dataset(
+        country,
+        range_dataset_path(dataset_path, range_key),
+        rows,
+        file_name=file_name,
+    )
+    if range_key == "today":
+        store.write_country_dataset(country, dataset_path, rows, file_name=file_name)
+
+
+def _read_raw_calls(
+    store: ParquetStore, country: str, range_key: str | None
+) -> list[dict[str, Any]]:
     root = store.settings.parquet_dir / f"country={country}" / "raw_api_calls"
     files = sorted(root.rglob("*.parquet")) if root.exists() else []
     rows: list[dict[str, Any]] = []
     for file in files:
         rows.extend(store._read_parquet_files([file]).to_dicts())  # noqa: SLF001
     return rows
+
+
+def _filter_calls_for_range(
+    calls: list[dict[str, Any]], range_key: str | None
+) -> list[dict[str, Any]]:
+    key = _safe_range_key(range_key)
+    if not key:
+        return calls
+    filtered = [
+        call for call in calls if _safe_range_key(_text(call.get("range_key")) or "today") == key
+    ]
+    return filtered
+
+
+def _safe_range_key(range_key: str | None) -> str:
+    raw = (range_key or "").strip().lower()
+    if raw in {"today", "yesterday", "last_7_days", "custom"}:
+        return raw
+    return "".join(
+        character if character.isalnum() or character == "_" else "_" for character in raw
+    )
 
 
 def _metadata(request_json: dict[str, Any]) -> dict[str, Any]:
@@ -574,9 +720,9 @@ def _query_dimensions(request_json: dict[str, Any]) -> list[str]:
 
 
 def _period_from_call(call: dict[str, Any]) -> dict[str, str] | None:
-    start = _text(call.get("source_ts_start"))
-    end = _text(call.get("source_ts_end"))
-    timezone = "CST"
+    start = _text(call.get("source_ts_start")) or _text(call.get("capture_chunk_start"))
+    end = _text(call.get("source_ts_end")) or _text(call.get("capture_chunk_end"))
+    timezone = _text(call.get("source_timezone")) or "CST"
     request_json = parse_json_object(call.get("request_json"))
     query = request_json.get("query")
     container = query if isinstance(query, dict) else request_json

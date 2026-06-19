@@ -15,6 +15,7 @@ from backend.app.quantum_dashboard.builder import (
     DATASET_SUMMARY_WIDGETS,
     DATASET_VISUAL_CONTRACTS,
     DATASET_WEB_SNAPSHOTS,
+    range_dataset_path,
 )
 from backend.app.quantum_dashboard.catalog import MANDATORY_CARDS, ROLE_SPECS
 from backend.app.quantum_dashboard.models import (
@@ -36,19 +37,26 @@ def run_regression(
     *,
     ingestion_id: str | None = None,
     tolerance_percent: float | None = None,
+    enabled_roles: set[str] | list[str] | None = None,
+    range_key: str = "today",
 ) -> RegressionReport:
     tolerance = (
         store.settings.quantum_regression_tolerance_percent
         if tolerance_percent is None
         else tolerance_percent
     )
-    contracts = store.read_country_dataset(country, DATASET_VISUAL_CONTRACTS)
-    snapshots = store.read_country_dataset(country, DATASET_WEB_SNAPSHOTS)
+    contracts = _read_dataset(store, country, DATASET_VISUAL_CONTRACTS, range_key)
+    snapshots = _read_dataset(store, country, DATASET_WEB_SNAPSHOTS, range_key)
     contract_roles = {str(row.get("visual_role")) for row in contracts}
     snapshot_by_role = {str(row.get("card_role")): row for row in snapshots}
     cards: list[RegressionCardResult] = []
+    enabled_role_set = (
+        set(enabled_roles) if enabled_roles is not None else {spec.role for spec in MANDATORY_CARDS}
+    )
 
     for spec in MANDATORY_CARDS:
+        if spec.role not in enabled_role_set:
+            continue
         if spec.role not in contract_roles:
             cards.append(
                 _card_result(
@@ -56,11 +64,12 @@ def run_regression(
                     spec.role,
                     spec.title,
                     "failed_missing_card",
+                    range_key=range_key,
                     details="Mandatory card has no visual contract.",
                 )
             )
             continue
-        local = _local_payload(store, country, spec.role)
+        local = _local_payload(store, country, spec.role, range_key)
         if not local:
             cards.append(
                 _card_result(
@@ -68,6 +77,7 @@ def run_regression(
                     spec.role,
                     spec.title,
                     "failed_missing_api_response",
+                    range_key=range_key,
                     details="Mandatory card has no derived dataset.",
                 )
             )
@@ -80,11 +90,12 @@ def run_regression(
                     spec.role,
                     spec.title,
                     "failed_missing_card",
+                    range_key=range_key,
                     details="Mandatory card has no web snapshot.",
                 )
             )
             continue
-        cards.append(_compare_card(spec.role, snapshot, local, tolerance))
+        cards.append(_compare_card(spec.role, snapshot, local, tolerance, range_key))
 
     status = _overall_status(cards)
     verdict: RegressionVerdict = (
@@ -99,6 +110,7 @@ def run_regression(
     report = RegressionReport(
         ingestion_id=ingestion_id,
         country=country,
+        range_key=range_key,
         dashboard_id=_text(first_contract.get("dashboard_id")),
         team_id=_text(first_contract.get("team_id")),
         tabs=["summary", "errors"],
@@ -118,19 +130,25 @@ def _compare_card(
     snapshot: dict[str, Any],
     local: dict[str, Any],
     tolerance: float,
+    range_key: str,
 ) -> RegressionCardResult:
     spec = ROLE_SPECS[role]
     if spec.card_type == "TABLE":
         web_rows = _list(snapshot.get("visible_table_rows"))
         local_rows = _list(local.get("rows"))
-        if role == "summary.detail_by_app_name_os" and not any(
-            bool(row.get("parent_row_id")) for row in local_rows
+        web_has_expandable_children = any(bool(row.get("parent_row_id")) for row in web_rows)
+        local_has_expandable_children = any(bool(row.get("parent_row_id")) for row in local_rows)
+        if (
+            role == "summary.detail_by_app_name_os"
+            and web_has_expandable_children
+            and not local_has_expandable_children
         ):
             return _card_result(
                 spec.tab,
                 role,
                 spec.title,
                 "failed_expandable_rows_mismatch",
+                range_key=range_key,
                 web_value=len(web_rows),
                 local_value=len(local_rows),
                 details="Local table does not include expandable child rows.",
@@ -141,6 +159,7 @@ def _compare_card(
                 role,
                 spec.title,
                 "failed_table_mismatch",
+                range_key=range_key,
                 web_value=len(web_rows),
                 local_value=len(local_rows),
                 details="Visible row counts differ.",
@@ -150,11 +169,12 @@ def _compare_card(
             role,
             spec.title,
             "passed",
+            range_key=range_key,
             web_value=len(web_rows),
             local_value=len(local_rows),
         )
 
-    chart_result = _compare_chart_contract(role, snapshot, local)
+    chart_result = _compare_chart_contract(role, snapshot, local, range_key)
     if chart_result is not None:
         return chart_result
 
@@ -171,6 +191,7 @@ def _compare_card(
             role,
             spec.title,
             "failed_parse_error",
+            range_key=range_key,
             web_value=snapshot.get("visible_value"),
             local_value=local.get("value"),
             details="Could not compare numeric or chart values.",
@@ -188,30 +209,36 @@ def _compare_card(
         role,
         spec.title,
         status,
+        range_key=range_key,
         web_value=web_value,
         local_value=local_value,
         difference=difference,
     )
 
 
-def _local_payload(store: ParquetStore, country: str, role: VisualRole) -> dict[str, Any] | None:
+def _local_payload(
+    store: ParquetStore,
+    country: str,
+    role: VisualRole,
+    range_key: str,
+) -> dict[str, Any] | None:
     if role.startswith("summary.") and role != "summary.detail_by_app_name_os":
-        rows = store.read_country_dataset(country, DATASET_SUMMARY_WIDGETS)
+        rows = _read_dataset(store, country, DATASET_SUMMARY_WIDGETS, range_key)
         return _first_role(rows, role)
     if role == "summary.detail_by_app_name_os":
-        rows = store.read_country_dataset(country, DATASET_SUMMARY_TABLE)
+        rows = _read_dataset(store, country, DATASET_SUMMARY_TABLE, range_key)
         return {"rows": [row for row in rows if row.get("card_role") == role]}
     if role in {
         "errors.error_sessions_percentage_evolution",
         "errors.error_sessions_by_app_name_comparison",
     }:
-        rows = store.read_country_dataset(country, DATASET_ERRORS_WIDGETS)
+        rows = _read_dataset(store, country, DATASET_ERRORS_WIDGETS, range_key)
         return _first_role(rows, role)
     if role == "errors.top_errors_by_error_name":
-        rows = store.read_country_dataset(country, DATASET_ERRORS_TOP_ERRORS)
+        rows = _read_dataset(store, country, DATASET_ERRORS_TOP_ERRORS, range_key)
         return {"rows": [row for row in rows if row.get("card_role") == role]}
     if role == "errors.error_session_percentage_by_app_name":
-        rows = store.read_country_dataset(country, DATASET_ERRORS_APP_NAME)
+        rows = _read_dataset(store, country, DATASET_ERRORS_APP_NAME, range_key)
         return {"rows": [row for row in rows if row.get("card_role") == role]}
     return None
 
@@ -220,6 +247,7 @@ def _compare_chart_contract(
     role: VisualRole,
     snapshot: dict[str, Any],
     local: dict[str, Any],
+    range_key: str,
 ) -> RegressionCardResult | None:
     spec = ROLE_SPECS[role]
     if spec.card_type not in {"CHART", "KPI"}:
@@ -231,6 +259,7 @@ def _compare_chart_contract(
             role,
             spec.title,
             "failed_chart_contract_incomplete",
+            range_key=range_key,
             details="Local derived widget has no chart_payload.",
         )
     x_ticks = _list((payload.get("x_axis") or {}).get("ticks"))
@@ -243,6 +272,7 @@ def _compare_chart_contract(
             role,
             spec.title,
             "failed_period_label_mismatch",
+            range_key=range_key,
             details="Chart payload is missing period_label.",
         )
     if payload.get("chart_type") != "donut" and (not x_ticks or not y_ticks):
@@ -251,6 +281,7 @@ def _compare_chart_contract(
             role,
             spec.title,
             "failed_axis_mismatch",
+            range_key=range_key,
             details="Chart payload is missing x/y axis ticks.",
         )
     legend_labels = {str(item.get("label")) for item in legends if isinstance(item, dict)}
@@ -260,6 +291,7 @@ def _compare_chart_contract(
             role,
             spec.title,
             "failed_legend_mismatch",
+            range_key=range_key,
             details="Chart payload does not expose Mobile and Desktop legends.",
         )
     if payload.get("chart_type") == "line" and len(series) < 2:
@@ -268,6 +300,7 @@ def _compare_chart_contract(
             role,
             spec.title,
             "failed_series_shape_mismatch",
+            range_key=range_key,
             details="Line chart must expose Mobile and Desktop series.",
         )
     web_points = len(_list(snapshot.get("visible_series")))
@@ -278,6 +311,7 @@ def _compare_chart_contract(
             role,
             spec.title,
             "failed_series_shape_mismatch",
+            range_key=range_key,
             web_value=web_points,
             local_value=local_points,
             details="Local chart has fewer visible points than web snapshot.",
@@ -306,6 +340,7 @@ def _persist_report(store: ParquetStore, report: RegressionReport) -> None:
             {
                 **card.model_dump(mode="json"),
                 "country": report.country,
+                "range_key": report.range_key,
                 "ingestion_id": report.ingestion_id,
                 "generated_at": report.generated_at,
                 "verdict": report.verdict,
@@ -313,17 +348,30 @@ def _persist_report(store: ParquetStore, report: RegressionReport) -> None:
         )
     store.write_country_dataset(
         report.country,
-        DATASET_REGRESSION_RESULTS,
+        range_dataset_path(DATASET_REGRESSION_RESULTS, report.range_key),
         rows,
         file_name="web_vs_local_results.parquet",
     )
     discrepancies = [row for row in rows if not str(row["status"]).startswith("passed")]
     store.write_country_dataset(
         report.country,
-        DATASET_REGRESSION_DISCREPANCIES,
+        range_dataset_path(DATASET_REGRESSION_DISCREPANCIES, report.range_key),
         discrepancies,
         file_name="discrepancies.parquet",
     )
+    if report.range_key == "today":
+        store.write_country_dataset(
+            report.country,
+            DATASET_REGRESSION_RESULTS,
+            rows,
+            file_name="web_vs_local_results.parquet",
+        )
+        store.write_country_dataset(
+            report.country,
+            DATASET_REGRESSION_DISCREPANCIES,
+            discrepancies,
+            file_name="discrepancies.parquet",
+        )
 
 
 def _write_docs_report(settings: Settings, report: RegressionReport) -> None:
@@ -333,6 +381,12 @@ def _write_docs_report(settings: Settings, report: RegressionReport) -> None:
     json_path = docs_dir / "latest-web-vs-local.json"
     markdown_path.write_text(_markdown(report), encoding="utf-8")
     json_path.write_text(report.model_dump_json(indent=2), encoding="utf-8")
+    (docs_dir / f"{report.range_key}-web-vs-local.md").write_text(
+        _markdown(report), encoding="utf-8"
+    )
+    (docs_dir / f"{report.range_key}-web-vs-local.json").write_text(
+        report.model_dump_json(indent=2), encoding="utf-8"
+    )
     _ = settings
 
 
@@ -363,6 +417,7 @@ def _markdown(report: RegressionReport) -> str:
             f"- Final verdict: {report.verdict}",
             f"- Regression status: {report.status}",
             f"- Country: {report.country}",
+            f"- Range key: {report.range_key}",
             f"- Ingestion ID: {report.ingestion_id or '-'}",
             f"- Generated at: {report.generated_at}",
             f"- Tolerance: {report.tolerance_percent}%",
@@ -472,6 +527,7 @@ def _card_result(
     title: str,
     status: RegressionStatus,
     *,
+    range_key: str = "today",
     web_value: float | str | None = None,
     local_value: float | str | None = None,
     difference: float | None = None,
@@ -481,6 +537,7 @@ def _card_result(
         tab=tab,
         card_role=role,
         card_title=title,
+        range_key=range_key,
         web_value=web_value,
         local_value=local_value,
         status=status,
@@ -511,6 +568,20 @@ def _text(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _read_dataset(
+    store: ParquetStore,
+    country: str,
+    dataset_path: str,
+    range_key: str,
+) -> list[dict[str, Any]]:
+    if range_key == "today":
+        legacy_rows = store.read_country_dataset(country, dataset_path)
+        if legacy_rows:
+            return legacy_rows
+    rows = store.read_country_dataset(country, range_dataset_path(dataset_path, range_key))
+    return rows
 
 
 def _format_cell(value: object) -> str:

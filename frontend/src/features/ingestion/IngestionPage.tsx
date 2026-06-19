@@ -101,10 +101,15 @@ export function IngestionPage() {
   );
 
   const create = useMutation({
-    mutationFn: () =>
-      apiPost<IngestionJob>("/ingestions", {
+    mutationFn: () => {
+      const today = todayInMexico();
+      return apiPost<IngestionJob>("/ingestions", {
         country: activeCountry,
-      }),
+        range_key: "today",
+        start_date: today,
+        end_date: today,
+      });
+    },
     onSuccess: () => void ingestions.refetch(),
   });
 
@@ -347,6 +352,19 @@ function isTerminalJob(job: IngestionJob) {
   return ["completed", "failed", "failed_regression", "cancelled"].includes(
     job.status,
   );
+}
+
+function todayInMexico() {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Mexico_City",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const value = Object.fromEntries(
+    parts.map((part) => [part.type, part.value]),
+  );
+  return `${value.year}-${value.month}-${value.day}`;
 }
 
 function formatDate(value?: string | null) {

@@ -26,6 +26,7 @@ from backend.app.ingestion.time_rewriter import (
 from backend.app.main import create_app
 from backend.app.quantum.config_store import QuantumConfigStore
 from backend.app.quantum_dashboard.semantics import semantic_intent, semantic_state
+from backend.app.runtime import API_SCHEMA_VERSION, APP_ID
 from backend.app.storage.parquet_store import ParquetStore
 
 
@@ -59,7 +60,10 @@ def test_spa_and_health_are_served(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     app.dependency_overrides[parquet_store_dep] = lambda: ParquetStore(settings)
     client = TestClient(app)
     try:
-        assert client.get("/api/health").json() == {"status": "ok"}
+        health = client.get("/api/health").json()
+        assert health["status"] == "ok"
+        assert health["app"] == APP_ID
+        assert health["api_schema"] == API_SCHEMA_VERSION
         assert "<!doctype html>" in client.get("/").text.lower()
     finally:
         app.dependency_overrides.clear()
@@ -251,6 +255,25 @@ def test_update_progress_tracks_chunks_cards_and_tail_states() -> None:
     update_progress(job, status="completed", completed_chunks=4, mandatory_cards_captured=10)
 
     assert job.progress_percent == 100
+
+
+def test_update_progress_shows_activity_while_capturing_tabs() -> None:
+    job = IngestionJob(
+        ingestion_id="job-1",
+        country="MX",
+        status="capturing_chunk",
+        started_at=datetime(2026, 6, 16, tzinfo=UTC),
+        planned_chunks=1,
+        mandatory_cards_total=9,
+    )
+
+    update_progress(job, status="capturing_summary_tab", current_tab="Resumen")
+    summary_progress = job.progress_percent
+    update_progress(job, status="capturing_errors_tab", current_tab="Errores")
+
+    assert summary_progress > 0
+    assert job.progress_percent > summary_progress
+    assert job.current_tab == "Errores"
 
 
 def test_semantics_lower_is_good_and_higher_is_good() -> None:

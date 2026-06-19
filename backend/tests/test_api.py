@@ -11,6 +11,7 @@ from backend.app.api.routes import (
 from backend.app.config.settings import Settings
 from backend.app.main import app
 from backend.app.quantum.config_store import QuantumConfigStore
+from backend.app.runtime import API_SCHEMA_VERSION, APP_ID
 from backend.app.storage.parquet_store import ParquetStore
 
 
@@ -21,7 +22,11 @@ def test_health_and_config(tmp_path: Path) -> None:
     app.dependency_overrides[parquet_store_dep] = lambda: ParquetStore(settings)
     client = TestClient(app)
 
-    assert client.get("/api/health").json() == {"status": "ok"}
+    health = client.get("/api/health").json()
+    assert health["status"] == "ok"
+    assert health["app"] == APP_ID
+    assert health["api_schema"] == API_SCHEMA_VERSION
+    assert isinstance(health["pid"], int)
     response = client.get("/api/config/quantum")
     assert response.status_code == 200
     assert response.json()["country"] == "MX"

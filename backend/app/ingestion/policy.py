@@ -20,6 +20,9 @@ class IngestionRange:
     end: datetime
     latest_source_end: datetime | None
     lookback_days: int = DEFAULT_INCREMENTAL_REPROCESS_DAYS
+    range_key: str = "today"
+    timezone: str = "CST"
+    capture_mode: Literal["daily", "range_contract"] = "daily"
 
     def details(self) -> dict[str, str | int | None]:
         return {
@@ -28,6 +31,9 @@ class IngestionRange:
             "end": _iso(self.end),
             "latest_source_end": _iso(self.latest_source_end) if self.latest_source_end else None,
             "lookback_days": self.lookback_days,
+            "range_key": self.range_key,
+            "timezone": self.timezone,
+            "capture_mode": self.capture_mode,
         }
 
 
@@ -48,6 +54,7 @@ def build_ingestion_range(
             end=end,
             latest_source_end=None,
             lookback_days=bounded_depth,
+            range_key="today",
         )
 
     latest = _as_utc(latest_source_end)
@@ -62,6 +69,7 @@ def build_ingestion_range(
         end=end,
         latest_source_end=latest,
         lookback_days=bounded_reprocess,
+        range_key="today",
     )
 
 

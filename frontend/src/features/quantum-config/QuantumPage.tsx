@@ -2,10 +2,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CheckCircle2,
   Database,
+  FolderDown,
   Globe2,
+  LayoutDashboard,
   Monitor,
   Palette,
   Plus,
+  RefreshCw,
   Save,
   Settings2,
   ShieldCheck,
@@ -24,17 +27,46 @@ type QuantumCountryConfig = {
   country: CountryCode;
   base_url: string;
   enabled: boolean;
+  is_default?: boolean;
   dashboard_resolved?: boolean;
+  dashboards: QuantumDashboardConfig[];
+};
+
+type QuantumDashboardConfig = {
+  dashboard_id: string;
+  name: string;
+  dashboard_type: string;
+  team_id: string;
+  summary_tab: number;
+  errors_tab: number;
+  is_default: boolean;
+  is_manual: boolean;
+  validated: boolean;
+  validation_status: "not_tested" | "ok" | "ko";
+  discovered_at?: string | null;
+  widgets: QuantumWidgetConfig[];
+};
+
+type QuantumWidgetConfig = {
+  role: string;
+  title: string;
+  widget_id: string;
+  widget_type: "CHART" | "TABLE" | "DONUT" | "KPI" | "UNKNOWN";
+  tab: "summary" | "errors";
+  enabled: boolean;
+  discovered_at?: string | null;
 };
 
 type QuantumConfig = {
+  schema_version?: number;
   browser: "chrome" | "edge" | "safari" | "firefox";
-  session_mode: "browser" | "manual";
+  session_mode: "controlled" | "browser" | "manual";
   country: CountryCode;
   countries: QuantumCountryConfig[];
   verify_tls: boolean;
   ingestion_depth_days: number;
   theme_preference: ThemePreference;
+  export_path: string;
 };
 
 export function QuantumPage() {
@@ -43,7 +75,8 @@ export function QuantumPage() {
   const setThemePreference = useAppStore((state) => state.setThemePreference);
   const config = useQuery({
     queryKey: ["quantum-config"],
-    queryFn: () => apiGet<QuantumConfig>("/config/quantum"),
+    queryFn: async () =>
+      normalizeConfig(await apiGet<QuantumConfig>("/config/quantum")),
   });
   const [form, setForm] = useState<QuantumConfig | null>(null);
   const [manualCookie, setManualCookie] = useState("");
@@ -70,9 +103,32 @@ export function QuantumPage() {
 
   const testCountry = useMutation({
     mutationFn: (country: CountryCode) =>
-      apiPost(`/quantum/test-connection?country=${country}`),
-    onSuccess: () =>
-      void queryClient.invalidateQueries({ queryKey: ["quantum-config"] }),
+      apiPost(`/quantum/discover-dashboard?country=${country}`),
+    onSuccess: async () => {
+      const result = await config.refetch();
+      if (result.data) setForm(result.data);
+      void queryClient.invalidateQueries({ queryKey: ["quantum-config"] });
+    },
+  });
+
+  const testDashboard = useMutation({
+    mutationFn: ({
+      country,
+      dashboardId,
+    }: {
+      country: CountryCode;
+      dashboardId: string;
+    }) =>
+      apiPost(
+        `/quantum/test-dashboard?country=${country}&dashboard_id=${encodeURIComponent(
+          dashboardId,
+        )}`,
+      ),
+    onSuccess: async () => {
+      const result = await config.refetch();
+      if (result.data) setForm(result.data);
+      void queryClient.invalidateQueries({ queryKey: ["quantum-config"] });
+    },
   });
 
   useEffect(() => {
@@ -131,6 +187,92 @@ export function QuantumPage() {
     setForm({ ...current, country, countries });
   }
 
+  function updateDashboard(
+    countryIndex: number,
+    dashboardIndex: number,
+    patch: Partial<QuantumDashboardConfig>,
+  ) {
+    if (!current) return;
+    const countries = current.countries.map((countryRow, rowIndex) => {
+      if (rowIndex !== countryIndex) return countryRow;
+      const dashboards = countryRow.dashboards.map((dashboard, itemIndex) =>
+        itemIndex === dashboardIndex ? { ...dashboard, ...patch } : dashboard,
+      );
+      return { ...countryRow, dashboards: normalizeDashboards(dashboards) };
+    });
+    setForm({ ...current, countries });
+  }
+
+  function addManualDashboard(countryIndex: number) {
+    if (!current) return;
+    const countries = current.countries.map((countryRow, rowIndex) => {
+      if (rowIndex !== countryIndex) return countryRow;
+      return {
+        ...countryRow,
+        dashboards: normalizeDashboards([
+          ...(countryRow.dashboards ?? []),
+          emptyDashboardConfig(),
+        ]),
+      };
+    });
+    setForm({ ...current, countries });
+  }
+
+  function removeDashboard(countryIndex: number, dashboardIndex: number) {
+    if (!current) return;
+    const countries = current.countries.map((countryRow, rowIndex) => {
+      if (rowIndex !== countryIndex) return countryRow;
+      return {
+        ...countryRow,
+        dashboards: normalizeDashboards(
+          countryRow.dashboards.filter((_, index) => index !== dashboardIndex),
+        ),
+      };
+    });
+    setForm({ ...current, countries });
+  }
+
+  function setDefaultDashboard(countryIndex: number, dashboardIndex: number) {
+    if (!current) return;
+    const countries = current.countries.map((countryRow, rowIndex) => {
+      if (rowIndex !== countryIndex) return countryRow;
+      return {
+        ...countryRow,
+        dashboards: countryRow.dashboards.map((dashboard, index) => ({
+          ...dashboard,
+          is_default: index === dashboardIndex,
+        })),
+      };
+    });
+    setForm({ ...current, countries });
+  }
+
+  function updateWidget(
+    countryIndex: number,
+    dashboardIndex: number,
+    role: string,
+    enabled: boolean,
+  ) {
+    if (!current) return;
+    const countries = current.countries.map((countryRow, rowIndex) => {
+      if (rowIndex !== countryIndex) return countryRow;
+      return {
+        ...countryRow,
+        dashboards: countryRow.dashboards.map((dashboard, index) =>
+          index === dashboardIndex
+            ? {
+                ...dashboard,
+                widgets: dashboard.widgets.map((widget) =>
+                  widget.role === role ? { ...widget, enabled } : widget,
+                ),
+              }
+            : dashboard,
+        ),
+      };
+    });
+    setForm({ ...current, countries });
+  }
+
   function onSubmit(event: FormEvent) {
     event.preventDefault();
     if (!current) return;
@@ -141,7 +283,9 @@ export function QuantumPage() {
         : (current.countries[0]?.country ?? current.country),
       countries: current.countries.map((row) => ({
         ...row,
-        enabled: row.country === current.country,
+        enabled: row.enabled,
+        is_default: row.country === current.country,
+        dashboards: normalizeDashboards(row.dashboards),
       })),
       manual_cookie:
         current.session_mode === "manual" ? manualCookie : undefined,
@@ -208,7 +352,9 @@ export function QuantumPage() {
                   )
                 }
               >
-                <option value="browser">Browser</option>
+                <option value="controlled">
+                  Sesion controlada de la aplicacion
+                </option>
                 <option value="manual">Manual</option>
               </select>
             </label>
@@ -249,6 +395,25 @@ export function QuantumPage() {
           </div>
         </section>
 
+        <section className="config-panel config-export-panel">
+          <div className="section-heading compact">
+            <h2 className="heading-with-icon">
+              <FolderDown size={18} aria-hidden="true" />
+              Ruta de exportaciones
+            </h2>
+          </div>
+          <label className="field config-field-card">
+            <FolderDown size={18} aria-hidden="true" />
+            <span>Descargas</span>
+            <input
+              value={current.export_path}
+              placeholder="~/Downloads"
+              onChange={(event) => update("export_path", event.target.value)}
+            />
+            <small>Se usa solo al exportar.</small>
+          </label>
+        </section>
+
         <section className="config-panel config-country-panel">
           <div className="section-heading compact">
             <h2 className="heading-with-icon">
@@ -282,11 +447,7 @@ export function QuantumPage() {
                         <strong>{countryLabel(row.country)}</strong>
                       </div>
                     </div>
-                    <span
-                      className={`status ${row.dashboard_resolved ? "ok" : ""}`}
-                    >
-                      {row.dashboard_resolved ? "Dashboard" : "Pendiente"}
-                    </span>
+                    <span className="status ok">Activo</span>
                   </header>
                   <div className="config-country-fields">
                     <label className="field">
@@ -370,47 +531,192 @@ export function QuantumPage() {
           )}
         </section>
 
-        <section className="config-panel">
+        <section className="config-panel dashboard-config-panel">
           <div className="section-heading compact">
             <h2 className="heading-with-icon">
-              <Database size={18} aria-hidden="true" />
-              Dashboards y widgets
+              <LayoutDashboard size={18} aria-hidden="true" />
+              Dashboards por pais
             </h2>
           </div>
           <div className="dashboard-config-list">
-            {countryRows.map((row) => (
+            {countryRows.map((row, countryIndex) => (
               <article className="dashboard-config-item" key={row.country}>
                 <header>
                   <div>
-                    <span className="eyebrow">Preview operativo</span>
+                    <span className="eyebrow">Pais</span>
                     <strong>{countryLabel(row.country)}</strong>
                   </div>
-                  <span
-                    className={`status ${row.dashboard_resolved ? "ok" : ""}`}
+                  <button
+                    className="command-button"
+                    type="button"
+                    onClick={() => addManualDashboard(countryIndex)}
                   >
-                    {row.dashboard_resolved
-                      ? "Dashboard default resuelto"
-                      : "Test pais pendiente"}
-                  </span>
+                    <Plus size={16} /> Dashboard manual
+                  </button>
                 </header>
-                <div className="widget-config-section-grid">
-                  {WIDGET_CONFIG_GROUPS.map((group) => (
-                    <section
-                      className="widget-config-group"
-                      key={`${row.country}-${group.title}`}
-                    >
-                      <h3>{group.title}</h3>
-                      <div className="widget-config-grid">
-                        {group.widgets.map((widget) => (
-                          <label key={`${row.country}-${widget.id}`}>
-                            <input type="checkbox" checked readOnly />
-                            <span>{widget.title}</span>
+                {row.dashboards.length ? (
+                  <div className="dashboard-card-stack">
+                    {row.dashboards.map((dashboard, dashboardIndex) => (
+                      <section
+                        className="dashboard-config-card"
+                        key={`${row.country}-${dashboard.dashboard_id || dashboardIndex}`}
+                      >
+                        <div className="dashboard-config-card-header">
+                          <div>
+                            <span className="eyebrow">
+                              {dashboard.is_manual ? "Manual" : "Default"}
+                            </span>
+                            <h3>
+                              {dashboard.name ||
+                                (dashboard.is_manual
+                                  ? "Dashboard manual"
+                                  : "Dashboard default")}
+                            </h3>
+                          </div>
+                          <span
+                            className={`status ${
+                              dashboard.validated ? "ok" : "ko"
+                            }`}
+                          >
+                            {dashboard.validated ? "Validado" : "Pendiente"}
+                          </span>
+                        </div>
+                        <div className="dashboard-fields-grid">
+                          <label className="field">
+                            <span>Dashboard ID</span>
+                            <input
+                              value={dashboard.dashboard_id}
+                              readOnly={
+                                !dashboard.is_manual || dashboard.validated
+                              }
+                              onChange={(event) =>
+                                updateDashboard(countryIndex, dashboardIndex, {
+                                  dashboard_id: event.target.value,
+                                  validated: false,
+                                  validation_status: "not_tested",
+                                })
+                              }
+                            />
                           </label>
-                        ))}
-                      </div>
-                    </section>
-                  ))}
-                </div>
+                          <label className="field">
+                            <span>Nombre</span>
+                            <input
+                              value={dashboard.name}
+                              onChange={(event) =>
+                                updateDashboard(countryIndex, dashboardIndex, {
+                                  name: event.target.value,
+                                })
+                              }
+                            />
+                          </label>
+                          <label className="field">
+                            <span>Tipo</span>
+                            <input value={dashboard.dashboard_type} readOnly />
+                          </label>
+                          <label className="field">
+                            <span>Team ID</span>
+                            <input value={dashboard.team_id} readOnly />
+                          </label>
+                        </div>
+                        <div className="config-row-actions dashboard-actions-row">
+                          <label className="config-default-toggle">
+                            <input
+                              type="checkbox"
+                              checked={dashboard.is_default}
+                              onChange={(event) =>
+                                event.target.checked
+                                  ? setDefaultDashboard(
+                                      countryIndex,
+                                      dashboardIndex,
+                                    )
+                                  : undefined
+                              }
+                            />
+                            <span>Default del pais</span>
+                          </label>
+                          {dashboard.is_manual && !dashboard.validated && (
+                            <button
+                              className="command-button"
+                              type="button"
+                              disabled={
+                                !dashboard.dashboard_id ||
+                                testDashboard.isPending
+                              }
+                              onClick={() =>
+                                testDashboard.mutate({
+                                  country: row.country,
+                                  dashboardId: dashboard.dashboard_id,
+                                })
+                              }
+                            >
+                              <RefreshCw size={16} /> Test dashboard
+                            </button>
+                          )}
+                          {dashboard.is_manual && (
+                            <button
+                              className="icon-button danger"
+                              type="button"
+                              aria-label="Borrar dashboard manual"
+                              title="Borrar dashboard manual"
+                              onClick={() =>
+                                removeDashboard(countryIndex, dashboardIndex)
+                              }
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          )}
+                        </div>
+                        <div className="widget-config-section-grid">
+                          {WIDGET_CONFIG_GROUPS.map((group) => {
+                            const widgets = dashboard.widgets.filter(
+                              (widget) => widget.tab === group.tab,
+                            );
+                            return (
+                              <section
+                                className="widget-config-group"
+                                key={`${row.country}-${dashboardIndex}-${group.title}`}
+                              >
+                                <h4>{group.title}</h4>
+                                <div className="widget-config-grid">
+                                  {widgets.map((widget) => (
+                                    <label
+                                      className="widget-config-row"
+                                      key={`${dashboard.dashboard_id}-${widget.role}`}
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={widget.enabled}
+                                        onChange={(event) =>
+                                          updateWidget(
+                                            countryIndex,
+                                            dashboardIndex,
+                                            widget.role,
+                                            event.target.checked,
+                                          )
+                                        }
+                                      />
+                                      <span>
+                                        <strong>{widget.title}</strong>
+                                        <small>
+                                          id: {widget.widget_id || widget.role}
+                                        </small>
+                                      </span>
+                                      <em>{widget.widget_type}</em>
+                                    </label>
+                                  ))}
+                                </div>
+                              </section>
+                            );
+                          })}
+                        </div>
+                      </section>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="empty compact">
+                    Ejecuta Test pais o anade un dashboard manual.
+                  </div>
+                )}
               </article>
             ))}
           </div>
@@ -446,31 +752,11 @@ export function QuantumPage() {
 const WIDGET_CONFIG_GROUPS = [
   {
     title: "Resumen",
-    widgets: [
-      { id: "summary.page_views", title: "Paginas vistas" },
-      { id: "summary.sessions", title: "Sesiones" },
-      { id: "summary.converted_sessions", title: "Sesiones con conversion" },
-      { id: "summary.avg_session_duration", title: "Tiempo medio de sesion" },
-      { id: "summary.detail_by_app_name_os", title: "Detalle App Name / SO" },
-    ],
+    tab: "summary" as const,
   },
   {
     title: "Errores",
-    widgets: [
-      {
-        id: "errors.error_sessions_percentage_evolution",
-        title: "% sesiones con error",
-      },
-      { id: "errors.top_errors_by_error_name", title: "Top errores" },
-      {
-        id: "errors.error_sessions_by_app_name_comparison",
-        title: "Comparativa App Name",
-      },
-      {
-        id: "errors.error_session_percentage_by_app_name",
-        title: "% error por App Name",
-      },
-    ],
+    tab: "errors" as const,
   },
 ];
 
@@ -483,5 +769,161 @@ function emptyCountryConfig(
     base_url: "",
     enabled,
     dashboard_resolved: false,
+    dashboards: [],
   };
+}
+
+function emptyDashboardConfig(): QuantumDashboardConfig {
+  return {
+    dashboard_id: "",
+    name: "Dashboard manual",
+    dashboard_type: "Quantum dashboard",
+    team_id: "",
+    summary_tab: 0,
+    errors_tab: 1,
+    is_default: false,
+    is_manual: true,
+    validated: false,
+    validation_status: "not_tested",
+    widgets: defaultWidgetConfig(),
+  };
+}
+
+function defaultWidgetConfig(): QuantumWidgetConfig[] {
+  return [
+    widget("summary.page_views", "Paginas vistas", "CHART", "summary"),
+    widget("summary.sessions", "Sesiones", "CHART", "summary"),
+    widget(
+      "summary.converted_sessions",
+      "Sesiones con conversion",
+      "CHART",
+      "summary",
+    ),
+    widget(
+      "summary.avg_session_duration",
+      "Tiempo medio de sesion",
+      "CHART",
+      "summary",
+    ),
+    widget(
+      "summary.detail_by_app_name_os",
+      "Detalle App Name / SO",
+      "TABLE",
+      "summary",
+    ),
+    widget(
+      "errors.error_sessions_percentage_evolution",
+      "% sesiones con error",
+      "CHART",
+      "errors",
+    ),
+    widget("errors.top_errors_by_error_name", "Top errores", "TABLE", "errors"),
+    widget(
+      "errors.error_sessions_by_app_name_comparison",
+      "Comparativa App Name",
+      "DONUT",
+      "errors",
+    ),
+    widget(
+      "errors.error_session_percentage_by_app_name",
+      "% error por App Name",
+      "TABLE",
+      "errors",
+    ),
+  ];
+}
+
+function widget(
+  role: string,
+  title: string,
+  widgetType: QuantumWidgetConfig["widget_type"],
+  tab: QuantumWidgetConfig["tab"],
+): QuantumWidgetConfig {
+  return {
+    role,
+    title,
+    widget_id: `role:${role}`,
+    widget_type: widgetType,
+    tab,
+    enabled: true,
+  };
+}
+
+function normalizeDashboards(
+  dashboards: QuantumDashboardConfig[] = [],
+): QuantumDashboardConfig[] {
+  if (!dashboards.length) return dashboards;
+  const defaultIndex = dashboards.findIndex(
+    (dashboard) => dashboard.is_default,
+  );
+  const resolvedDefault = defaultIndex >= 0 ? defaultIndex : 0;
+  return dashboards.map((dashboard, index) => ({
+    ...dashboard,
+    is_default: index === resolvedDefault,
+    widgets: dashboard.widgets?.length
+      ? dashboard.widgets
+      : defaultWidgetConfig(),
+  }));
+}
+
+type LegacyCountryConfig = Partial<QuantumCountryConfig> & {
+  country: CountryCode;
+  dashboard_id?: string;
+  team_id?: string;
+  tab?: number;
+};
+
+function normalizeConfig(config: QuantumConfig): QuantumConfig {
+  const countries = (config.countries ?? []).map(normalizeCountryConfig);
+  return {
+    browser: config.browser ?? "chrome",
+    session_mode: config.session_mode ?? "controlled",
+    country: countries.some((row) => row.country === config.country)
+      ? config.country
+      : (countries[0]?.country ?? "MX"),
+    countries,
+    verify_tls: config.verify_tls ?? true,
+    ingestion_depth_days: Number.isInteger(config.ingestion_depth_days)
+      ? config.ingestion_depth_days
+      : 30,
+    theme_preference: config.theme_preference ?? "system",
+    export_path: config.export_path || "~/Downloads",
+    schema_version: config.schema_version,
+  };
+}
+
+function normalizeCountryConfig(
+  row: LegacyCountryConfig,
+): QuantumCountryConfig {
+  return {
+    country: row.country,
+    base_url: row.base_url ?? "",
+    enabled: row.enabled ?? true,
+    is_default: row.is_default ?? false,
+    dashboard_resolved: row.dashboard_resolved ?? Boolean(row.dashboard_id),
+    dashboards: normalizeDashboards(
+      row.dashboards?.length ? row.dashboards : legacyDashboardConfig(row),
+    ),
+  };
+}
+
+function legacyDashboardConfig(
+  row: LegacyCountryConfig,
+): QuantumDashboardConfig[] {
+  if (!row.dashboard_id) return [];
+  return [
+    {
+      dashboard_id: row.dashboard_id,
+      name: "Dashboard default",
+      dashboard_type: "Quantum dashboard",
+      team_id: row.team_id ?? "",
+      summary_tab: row.tab ?? 0,
+      errors_tab: 1,
+      is_default: true,
+      is_manual: false,
+      validated: true,
+      validation_status: "ok",
+      widgets: defaultWidgetConfig(),
+    },
+  ];
 }

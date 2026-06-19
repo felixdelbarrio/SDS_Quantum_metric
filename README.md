@@ -22,15 +22,17 @@ make kill
 ## Configuracion Quantum
 
 La app configura Quantum por pais con una pantalla funcional: browser, modo de sesion,
-Base URL, pais por defecto, test por pais, dashboards/widgets visibles, apariencia,
-profundidad de ingesta y accion de guardar.
+Base URL, pais por defecto, test por pais, dashboards por pais, dashboard manual,
+widgets con ID/tipo/enabled, apariencia, profundidad de ingesta y accion de guardar.
 
-Dashboard ID, Team ID, tabs, card IDs y hashes no se muestran al usuario. Se resuelven internamente
-desde `.env`, configuracion local o URL de Quantum Web cuando es posible.
+Dashboard ID, Team ID, tabs, widget IDs y tipos se muestran cuando forman parte de la
+configuracion auditable. El dashboard default descubierto no edita su ID; los dashboards
+manuales permiten editarlo hasta validarlo.
 
 `.env.example` incluye Mexico. Para Espana, Colombia, Argentina o Peru se anade una fila en
-Quantum y, al guardar, la configuracion queda sincronizada en `QM_COUNTRY_CONFIGS` dentro de
-`.env`. Las cookies de navegador o manuales no se escriben en disco.
+Quantum y, al guardar, la configuracion principal queda en `config/quantum_config.json`.
+La sincronizacion `.env` solo incluye valores operativos no secretos. Las cookies de navegador
+o manuales no se escriben en disco.
 
 ## Dashboard local
 
@@ -56,6 +58,11 @@ y `parquet/country=<pais>/manifests/day_coverage.parquet`. Home consulta
 `/api/local-dashboard/coverage` y puede lanzar `/api/ingestions/missing-days` para completar
 dias ausentes sin bloquear la navegacion.
 
+Desde Iteracion 10, Today, Yesterday y Last 7 Days se consultan y persisten con `range_key`.
+Los widgets no agregables desde dias sueltos requieren contrato Quantum capturado para la ventana
+completa. Si no existe contrato del rango, Home muestra estado accionable y no reutiliza datos de
+otro preset.
+
 Las graficas se renderizan desde `chart_payload`: ejes, leyenda, series Mobile/Desktop, bandas y periodo salen del backend y se persisten en `derived/chart_payloads`. React no fabrica curvas desde agregados.
 
 Si hay raw calls pero faltan cards obligatorias, derivados o regresion, la API devuelve un motivo
@@ -64,15 +71,20 @@ accionable. La UI no rellena datos falsos ni oculta discrepancias.
 ## Datasets
 
 Datasets permite ver entidades Parquet por pais: RAW calls, contratos visuales, snapshots,
-derivados, chart payloads y regresion. Las entidades se leen paginadas, tienen cabeceras fijas
-y CSV por entidad. El ZIP de export/import incluye datos y `config/quantum.json` sin secretos.
+derivados, chart payloads y regresion. Las entidades se agrupan por categoria, dashboard ID y
+widget role, se leen paginadas, tienen cabeceras fijas y CSV por entidad. El ZIP de export/import
+incluye datos y `config/quantum_config.json` sin secretos. La exportacion se escribe en la ruta
+configurada por el usuario, por defecto `~/Downloads`, y la UI muestra la ruta exacta creada por
+backend.
 El borrado exige confirmacion exacta del pais.
 
 Por defecto los datos viven en la ruta persistente del usuario calculada con `platformdirs`. `QM_DATA_DIR` queda reservado como override explicito. Si se detecta `./data` legacy, Datasets muestra aviso y permite migrarlo.
 
 ## Seguridad
 
-Las cookies de Quantum se leen solo bajo demanda, se mantienen en memoria y no se persisten. El modo manual tambien mantiene la cookie solo en memoria.
+El modo de sesion por defecto es `controlled`: usa un perfil propio de la aplicacion y no lee
+perfiles reales de Chrome. Las configuraciones legacy con modo `browser` se migran a
+`controlled`. El modo manual mantiene la cookie solo en memoria.
 
 La aplicacion local no implementa reproduccion, descarga, cache ni rutas de video de sesiones.
 
@@ -95,6 +107,13 @@ recarga Home: el dashboard debe seguir funcionando sobre Parquet local.
 - Modelo diario en `docs/to-be/daily-parquet-model.md`.
 - Faltantes async en `docs/to-be/missing-days-ingestion.md`.
 - Import/export en `docs/to-be/export-import-contract.md`.
+- Contrato de rangos en `docs/to-be/iteration-10-range-contract-model.md`.
+- Reglas de agregacion por rango en `docs/to-be/quantum-range-aggregation-rules.md`.
+- Hardening Chrome en `docs/to-be/chrome-session-hardening.md`.
+- Export a Downloads en `docs/to-be/export-downloads-contract.md`.
+- Iteracion 9 storage audit en `docs/as-is/iteration-9-storage-audit.md`.
+- Iteracion 9 RCA de ingesta en `docs/as-is/iteration-9-ingestion-failure-rca.md`.
+- Evidencia Web/Local en `docs/to-be/web-local-evidence-chain.md`.
 - Backend local versionado bajo `/api`.
 - Persistencia Parquet en la ruta de usuario activa bajo `parquet/country=<pais>`.
 - Export/import ZIP en la ruta de usuario activa bajo `exports`.

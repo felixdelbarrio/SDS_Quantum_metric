@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from backend.app.auth.browser_cookies import BrowserCookie
@@ -21,7 +22,9 @@ def capture_quantum_dashboard_cards(
     errors_tab: int,
     ingestion_id: str,
     ingestion_range: IngestionRange | None,
+    session_mode: str = "manual",
     capture_session: QuantumAnalyticsCaptureSession | None = None,
+    progress_callback: Callable[[str], None] | None = None,
 ) -> list[dict[str, Any]]:
     if capture_session is None:
         with QuantumAnalyticsCaptureSession(
@@ -31,6 +34,7 @@ def capture_quantum_dashboard_cards(
             base_url=base_url,
             wait_seconds=settings.quantum_capture_timeout_seconds,
             ingestion_id=ingestion_id,
+            session_mode=session_mode,
         ) as session:
             return capture_quantum_dashboard_cards(
                 settings=settings,
@@ -44,10 +48,14 @@ def capture_quantum_dashboard_cards(
                 ingestion_id=ingestion_id,
                 ingestion_range=ingestion_range,
                 capture_session=session,
+                session_mode=session_mode,
+                progress_callback=progress_callback,
             )
 
     rows: list[dict[str, Any]] = []
     for tab_name, tab_index in (("summary", summary_tab), ("errors", errors_tab)):
+        if progress_callback is not None:
+            progress_callback(tab_name)
         dashboard_url = dashboard_tab_url(
             base_url=base_url,
             dashboard_id=dashboard_id,
@@ -69,6 +77,13 @@ def capture_quantum_dashboard_cards(
                 wait_seconds=settings.quantum_capture_timeout_seconds,
                 ingestion_id=ingestion_id,
                 ingestion_range=ingestion_range,
+            )
+        if not captured:
+            tab_label = "Resumen" if tab_name == "summary" else "Errores"
+            raise RuntimeError(
+                "No Quantum analytics responses were captured for "
+                f"{tab_label}. Check that the local controlled session is authenticated "
+                "and that the dashboard emits /analytics responses for the selected range."
             )
         for row in captured:
             row["tab"] = tab_name

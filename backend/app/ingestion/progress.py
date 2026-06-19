@@ -45,6 +45,12 @@ def _progress_percent(job: IngestionJob) -> float:
     tail_weight = (
         10.0 if job.status in {"building_derived", "running_regression", "completed"} else 0.0
     )
+    capture_floor = {
+        "capturing_chunk": 5.0,
+        "capturing_day": 5.0,
+        "capturing_summary_tab": 15.0,
+        "capturing_errors_tab": 35.0,
+    }.get(job.status, 0.0)
     chunk_part = (
         (job.completed_chunks / job.planned_chunks) * chunk_weight if job.planned_chunks else 0.0
     )
@@ -53,4 +59,4 @@ def _progress_percent(job: IngestionJob) -> float:
         if job.mandatory_cards_total
         else 0.0
     )
-    return round(min(100.0, chunk_part + card_part + tail_weight), 2)
+    return round(min(100.0, max(capture_floor, chunk_part + card_part + tail_weight)), 2)

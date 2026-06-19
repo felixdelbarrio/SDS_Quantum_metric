@@ -25,7 +25,17 @@ export type DashboardCoverage = {
   country: CountryCode;
   start: string | null;
   end: string | null;
+  range_key?: string;
   complete: boolean;
+  completeness?: "complete" | "partial" | "empty";
+  data_quality?:
+    | "missing_days"
+    | "range_mismatch"
+    | "regression_failed"
+    | "complete";
+  warning_level?: "none" | "info" | "warning" | "error";
+  last_regression_status?: "passed" | "failed" | "not_run";
+  required_days?: string[];
   covered_days: string[];
   missing_days: string[];
   message: string;
@@ -146,6 +156,7 @@ export type ChartPayload = {
 export type KpiWidget = {
   id: string;
   role?: string;
+  range_key?: string | null;
   title: string;
   value?: number | null;
   unit: "count" | "seconds" | "percent";
@@ -233,6 +244,7 @@ export type ErrorPercentRow = {
 export type ErrorComparisonWidget = {
   id: string;
   role?: string;
+  range_key?: string | null;
   title: string;
   chart_type: "donut";
   total?: number | null;

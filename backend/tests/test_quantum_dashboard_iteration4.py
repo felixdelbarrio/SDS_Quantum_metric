@@ -58,7 +58,7 @@ def test_discovery_uses_env_defaults_as_fallback(tmp_path: Path) -> None:
     ]
 
 
-def test_config_api_hides_dashboard_team_and_tab(tmp_path: Path) -> None:
+def test_config_api_exposes_auditable_dashboard_widget_metadata(tmp_path: Path) -> None:
     settings = Settings(qm_data_dir=tmp_path)
     app.dependency_overrides[settings_dep] = lambda: settings
     app.dependency_overrides[config_store_dep] = lambda: QuantumConfigStore(settings)
@@ -69,11 +69,12 @@ def test_config_api_hides_dashboard_team_and_tab(tmp_path: Path) -> None:
     finally:
         app.dependency_overrides.clear()
 
-    serialized = json.dumps(payload)
-    assert "dashboard_id" not in serialized
-    assert "team_id" not in serialized
-    assert '"tab"' not in serialized
     assert payload["countries"][0]["dashboard_resolved"] is True
+    dashboard = payload["countries"][0]["dashboards"][0]
+    assert dashboard["dashboard_id"]
+    assert dashboard["team_id"]
+    assert dashboard["widgets"][0]["role"] == "summary.page_views"
+    assert dashboard["widgets"][0]["widget_type"] == "CHART"
 
 
 def test_builder_persists_contracts_snapshots_derived_and_no_cookies(tmp_path: Path) -> None:
@@ -124,6 +125,65 @@ def test_regression_passes_and_writes_report(tmp_path: Path) -> None:
     assert (store.settings.reports_dir / "regression/latest-web-vs-local.md").exists()
 
 
+def test_builder_uses_capture_chunk_range_when_source_range_is_missing(
+    tmp_path: Path,
+) -> None:
+    store = ParquetStore(Settings(qm_data_dir=tmp_path))
+    rows = [
+        {
+            **row,
+            "source_ts_start": None,
+            "source_ts_end": None,
+            "capture_chunk_start": "2026-06-18T06:00:00Z",
+            "capture_chunk_end": "2026-06-19T05:59:59Z",
+        }
+        for row in _fixture_rows()
+    ]
+    store.merge_raw_calls("MX", rows)
+
+    result = build_derived_datasets(store, "MX")
+
+    assert not [
+        error
+        for error in result.parser_errors
+        if error["error_code"] == "failed_period_label_mismatch"
+    ]
+    chart_payloads = store.read_country_dataset("MX", "derived/chart_payloads")
+    assert chart_payloads
+    assert all(row["period_label"] for row in chart_payloads)
+
+
+def test_regression_allows_parent_only_summary_table_when_web_has_no_children(
+    tmp_path: Path,
+) -> None:
+    store = _store_with_fixtures(tmp_path)
+    build_derived_datasets(store, "MX")
+    summary_rows = store.read_country_dataset("MX", "derived/summary_detail_table")
+    parent_rows = [row for row in summary_rows if not row.get("parent_row_id")]
+    snapshots = []
+    for snapshot in store.read_country_dataset("MX", "web_snapshots"):
+        if snapshot.get("card_role") == "summary.detail_by_app_name_os":
+            snapshot = {
+                **snapshot,
+                "visible_table_rows": parent_rows[:10],
+            }
+        snapshots.append(snapshot)
+    store.write_country_dataset("MX", "derived/summary_detail_table", parent_rows)
+    store.write_country_dataset(
+        "MX",
+        "web_snapshots",
+        snapshots,
+        file_name="web_snapshots.parquet",
+    )
+
+    report = run_regression(store, "MX")
+
+    detail = next(
+        card for card in report.cards if card.card_role == "summary.detail_by_app_name_os"
+    )
+    assert detail.status == "passed"
+
+
 def test_regression_fails_when_mandatory_card_is_missing(tmp_path: Path) -> None:
     store = ParquetStore(Settings(qm_data_dir=tmp_path))
     rows = [row for row in _fixture_rows() if row["card_role"] != "errors.top_errors_by_error_name"]
@@ -171,6 +231,28 @@ def test_local_dashboard_apis_read_derived_data_offline(tmp_path: Path) -> None:
     }
     assert top_errors["rows"][0]["name"] == "TypeError"
     assert app_name["rows"][0]["name"] == "pagos"
+
+
+def test_local_dashboard_rewrites_legacy_epoch_period_label(tmp_path: Path) -> None:
+    store = _store_with_fixtures(tmp_path)
+    build_derived_datasets(store, "MX")
+    run_regression(store, "MX")
+    rows = store.read_country_dataset("MX", "derived/summary_widgets")
+    for row in rows:
+        if row.get("card_role") == "summary.page_views":
+            row["period_start"] = "1781676000"
+            row["period_end"] = "1781686680"
+            payload = dict(row["chart_payload"])
+            payload["period_label"] = "1781676000 - 1781686680 CST"
+            row["chart_payload"] = payload
+    store.write_country_dataset("MX", "derived/summary_widgets", rows)
+
+    summary = LocalDashboardService(store).summary("MX")
+    widget = next(item for item in summary["widgets"] if item["role"] == "summary.page_views")
+
+    assert widget["chart_payload"]["period_label"] != "1781676000 - 1781686680 CST"
+    assert "1781676000" not in widget["chart_payload"]["period_label"]
+    assert "CST" in widget["chart_payload"]["period_label"]
 
 
 def test_local_dashboard_card_detail_breakdown_and_points(tmp_path: Path) -> None:

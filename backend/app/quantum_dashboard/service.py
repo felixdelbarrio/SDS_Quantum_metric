@@ -10,6 +10,7 @@ import polars as pl
 from backend.app.analytics.models import TableColumn
 from backend.app.analytics.normalizer import humanize_key
 from backend.app.analytics.segments import parse_segment
+from backend.app.quantum.config_store import QuantumConfigStore
 from backend.app.quantum.schemas import COUNTRY_LABELS, COUNTRY_ORDER, Country
 from backend.app.quantum_dashboard.builder import (
     DATASET_CHART_PAYLOADS,
@@ -20,6 +21,7 @@ from backend.app.quantum_dashboard.builder import (
     DATASET_SUMMARY_TABLE,
     DATASET_SUMMARY_WIDGETS,
     DATASET_VISUAL_CONTRACTS,
+    range_dataset_path,
 )
 from backend.app.quantum_dashboard.catalog import MANDATORY_CARDS, required_roles
 from backend.app.quantum_dashboard.models import DashboardTab
@@ -62,8 +64,9 @@ ERROR_APP_COLUMNS = [
 
 
 class LocalDashboardService:
-    def __init__(self, store: ParquetStore) -> None:
+    def __init__(self, store: ParquetStore, config_store: QuantumConfigStore | None = None) -> None:
         self.store = store
+        self.config_store = config_store
 
     def countries(self) -> dict[str, Any]:
         countries = []
@@ -89,21 +92,27 @@ class LocalDashboardService:
         configured = str(self.store.settings.qm_country or Country.MX.value)
         return {"countries": countries, "default_country": first_ready or configured}
 
-    def status(self, country: str) -> dict[str, Any]:
+    def status(self, country: str, *, range_key: str = "today") -> dict[str, Any]:
         raw_calls = self._raw_calls(country)
-        contracts = self.store.read_country_dataset(country, DATASET_VISUAL_CONTRACTS)
+        contracts = self._read_dataset(country, DATASET_VISUAL_CONTRACTS, range_key)
         contract_roles = {str(row.get("visual_role")) for row in contracts}
-        regression = self._latest_regression(country)
+        enabled_roles = self._enabled_roles(country)
+        contract_roles = {role for role in contract_roles if role in enabled_roles}
+        regression = self._latest_regression(country, range_key)
         summary_ready = self._tab_ready("summary", contract_roles) and (
-            self.store.country_dataset_exists(country, DATASET_SUMMARY_WIDGETS)
-            and self.store.country_dataset_exists(country, DATASET_SUMMARY_TABLE)
+            self._dataset_exists(country, DATASET_SUMMARY_WIDGETS, range_key)
+            and self._dataset_exists(country, DATASET_SUMMARY_TABLE, range_key)
         )
         errors_ready = self._tab_ready("errors", contract_roles) and (
-            self.store.country_dataset_exists(country, DATASET_ERRORS_WIDGETS)
-            and self.store.country_dataset_exists(country, DATASET_ERRORS_TOP_ERRORS)
-            and self.store.country_dataset_exists(country, DATASET_ERRORS_APP_NAME)
+            self._dataset_exists(country, DATASET_ERRORS_WIDGETS, range_key)
+            and self._dataset_exists(country, DATASET_ERRORS_TOP_ERRORS, range_key)
+            and self._dataset_exists(country, DATASET_ERRORS_APP_NAME, range_key)
         )
-        missing_roles = [role for role in required_roles() if role not in contract_roles]
+        missing_roles = [
+            role
+            for role in required_roles()
+            if role in enabled_roles and role not in contract_roles
+        ]
         reason = None
         if raw_calls and missing_roles:
             reason = (
@@ -117,6 +126,7 @@ class LocalDashboardService:
             )
         return {
             "country": country,
+            "range_key": range_key,
             "has_data": bool(raw_calls or contracts),
             "last_ingestion_id": self._last_ingestion(country, "ingestion_id"),
             "last_ingestion_at": self._last_ingestion(country, "started_at"),
@@ -126,11 +136,11 @@ class LocalDashboardService:
             "rows": sum(int(row.get("row_count") or 0) for row in raw_calls),
             "cards": len(contract_roles),
             "captured_cards": len(contract_roles),
-            "mandatory_cards": len(MANDATORY_CARDS),
+            "mandatory_cards": len([role for role in required_roles() if role in enabled_roles]),
             "mandatory_cards_captured": len(required_roles()) - len(missing_roles),
             "summary_ready": summary_ready,
             "errors_ready": errors_ready,
-            "derived_datasets": self._derived_dataset_count(country),
+            "derived_datasets": self._derived_dataset_count(country, range_key),
             "reason": reason,
             "missing_roles": missing_roles,
             "regression_report": REGRESSION_REPORT_PATH if regression else None,
@@ -144,11 +154,12 @@ class LocalDashboardService:
         segment: str | None = None,
         start_date: str | None = None,
         end_date: str | None = None,
+        range_key: str = "today",
     ) -> dict[str, Any]:
-        status = self.status(country)
+        status = self.status(country, range_key=range_key)
         if not status["summary_ready"] or not _regression_usable(status["regression_status"]):
             return self._empty_response(country, status, required_dataset="derived/summary")
-        period = self._period(country)
+        period = self._period(country, range_key)
         if not _period_matches(period, start_date, end_date):
             return self._empty_response(
                 country,
@@ -157,12 +168,13 @@ class LocalDashboardService:
             )
         widgets = [
             _widget_from_row(row)
-            for row in self.store.read_country_dataset(country, DATASET_SUMMARY_WIDGETS)
+            for row in self._read_dataset(country, DATASET_SUMMARY_WIDGETS, range_key)
+            if str(row.get("card_role")) in self._enabled_roles(country)
         ]
         if segment:
             widgets = _summary_widgets_for_segment(
                 widgets,
-                self.store.read_country_dataset(country, DATASET_SUMMARY_TABLE),
+                self._read_dataset(country, DATASET_SUMMARY_TABLE, range_key),
                 segment,
             )
         order = {card.local_id: index for index, card in enumerate(MANDATORY_CARDS)}
@@ -170,6 +182,7 @@ class LocalDashboardService:
         return {
             "status": "ok",
             "country": country,
+            "range_key": range_key,
             "source": "parquet",
             "last_ingestion_at": status["last_ingestion_at"],
             "dashboard_title": f"Dashboard General {country}",
@@ -193,13 +206,14 @@ class LocalDashboardService:
         segment: str | None = None,
         start_date: str | None = None,
         end_date: str | None = None,
+        range_key: str = "today",
     ) -> dict[str, Any]:
-        status = self.status(country)
+        status = self.status(country, range_key=range_key)
         if not status["summary_ready"] or not _regression_usable(status["regression_status"]):
             return self._empty_table(
                 country, SUMMARY_COLUMNS, status, "derived/summary_detail_table"
             )
-        period = self._period(country)
+        period = self._period(country, range_key)
         if not _period_matches(period, start_date, end_date):
             return self._empty_table(
                 country,
@@ -207,7 +221,8 @@ class LocalDashboardService:
                 {**status, "reason": "No hay ingesta local para el rango de fechas seleccionado."},
                 "derived/summary_detail_table",
             )
-        rows = self.store.read_country_dataset(country, DATASET_SUMMARY_TABLE)
+        rows = self._read_dataset(country, DATASET_SUMMARY_TABLE, range_key)
+        rows = [row for row in rows if str(row.get("card_role")) in self._enabled_roles(country)]
         rows = _apply_segment(rows, segment)
         rows = _filter_rows(rows, search, ("name", "app_name", "operating_system"))
         rows = _sort_rows(
@@ -234,11 +249,12 @@ class LocalDashboardService:
         segment: str | None = None,
         start_date: str | None = None,
         end_date: str | None = None,
+        range_key: str = "today",
     ) -> dict[str, Any]:
-        status = self.status(country)
+        status = self.status(country, range_key=range_key)
         if not status["errors_ready"] or not _regression_usable(status["regression_status"]):
             return self._empty_response(country, status, required_dataset="derived/errors")
-        period = self._period(country)
+        period = self._period(country, range_key)
         if not _period_matches(period, start_date, end_date):
             return self._empty_response(
                 country,
@@ -247,17 +263,19 @@ class LocalDashboardService:
             )
         widgets = [
             _widget_from_row(row)
-            for row in self.store.read_country_dataset(country, DATASET_ERRORS_WIDGETS)
+            for row in self._read_dataset(country, DATASET_ERRORS_WIDGETS, range_key)
+            if str(row.get("card_role")) in self._enabled_roles(country)
         ]
         if segment:
             widgets = _error_widgets_for_segment(
                 widgets,
-                self.store.read_country_dataset(country, DATASET_ERRORS_APP_NAME),
+                self._read_dataset(country, DATASET_ERRORS_APP_NAME, range_key),
                 segment,
             )
         return {
             "status": "ok",
             "country": country,
+            "range_key": range_key,
             "source": "parquet",
             "last_ingestion_at": status["last_ingestion_at"],
             "applied_dimension": _selection(dimension),
@@ -279,6 +297,7 @@ class LocalDashboardService:
         segment: str | None = None,
         start_date: str | None = None,
         end_date: str | None = None,
+        range_key: str = "today",
     ) -> dict[str, Any]:
         return self._error_table(
             country,
@@ -293,6 +312,7 @@ class LocalDashboardService:
             segment=segment,
             start_date=start_date,
             end_date=end_date,
+            range_key=range_key,
         )
 
     def app_name_error_table(
@@ -306,6 +326,7 @@ class LocalDashboardService:
         segment: str | None = None,
         start_date: str | None = None,
         end_date: str | None = None,
+        range_key: str = "today",
     ) -> dict[str, Any]:
         return self._error_table(
             country,
@@ -320,6 +341,7 @@ class LocalDashboardService:
             segment=segment,
             start_date=start_date,
             end_date=end_date,
+            range_key=range_key,
         )
 
     def _error_table(
@@ -337,11 +359,12 @@ class LocalDashboardService:
         segment: str | None,
         start_date: str | None,
         end_date: str | None,
+        range_key: str,
     ) -> dict[str, Any]:
-        status = self.status(country)
+        status = self.status(country, range_key=range_key)
         if not status["errors_ready"] or not _regression_usable(status["regression_status"]):
             return self._empty_table(country, columns, status, required_dataset)
-        period = self._period(country)
+        period = self._period(country, range_key)
         if not _period_matches(period, start_date, end_date):
             return self._empty_table(
                 country,
@@ -349,7 +372,8 @@ class LocalDashboardService:
                 {**status, "reason": "No hay ingesta local para el rango de fechas seleccionado."},
                 required_dataset,
             )
-        rows = self.store.read_country_dataset(country, dataset)
+        rows = self._read_dataset(country, dataset, range_key)
+        rows = [row for row in rows if str(row.get("card_role")) in self._enabled_roles(country)]
         rows = _apply_segment(rows, segment)
         rows = _filter_rows(rows, search, ("name", "error_name", "app_name"))
         rows = _sort_rows(rows, sort, direction, {column.key for column in columns}, default_sort)
@@ -373,10 +397,11 @@ class LocalDashboardService:
         *,
         start_date: str | None = None,
         end_date: str | None = None,
+        range_key: str = "today",
     ) -> dict[str, Any]:
-        widget = self._card_widget(country, card_role)
-        rows = self._card_rows(country, card_role)
-        period = self._period(country)
+        widget = self._card_widget(country, card_role, range_key)
+        rows = self._card_rows(country, card_role, range_key)
+        period = self._period(country, range_key)
         if not _period_matches(period, start_date, end_date):
             return {
                 "status": "empty",
@@ -403,8 +428,10 @@ class LocalDashboardService:
             "source": "parquet",
         }
 
-    def card_breakdown(self, country: str, card_role: str) -> dict[str, Any]:
-        widget = self._card_widget(country, card_role) or {}
+    def card_breakdown(
+        self, country: str, card_role: str, *, range_key: str = "today"
+    ) -> dict[str, Any]:
+        widget = self._card_widget(country, card_role, range_key) or {}
         return {
             "status": "ok" if widget else "empty",
             "country": country,
@@ -413,8 +440,10 @@ class LocalDashboardService:
             "source": "parquet",
         }
 
-    def card_points(self, country: str, card_role: str) -> dict[str, Any]:
-        widget = self._card_widget(country, card_role) or {}
+    def card_points(
+        self, country: str, card_role: str, *, range_key: str = "today"
+    ) -> dict[str, Any]:
+        widget = self._card_widget(country, card_role, range_key) or {}
         return {
             "status": "ok" if widget else "empty",
             "country": country,
@@ -433,6 +462,7 @@ class LocalDashboardService:
         return {
             "status": "empty",
             "country": country,
+            "range_key": status.get("range_key"),
             "source": "parquet",
             "reason": status.get("reason") or "Dashboard local no listo para uso offline.",
             "required_dataset": required_dataset,
@@ -451,6 +481,7 @@ class LocalDashboardService:
         return {
             "status": "empty",
             "country": country,
+            "range_key": status.get("range_key"),
             "columns": [column.model_dump(mode="json") for column in columns],
             "rows": [],
             "source": "parquet",
@@ -462,9 +493,9 @@ class LocalDashboardService:
     def _tab_ready(self, tab: DashboardTab, contract_roles: set[str]) -> bool:
         return all(role in contract_roles for role in required_roles(tab))
 
-    def _derived_dataset_count(self, country: str) -> int:
+    def _derived_dataset_count(self, country: str, range_key: str) -> int:
         return sum(
-            self.store.country_dataset_exists(country, dataset)
+            self._dataset_exists(country, dataset, range_key)
             for dataset in (
                 DATASET_SUMMARY_WIDGETS,
                 DATASET_SUMMARY_TABLE,
@@ -483,8 +514,8 @@ class LocalDashboardService:
             rows.extend(pl.read_parquet(file).to_dicts())
         return rows
 
-    def _latest_regression(self, country: str) -> dict[str, Any]:
-        rows = self.store.read_country_dataset(country, DATASET_REGRESSION_RESULTS)
+    def _latest_regression(self, country: str, range_key: str = "today") -> dict[str, Any]:
+        rows = self._read_dataset(country, DATASET_REGRESSION_RESULTS, range_key)
         if not rows:
             return {}
         return max(rows, key=lambda row: str(row.get("generated_at") or ""))
@@ -497,12 +528,12 @@ class LocalDashboardService:
         value = latest.get(key)
         return str(value) if value is not None else None
 
-    def _period(self, country: str) -> dict[str, str | None]:
+    def _period(self, country: str, range_key: str) -> dict[str, str | None]:
         rows = [
-            *self.store.read_country_dataset(country, DATASET_VISUAL_CONTRACTS),
-            *self.store.read_country_dataset(country, DATASET_SUMMARY_WIDGETS),
-            *self.store.read_country_dataset(country, DATASET_ERRORS_WIDGETS),
-            *self.store.read_country_dataset(country, DATASET_CHART_PAYLOADS),
+            *self._read_dataset(country, DATASET_VISUAL_CONTRACTS, range_key),
+            *self._read_dataset(country, DATASET_SUMMARY_WIDGETS, range_key),
+            *self._read_dataset(country, DATASET_ERRORS_WIDGETS, range_key),
+            *self._read_dataset(country, DATASET_CHART_PAYLOADS, range_key),
         ]
         starts: list[str] = []
         ends: list[str] = []
@@ -541,17 +572,17 @@ class LocalDashboardService:
             "report": status.get("regression_report"),
         }
 
-    def _card_widget(self, country: str, card_role: str) -> dict[str, Any] | None:
+    def _card_widget(self, country: str, card_role: str, range_key: str) -> dict[str, Any] | None:
         rows = [
-            *self.store.read_country_dataset(country, DATASET_SUMMARY_WIDGETS),
-            *self.store.read_country_dataset(country, DATASET_ERRORS_WIDGETS),
+            *self._read_dataset(country, DATASET_SUMMARY_WIDGETS, range_key),
+            *self._read_dataset(country, DATASET_ERRORS_WIDGETS, range_key),
         ]
         for row in rows:
-            if row.get("card_role") == card_role:
+            if row.get("card_role") == card_role and card_role in self._enabled_roles(country):
                 return _widget_from_row(row)
         return None
 
-    def _card_rows(self, country: str, card_role: str) -> list[dict[str, Any]]:
+    def _card_rows(self, country: str, card_role: str, range_key: str) -> list[dict[str, Any]]:
         if card_role == "summary.detail_by_app_name_os":
             dataset = DATASET_SUMMARY_TABLE
         elif card_role == "errors.top_errors_by_error_name":
@@ -562,9 +593,37 @@ class LocalDashboardService:
             return []
         return [
             row
-            for row in self.store.read_country_dataset(country, dataset)
-            if row.get("card_role") == card_role
+            for row in self._read_dataset(country, dataset, range_key)
+            if row.get("card_role") == card_role and card_role in self._enabled_roles(country)
         ]
+
+    def _enabled_roles(self, country: str) -> set[str]:
+        if self.config_store is None:
+            return set(required_roles())
+        try:
+            config = self.config_store.read()
+            country_config = config.country_config(country)
+        except Exception:
+            return set(required_roles())
+        if country_config is None:
+            return set(required_roles())
+        return set(country_config.enabled_widget_roles())
+
+    def _read_dataset(
+        self,
+        country: str,
+        dataset_path: str,
+        range_key: str,
+    ) -> list[dict[str, Any]]:
+        rows = self.store.read_country_dataset(country, range_dataset_path(dataset_path, range_key))
+        if not rows and range_key == "today":
+            return self.store.read_country_dataset(country, dataset_path)
+        return rows
+
+    def _dataset_exists(self, country: str, dataset_path: str, range_key: str) -> bool:
+        if self.store.country_dataset_exists(country, range_dataset_path(dataset_path, range_key)):
+            return True
+        return range_key == "today" and self.store.country_dataset_exists(country, dataset_path)
 
 
 def _widget_from_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -578,6 +637,7 @@ def _widget_from_row(row: dict[str, Any]) -> dict[str, Any]:
         return {
             "id": row.get("id"),
             "role": row.get("card_role"),
+            "range_key": row.get("range_key"),
             "title": row.get("title") or row.get("card_title"),
             "chart_type": "donut",
             "total": row.get("total"),
@@ -592,6 +652,7 @@ def _widget_from_row(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": row.get("id"),
         "role": row.get("card_role"),
+        "range_key": row.get("range_key"),
         "title": row.get("title") or row.get("card_title"),
         "value": row.get("value"),
         "unit": row.get("unit") or "count",
@@ -611,9 +672,21 @@ def _with_period_label(value: Any, period: dict[str, Any]) -> dict[str, Any] | N
     if not isinstance(value, dict):
         return None
     payload = dict(value)
-    payload["period_label"] = payload.get("period_label") or period.get("label")
+    current_label = _text(payload.get("period_label"))
+    payload["period_label"] = (
+        period.get("label") if _is_epoch_period_label(current_label) else current_label
+    ) or period.get("label")
     payload["timezone"] = payload.get("timezone") or period.get("timezone")
     return payload
+
+
+def _is_epoch_period_label(value: str | None) -> bool:
+    if not value:
+        return False
+    parts = value.replace("CST", "").replace("UTC", "").split("-")
+    if len(parts) < 2:
+        return False
+    return all(part.strip().isdigit() and len(part.strip()) in {10, 13} for part in parts[:2])
 
 
 def _chart_points(value: Any) -> list[dict[str, Any]]:

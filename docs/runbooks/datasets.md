@@ -34,3 +34,10 @@ La UI exige escribir exactamente el codigo de pais antes de habilitar el boton d
 - El boton CSV exporta la entidad visible.
 - Export ZIP incluye `config/quantum.json` y Parquet.
 - Import rechaza rutas peligrosas y secretos.
+
+# Iteracion 9
+
+- Export ZIP incluye `config/quantum_config.json`.
+- Entidades se agrupan por categoria, dashboard ID y widget role.
+- `GET /api/datasets/{country}/evidence` muestra trazabilidad Web -> RAW -> derived -> API.
+- Import acepta ZIPs antiguos con `config/quantum.json`, pero escribe la ruta nueva.

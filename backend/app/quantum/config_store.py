@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Literal, cast
 
 from backend.app.config.settings import Settings
@@ -19,7 +20,8 @@ from backend.app.quantum.schemas import (
 class QuantumConfigStore:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
-        self.path = settings.config_dir / "quantum.json"
+        self.path = settings.config_dir / "quantum_config.json"
+        self.legacy_path = settings.config_dir / "quantum.json"
 
     def default(self) -> QuantumConfig:
         raw_theme = self.settings.quantum_theme_preference
@@ -30,30 +32,56 @@ class QuantumConfigStore:
         )
         return QuantumConfig(
             browser=BrowserName(self.settings.qm_browser),
-            session_mode=SessionMode(self.settings.qm_session_mode),
+            session_mode=SessionMode(_safe_default_session_mode(self.settings.qm_session_mode)),
             country=Country(self.settings.qm_country),
             countries=self._countries_from_settings(),
             verify_tls=self.settings.qm_verify_tls,
             ingestion_depth_days=self.settings.quantum_ingestion_depth_days,
             theme_preference=theme_preference,
+            export_path=str(self.settings.qm_export_dir),
         )
 
     def read(self) -> QuantumConfig:
-        if not self.path.exists():
+        path = self.path if self.path.exists() else self.legacy_path
+        if not path.exists():
             return self.default()
-        data = json.loads(self.path.read_text())
-        return QuantumConfig.model_validate(data)
+        data = json.loads(path.read_text())
+        config = _harden_browser_session_mode(QuantumConfig.model_validate(data))
+        if path == self.legacy_path and not self.path.exists():
+            self._write_json(config)
+        elif data.get("session_mode") == SessionMode.browser.value:
+            self._write_json(config)
+        return config
 
     def write(self, update: QuantumConfigUpdate) -> QuantumConfig:
-        config = QuantumConfig.model_validate(update.model_dump(exclude={"manual_cookie"}))
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(config.model_dump_json(indent=2))
+        config = _harden_browser_session_mode(
+            QuantumConfig.model_validate(update.model_dump(exclude={"manual_cookie"}))
+        )
+        self._write_json(config)
         self._sync_env(config)
         return config
 
     def delete(self) -> None:
         if self.path.exists():
             self.path.unlink()
+        if self.legacy_path.exists():
+            self.legacy_path.unlink()
+
+    def _write_json(self, config: QuantumConfig) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        payload = config.model_dump_json(indent=2)
+        with NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=self.path.parent,
+            prefix=f".{self.path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            handle.write(payload)
+            handle.write("\n")
+            temporary = Path(handle.name)
+        temporary.replace(self.path)
 
     def _countries_from_settings(self) -> list[QuantumCountryConfig]:
         if self.settings.qm_country_configs:
@@ -94,6 +122,7 @@ class QuantumConfigStore:
             return
 
         selected = config.country_config() or config.countries[0]
+        dashboard = selected.default_dashboard()
         values = {
             "QM_BASE_URL": selected.base_url,
             "QM_BROWSER": config.browser.value,
@@ -102,9 +131,10 @@ class QuantumConfigStore:
             "QM_VERIFY_TLS": "true" if config.verify_tls else "false",
             "QUANTUM_INGESTION_DEPTH_DAYS": str(config.ingestion_depth_days),
             "QUANTUM_THEME_PREFERENCE": config.theme_preference,
-            "QM_DASHBOARD_ID": selected.dashboard_id,
-            "QM_TEAM_ID": selected.team_id,
-            "QM_DASHBOARD_TAB": str(selected.tab),
+            "QM_EXPORT_DIR": config.export_path,
+            "QM_DASHBOARD_ID": dashboard.dashboard_id if dashboard else selected.dashboard_id,
+            "QM_TEAM_ID": dashboard.team_id if dashboard else selected.team_id,
+            "QM_DASHBOARD_TAB": str(dashboard.summary_tab if dashboard else selected.tab),
             "QM_COUNTRY_CONFIGS": json.dumps(
                 [country.model_dump(mode="json") for country in config.countries],
                 ensure_ascii=False,
@@ -142,3 +172,13 @@ class QuantumConfigStore:
 
 def ensure_parent(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+
+
+def _safe_default_session_mode(value: str) -> str:
+    return "controlled" if value == "browser" else value
+
+
+def _harden_browser_session_mode(config: QuantumConfig) -> QuantumConfig:
+    if config.session_mode == SessionMode.browser:
+        return config.model_copy(update={"session_mode": SessionMode.controlled})
+    return config

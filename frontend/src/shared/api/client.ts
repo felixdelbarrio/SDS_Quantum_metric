@@ -1,4 +1,8 @@
-const API_BASE = import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:8765/api";
+const API_BASE =
+  import.meta.env.VITE_API_BASE ??
+  (import.meta.env.DEV
+    ? "http://127.0.0.1:8765/api"
+    : `${window.location.origin}/api`);
 
 type JsonValue =
   | Record<string, unknown>

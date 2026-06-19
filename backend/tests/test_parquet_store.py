@@ -56,6 +56,57 @@ def test_parquet_store_roundtrip(tmp_path: Path) -> None:
     assert store.list_datasets()[0]["country"] == "MX"
 
 
+def test_delete_country_removes_parquet_and_ingestion_history(tmp_path: Path) -> None:
+    store = ParquetStore(Settings(qm_data_dir=tmp_path))
+    store.merge_raw_calls(
+        "MX",
+        [
+            _raw_call(
+                ingestion_id="mx-ing",
+                card_id="mx-card",
+                source_ts_start="2026-06-18T06:00:00Z",
+                source_ts_end="2026-06-19T05:59:59Z",
+            )
+        ],
+    )
+    store.append_manifest(
+        {
+            "ingestion_id": "mx-ing",
+            "country": "MX",
+            "status": "failed",
+            "started_at": "2026-06-18T20:00:00Z",
+        }
+    )
+    store.append_manifest(
+        {
+            "ingestion_id": "es-ing",
+            "country": "ES",
+            "status": "completed",
+            "started_at": "2026-06-18T19:00:00Z",
+        }
+    )
+
+    assert store.delete_country("MX") is True
+
+    assert store.list_datasets() == []
+    assert [row["ingestion_id"] for row in store.list_ingestions()] == ["es-ing"]
+
+
+def test_delete_country_clears_orphan_history_without_parquet(tmp_path: Path) -> None:
+    store = ParquetStore(Settings(qm_data_dir=tmp_path))
+    store.append_manifest(
+        {
+            "ingestion_id": "mx-orphan",
+            "country": "MX",
+            "status": "failed",
+            "started_at": "2026-06-18T20:00:00Z",
+        }
+    )
+
+    assert store.delete_country("MX") is True
+    assert store.list_ingestions() == []
+
+
 def test_parquet_store_rejects_unsafe_import_paths(tmp_path: Path) -> None:
     store = ParquetStore(Settings(qm_data_dir=tmp_path / "data"))
     zip_path = tmp_path / "unsafe.zip"
@@ -93,14 +144,14 @@ def test_parquet_store_export_import_includes_quantum_config(tmp_path: Path) -> 
 
     exported = store.export_countries(["MX"])
     with zipfile.ZipFile(exported) as archive:
-        assert "config/quantum.json" in archive.namelist()
-        assert "Cookie" not in archive.read("config/quantum.json").decode()
+        assert "config/quantum_config.json" in archive.namelist()
+        assert "Cookie" not in archive.read("config/quantum_config.json").decode()
 
     target = ParquetStore(Settings(qm_data_dir=tmp_path / "target"))
     imported = target.import_zip(exported)
 
     assert imported["imported_files"] == 1
-    assert (target.settings.config_dir / "quantum.json").exists()
+    assert (target.settings.config_dir / "quantum_config.json").exists()
 
 
 def test_parquet_store_recovers_from_corrupt_manifest(tmp_path: Path) -> None:
@@ -157,6 +208,42 @@ def test_parquet_store_merge_replaces_overlap_and_tracks_latest_source_end(
     assert latest.isoformat() == "2026-06-13T00:00:00+00:00"
     rows = store.card_data("old") + store.card_data("overlap-new")
     assert {row["card_id"] for row in rows} == {"old", "overlap-new"}
+
+
+def test_parquet_store_merge_uses_capture_chunk_range_when_source_range_missing(
+    tmp_path: Path,
+) -> None:
+    store = ParquetStore(Settings(qm_data_dir=tmp_path))
+    old = {
+        **_raw_call(
+            ingestion_id="ing-1",
+            card_id="old-capture-range",
+            source_ts_start="",
+            source_ts_end="",
+        ),
+        "capture_chunk_start": "2026-06-18T06:00:00Z",
+        "capture_chunk_end": "2026-06-19T05:59:59Z",
+    }
+    store.merge_raw_calls("MX", [old])
+    replacement = {
+        **_raw_call(
+            ingestion_id="ing-2",
+            card_id="new-capture-range",
+            source_ts_start="",
+            source_ts_end="",
+        ),
+        "capture_chunk_start": "2026-06-18T06:00:00Z",
+        "capture_chunk_end": "2026-06-19T05:59:59Z",
+    }
+
+    result = store.merge_raw_calls("MX", [replacement])
+
+    assert result.rows_replaced == 1
+    assert result.rows_after == 1
+    latest = store.latest_source_end("MX")
+    assert latest is not None
+    assert latest.isoformat() == "2026-06-19T05:59:59+00:00"
+    assert store.card_data("new-capture-range")[0]["card_id"] == "new-capture-range"
 
 
 def test_parquet_store_lists_merged_covered_source_ranges(tmp_path: Path) -> None:
