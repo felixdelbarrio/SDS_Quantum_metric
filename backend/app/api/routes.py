@@ -6,8 +6,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, cast
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Body, Depends, File, HTTPException, UploadFile
+from pydantic import BaseModel, Field
 
 from backend.app.analytics.models import SortDirection
 from backend.app.analytics.service import AnalyticsService
@@ -43,6 +43,11 @@ from backend.app.storage.parquet_store import ParquetStore
 
 router = APIRouter(prefix="/api")
 _INGESTION_SERVICE: IngestionService | None = None
+
+
+class DatasetExportRequest(BaseModel):
+    countries: list[str] = Field(default_factory=list)
+    export_path: str | None = None
 
 
 def settings_dep() -> Settings:
@@ -170,6 +175,7 @@ def _write_config(
             verify_tls=config.verify_tls,
             ingestion_depth_days=config.ingestion_depth_days,
             theme_preference=config.theme_preference,
+            export_path=config.export_path,
         )
     )
 
@@ -221,6 +227,8 @@ def test_connection(
         if not manual_cookie:
             raise HTTPException(status_code=400, detail="Manual cookie is not available in memory.")
         cookies = cookie_provider.from_manual_header(manual_cookie, str(country_config.base_url))
+    elif config.session_mode == "controlled":
+        cookies = []
     else:
         cookies = cookie_provider.load(config.browser.value, str(country_config.base_url))
     return (
@@ -315,7 +323,13 @@ async def create_missing_days_ingestion(
 ) -> dict[str, object]:
     try:
         job = service.start_missing_days(
-            IngestionCreate(country=request.country, days=request.days)
+            IngestionCreate(
+                country=request.country,
+                days=request.days,
+                range_key=request.range_key,
+                start_date=request.start_date,
+                end_date=request.end_date,
+            )
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -474,11 +488,33 @@ def dataset_entity_rows(
 
 @router.post("/datasets/export")
 def export_datasets(
-    countries: list[str],
     store: Annotated[ParquetStore, Depends(parquet_store_dep)],
-) -> FileResponse:
-    path = store.export_countries(countries)
-    return FileResponse(path, filename=path.name, media_type="application/zip")
+    config_store: Annotated[QuantumConfigStore, Depends(config_store_dep)],
+    payload: Annotated[DatasetExportRequest | list[str] | None, Body()] = None,
+) -> dict[str, object]:
+    if isinstance(payload, list):
+        request = DatasetExportRequest(countries=[str(item) for item in payload])
+    else:
+        request = payload or DatasetExportRequest()
+    countries = request.countries or [row["country"] for row in store.list_datasets()]
+    configured_export_path = config_store.read().export_path
+    export_path = request.export_path or configured_export_path
+    target_dir = Path(export_path).expanduser() if export_path else None
+    path = store.export_countries(countries, target_dir=target_dir)
+    return {
+        "status": "exported",
+        "path": str(path),
+        "filename": path.name,
+        "size_bytes": path.stat().st_size,
+    }
+
+
+@router.get("/datasets/exports/latest")
+def latest_dataset_export(
+    store: Annotated[ParquetStore, Depends(parquet_store_dep)],
+) -> dict[str, object]:
+    latest = store.latest_export()
+    return latest or {"status": "empty"}
 
 
 @router.post("/datasets/import")
@@ -606,8 +642,9 @@ def local_dashboard_status(
     store: Annotated[ParquetStore, Depends(parquet_store_dep)],
     config_store: Annotated[QuantumConfigStore, Depends(config_store_dep)],
     country: str = "MX",
+    range_key: str = "today",
 ) -> dict[str, object]:
-    return LocalDashboardService(store, config_store).status(country)
+    return LocalDashboardService(store, config_store).status(country, range_key=range_key)
 
 
 @router.get("/local-dashboard/coverage")
@@ -626,6 +663,9 @@ def local_dashboard_coverage(
             start=start,
             end=end,
             timezone="CST",
+            last_regression_status=LocalDashboardService(store, config_store=None)
+            .status(country, range_key=range_key)
+            .get("regression_status"),
         )
         return range_resolution_payload(resolution)
     except ValueError as exc:
@@ -641,6 +681,7 @@ def local_dashboard_summary(
     segment: str | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
+    range_key: str = "today",
 ) -> dict[str, object]:
     return LocalDashboardService(store, config_store).summary(
         country,
@@ -648,6 +689,7 @@ def local_dashboard_summary(
         segment=segment,
         start_date=start_date,
         end_date=end_date,
+        range_key=range_key,
     )
 
 
@@ -663,6 +705,7 @@ def local_dashboard_summary_table(
     segment: str | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
+    range_key: str = "today",
 ) -> dict[str, object]:
     return LocalDashboardService(store, config_store).summary_table(
         country,
@@ -673,6 +716,7 @@ def local_dashboard_summary_table(
         segment=segment,
         start_date=start_date,
         end_date=end_date,
+        range_key=range_key,
     )
 
 
@@ -685,6 +729,7 @@ def local_dashboard_errors(
     segment: str | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
+    range_key: str = "today",
 ) -> dict[str, object]:
     return LocalDashboardService(store, config_store).errors(
         country,
@@ -692,6 +737,7 @@ def local_dashboard_errors(
         segment=segment,
         start_date=start_date,
         end_date=end_date,
+        range_key=range_key,
     )
 
 
@@ -707,6 +753,7 @@ def local_dashboard_top_errors(
     segment: str | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
+    range_key: str = "today",
 ) -> dict[str, object]:
     return LocalDashboardService(store, config_store).top_errors_table(
         country,
@@ -717,6 +764,7 @@ def local_dashboard_top_errors(
         segment=segment,
         start_date=start_date,
         end_date=end_date,
+        range_key=range_key,
     )
 
 
@@ -732,6 +780,7 @@ def local_dashboard_error_app_name(
     segment: str | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
+    range_key: str = "today",
 ) -> dict[str, object]:
     return LocalDashboardService(store, config_store).app_name_error_table(
         country,
@@ -742,6 +791,7 @@ def local_dashboard_error_app_name(
         segment=segment,
         start_date=start_date,
         end_date=end_date,
+        range_key=range_key,
     )
 
 
@@ -753,9 +803,10 @@ def local_dashboard_card_detail(
     country: str = "MX",
     start_date: str | None = None,
     end_date: str | None = None,
+    range_key: str = "today",
 ) -> dict[str, object]:
     return LocalDashboardService(store, config_store).card_detail(
-        country, card_role, start_date=start_date, end_date=end_date
+        country, card_role, start_date=start_date, end_date=end_date, range_key=range_key
     )
 
 
@@ -765,8 +816,11 @@ def local_dashboard_card_breakdown(
     store: Annotated[ParquetStore, Depends(parquet_store_dep)],
     config_store: Annotated[QuantumConfigStore, Depends(config_store_dep)],
     country: str = "MX",
+    range_key: str = "today",
 ) -> dict[str, object]:
-    return LocalDashboardService(store, config_store).card_breakdown(country, card_role)
+    return LocalDashboardService(store, config_store).card_breakdown(
+        country, card_role, range_key=range_key
+    )
 
 
 @router.get("/local-dashboard/cards/{card_role}/points")
@@ -775,8 +829,11 @@ def local_dashboard_card_points(
     store: Annotated[ParquetStore, Depends(parquet_store_dep)],
     config_store: Annotated[QuantumConfigStore, Depends(config_store_dep)],
     country: str = "MX",
+    range_key: str = "today",
 ) -> dict[str, object]:
-    return LocalDashboardService(store, config_store).card_points(country, card_role)
+    return LocalDashboardService(store, config_store).card_points(
+        country, card_role, range_key=range_key
+    )
 
 
 @router.get("/analytics/dimensions")

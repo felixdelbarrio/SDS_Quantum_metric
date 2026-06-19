@@ -36,6 +36,7 @@ Playwright ni clientes HTTP externos.
 - `service.py`: endpoints `/api/local-dashboard/*` desde derivados.
 - `regression.py`: comparacion Web vs Local de valores, ejes, leyendas, series y tablas.
 - `range_query.py`: resolucion de rangos y cobertura con severidad por preset.
+- `aggregation_rules.py`: reglas canonicas para decidir si un widget puede agregarse o requiere contrato Quantum del rango completo.
 - `evidence.py`: trazabilidad widget a widget desde Web snapshot hasta API local.
 
 ## Flujo de ingesta
@@ -51,6 +52,10 @@ Playwright ni clientes HTTP externos.
 9. La ingesta solo termina `completed` si la regresion pasa.
 
 La politica de rango usa `QUANTUM_INGESTION_DEPTH_DAYS`, `QUANTUM_INCREMENTAL_REPROCESS_DAYS` y `QUANTUM_INGESTION_CHUNK_DAYS`. El planner divide ventanas largas en chunks y el rewriter aplica el rango activo a payloads Quantum antes de persistir.
+Cuando la UI solicita Today, Yesterday o Last 7 Days, la ingesta crea un contrato explicito con
+`range_key`, `range_start`, `range_end`, `range_timezone` y `capture_mode=range_contract`.
+Cada response se valida tras la reescritura temporal; si el rango extraido no coincide, no se
+publica como dato local valido.
 
 ## Flujo del dashboard offline
 
@@ -68,9 +73,16 @@ Las cards graficas no se renderizan desde agregados. Backend persiste `ChartPayl
 
 Datasets expone entidades Parquet por pais mediante `/api/datasets/{country}/entities` y `/api/datasets/{country}/entities/{entity}`. Las entidades incluyen categoria, dashboard ID y widget role. Las respuestas son paginadas; RAW completo solo se lee bajo demanda. Export/import incluye `config/quantum_config.json` y datos Parquet, rechazando secretos y rutas peligrosas. `/api/datasets/{country}/evidence` expone la cadena Web -> RAW -> derived -> API.
 
+Los derivados por rango se guardan bajo `parquet/country=<pais>/range_key=<range>/derived`.
+`today` conserva tambien la publicacion legacy para compatibilidad, pero los endpoints locales
+filtran por `range_key` cuando se consulta un preset.
+
 ## Configuracion persistente
 
 `backend/app/quantum/config_store.py` escribe `config/quantum_config.json` de forma atomica con schema version. El modelo contiene paises, dashboards, widgets, tema, browser, modo de sesion y profundidad de ingesta. Cookies y Authorization nunca se persisten.
+
+El modo de sesion por defecto es `controlled`, con perfil Playwright propio de la app. El modo
+`browser` queda como compatibilidad legacy y se migra a `controlled` al leer configuracion.
 
 ## Offline
 

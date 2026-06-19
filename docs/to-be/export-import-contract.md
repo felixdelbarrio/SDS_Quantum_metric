@@ -2,12 +2,18 @@
 
 ## ZIP
 
+El backend crea el ZIP en la ruta configurada por el usuario, por defecto `~/Downloads`. La
+respuesta de `/api/datasets/export` es JSON con ruta absoluta, filename y tamano; el frontend no
+genera blobs ni fuerza una descarga browser.
+
 El ZIP exportado incluye:
 
 ```text
 manifest.json
 config/quantum.json
 parquet/country=<pais>/...
+reports/...
+schema/dataset_schema.json
 ```
 
 ## Seguridad

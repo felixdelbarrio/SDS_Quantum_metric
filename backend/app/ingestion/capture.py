@@ -13,8 +13,12 @@ from playwright.sync_api import sync_playwright
 
 from backend.app.auth.browser_cookies import BrowserCookie
 from backend.app.config.settings import Settings
+from backend.app.ingestion.planner import IngestionChunk
 from backend.app.ingestion.policy import IngestionRange, apply_ingestion_range
-from backend.app.ingestion.time_rewriter import extract_query_time_range
+from backend.app.ingestion.time_rewriter import (
+    extract_query_time_range,
+    validate_query_time_range,
+)
 from backend.app.observability.sanitizer import sanitize
 from backend.app.storage.parquet_store import hash_json
 
@@ -29,6 +33,7 @@ def capture_quantum_analytics(
     wait_seconds: int,
     ingestion_id: str | None = None,
     ingestion_range: IngestionRange | None = None,
+    session_mode: str = "manual",
 ) -> list[dict[str, Any]]:
     with QuantumAnalyticsCaptureSession(
         settings=settings,
@@ -37,6 +42,7 @@ def capture_quantum_analytics(
         base_url=base_url,
         wait_seconds=wait_seconds,
         ingestion_id=ingestion_id,
+        session_mode=session_mode,
     ) as session:
         return session.capture(dashboard_url=dashboard_url, ingestion_range=ingestion_range)
 
@@ -51,6 +57,7 @@ class QuantumAnalyticsCaptureSession:
         base_url: str,
         wait_seconds: int,
         ingestion_id: str | None = None,
+        session_mode: str = "manual",
     ) -> None:
         self.settings = settings
         self.cookies = cookies
@@ -58,6 +65,7 @@ class QuantumAnalyticsCaptureSession:
         self.base_url = base_url
         self.wait_seconds = wait_seconds
         self.ingestion_id = ingestion_id or str(uuid.uuid4())
+        self.session_mode = session_mode
         self.quantum_host = urlparse(str(base_url)).hostname
         self._playwright_manager: Any | None = None
         self._playwright: Any | None = None
@@ -76,11 +84,23 @@ class QuantumAnalyticsCaptureSession:
                     "Run `make setup` to reinstall browser assets and retry ingestion."
                 ) from exc
             raise
-        self._browser = _launch_headless_browser(self._playwright, self.settings)
-        self._context = self._browser.new_context(
-            ignore_https_errors=not self.settings.qm_verify_tls
-        )
-        self._context.add_cookies(cast(Any, [cookie.as_playwright() for cookie in self.cookies]))
+        if self.session_mode == "controlled":
+            user_data_dir = self.settings.runtime_dir / "quantum-controlled-profile"
+            user_data_dir.mkdir(parents=True, exist_ok=True)
+            self._context = self._playwright.chromium.launch_persistent_context(
+                str(user_data_dir),
+                headless=True,
+                ignore_https_errors=not self.settings.qm_verify_tls,
+                args=["--disable-dev-shm-usage", "--no-first-run"],
+            )
+        else:
+            self._browser = _launch_headless_browser(self._playwright, self.settings)
+            self._context = self._browser.new_context(
+                ignore_https_errors=not self.settings.qm_verify_tls
+            )
+            self._context.add_cookies(
+                cast(Any, [cookie.as_playwright() for cookie in self.cookies])
+            )
         return self
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
@@ -101,6 +121,7 @@ class QuantumAnalyticsCaptureSession:
             raise RuntimeError("Capture session is not started.")
         ingestion_ts = datetime.now(UTC).isoformat()
         rows: list[dict[str, Any]] = []
+        range_validation_errors: list[str] = []
         page = self._context.new_page()
 
         def on_route(route: Any) -> None:
@@ -128,6 +149,18 @@ class QuantumAnalyticsCaptureSession:
             request_json = _parse_json(request.post_data or "")
             response_json = _parse_json(response.body().decode("utf-8", "replace"))
             query_range = extract_query_time_range(request_json)
+            range_validation = None
+            if ingestion_range is not None:
+                validation_target = IngestionChunk(
+                    start=ingestion_range.start,
+                    end=ingestion_range.end,
+                    label=f"{_iso(ingestion_range.start)} -> {_iso(ingestion_range.end)}",
+                )
+                range_validation = validate_query_time_range(request_json, validation_target)
+                if range_validation.status != "passed":
+                    message = range_validation.error or "Range validation failed."
+                    range_validation_errors.append(f"{parsed.path}: {message}")
+                    return
             query = (
                 request_json.get("query") if parsed.path.endswith("historical") else request_json
             )
@@ -169,6 +202,29 @@ class QuantumAnalyticsCaptureSession:
                     "source_timezone": query_range.timezone if query_range else "CST",
                     "capture_chunk_start": _iso(ingestion_range.start) if ingestion_range else None,
                     "capture_chunk_end": _iso(ingestion_range.end) if ingestion_range else None,
+                    "range_key": ingestion_range.range_key if ingestion_range else "custom",
+                    "range_start": _iso(ingestion_range.start) if ingestion_range else None,
+                    "range_end": _iso(ingestion_range.end) if ingestion_range else None,
+                    "range_timezone": ingestion_range.timezone if ingestion_range else "CST",
+                    "capture_mode": ingestion_range.capture_mode
+                    if ingestion_range
+                    else "range_contract",
+                    "requested_range_start": _iso(range_validation.requested_start)
+                    if range_validation
+                    else None,
+                    "requested_range_end": _iso(range_validation.requested_end)
+                    if range_validation
+                    else None,
+                    "extracted_range_start": _iso(range_validation.extracted_start)
+                    if range_validation and range_validation.extracted_start
+                    else None,
+                    "extracted_range_end": _iso(range_validation.extracted_end)
+                    if range_validation and range_validation.extracted_end
+                    else None,
+                    "range_validation_status": range_validation.status
+                    if range_validation
+                    else "not_applicable",
+                    "range_validation_error": range_validation.error if range_validation else None,
                     "time_rewrite_status": "rewritten" if ingestion_range else "original",
                 }
             )
@@ -180,6 +236,12 @@ class QuantumAnalyticsCaptureSession:
             page.wait_for_timeout(self.wait_seconds * 1000)
         finally:
             page.close()
+        if range_validation_errors:
+            unique_errors = list(dict.fromkeys(range_validation_errors))
+            raise RuntimeError(
+                "Quantum range validation failed before persisting raw calls: "
+                + " | ".join(unique_errors[:5])
+            )
         return rows
 
     def _is_quantum_analytics(self, url: str) -> bool:

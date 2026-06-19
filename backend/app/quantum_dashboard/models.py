@@ -131,6 +131,15 @@ class CardContract(BaseModel):
     country: str
     dashboard_id: str | None = None
     team_id: str | None = None
+    range_key: str = "today"
+    range_start: str | None = None
+    range_end: str | None = None
+    range_timezone: str | None = "CST"
+    period_label: str | None = None
+    capture_mode: str = "range_contract"
+    source_query_hash: str | None = None
+    source_response_hash: str | None = None
+    web_snapshot_hash: str | None = None
     tab: DashboardTab
     tab_name: str
     card_id: str
@@ -156,6 +165,14 @@ class WebSnapshot(BaseModel):
     country: str
     dashboard_id: str | None = None
     team_id: str | None = None
+    range_key: str = "today"
+    range_start: str | None = None
+    range_end: str | None = None
+    range_timezone: str | None = "CST"
+    period_label: str | None = None
+    source_query_hash: str | None = None
+    source_response_hash: str | None = None
+    web_snapshot_hash: str | None = None
     tab: DashboardTab
     card_role: VisualRole
     card_title: str
@@ -195,6 +212,7 @@ class RegressionCardResult(BaseModel):
     tab: DashboardTab
     card_role: VisualRole
     card_title: str
+    range_key: str = "today"
     web_value: float | str | None = None
     local_value: float | str | None = None
     status: RegressionStatus
@@ -205,6 +223,7 @@ class RegressionCardResult(BaseModel):
 class RegressionReport(BaseModel):
     ingestion_id: str | None = None
     country: str
+    range_key: str = "today"
     dashboard_id: str | None = None
     team_id: str | None = None
     tabs: list[DashboardTab]

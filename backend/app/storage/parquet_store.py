@@ -17,6 +17,7 @@ from backend.app.observability.sanitizer import sanitize
 from backend.app.quantum_dashboard.periods import parse_date, zoneinfo_for
 
 DEDUPLICATION_COLUMNS = (
+    "range_key",
     "source_endpoint",
     "dashboard_id",
     "card_id",
@@ -293,16 +294,24 @@ class ParquetStore:
         removed_history = self.delete_ingestion_history(country)
         return deleted or removed_history > 0
 
-    def export_countries(self, countries: list[str]) -> Path:
+    def export_countries(self, countries: list[str], *, target_dir: Path | None = None) -> Path:
         timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
         safe_countries = "_".join(sorted(countries)) or "all"
-        target = self.settings.exports_dir / f"quantum_export_{safe_countries}_{timestamp}.zip"
+        export_dir = target_dir or self.settings.qm_export_dir
+        export_dir.mkdir(parents=True, exist_ok=True)
+        target = export_dir / f"sds-quantum-metric-export-{safe_countries}-{timestamp}.zip"
         with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
             manifest = {
-                "schema_version": "1.2",
+                "schema_version": "1.3",
                 "created_at": datetime.now(UTC).isoformat(),
                 "countries": countries,
-                "includes": ["config/quantum_config.json", "data/parquet"],
+                "includes": [
+                    "manifest.json",
+                    "config/quantum_config.json",
+                    "parquet",
+                    "reports",
+                    "schemas",
+                ],
                 "checksum": "",
             }
             archive.writestr("manifest.json", json.dumps(manifest, indent=2))
@@ -320,7 +329,33 @@ class ParquetStore:
                     continue
                 for file in root.rglob("*.parquet"):
                     archive.write(file, file.relative_to(self.settings.qm_data_dir))
+            reports = self.settings.reports_dir
+            if reports.exists():
+                for file in reports.rglob("*"):
+                    if file.is_file():
+                        archive.write(file, file.relative_to(self.settings.qm_data_dir))
+            archive.writestr(
+                "schemas/export_contract.json",
+                json.dumps(
+                    {
+                        "schema_version": "1.3",
+                        "redaction_policy": "browser session material is excluded",
+                    },
+                    indent=2,
+                ),
+            )
+        self._write_latest_export(target)
         return target
+
+    def latest_export(self) -> dict[str, Any] | None:
+        path = self.settings.exports_dir / "latest_export.json"
+        if not path.exists():
+            return None
+        try:
+            payload = json.loads(path.read_text())
+        except json.JSONDecodeError:
+            return None
+        return payload if isinstance(payload, dict) else None
 
     def import_zip(self, zip_path: Path) -> dict[str, Any]:
         raw_rows_by_country: dict[str, list[dict[str, Any]]] = {}
@@ -628,6 +663,20 @@ class ParquetStore:
             if any(range_start <= start and range_end >= end for range_start, range_end in ranges):
                 covered.add(day)
         return covered
+
+    def _write_latest_export(self, path: Path) -> None:
+        self.settings.exports_dir.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "status": "exported",
+            "path": str(path),
+            "filename": path.name,
+            "size_bytes": path.stat().st_size if path.exists() else 0,
+            "created_at": datetime.now(UTC).isoformat(),
+        }
+        target = self.settings.exports_dir / "latest_export.json"
+        temporary = target.with_suffix(".tmp.json")
+        temporary.write_text(json.dumps(payload, indent=2))
+        temporary.replace(target)
 
 
 def hash_json(value: Any) -> str:

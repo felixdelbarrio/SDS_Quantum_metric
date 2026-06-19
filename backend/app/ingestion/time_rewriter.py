@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
 from backend.app.ingestion.planner import IngestionChunk
@@ -23,6 +23,16 @@ class RewriteResult:
     range: QueryTimeRange
 
 
+@dataclass(frozen=True)
+class RangeValidation:
+    status: str
+    requested_start: datetime
+    requested_end: datetime
+    extracted_start: datetime | None
+    extracted_end: datetime | None
+    error: str | None = None
+
+
 def rewrite_query_time_range(payload: dict[str, Any], target: IngestionChunk) -> RewriteResult:
     rewritten = deepcopy(payload)
     changed = _rewrite(rewritten, target)
@@ -32,6 +42,42 @@ def rewrite_query_time_range(payload: dict[str, Any], target: IngestionChunk) ->
         range=QueryTimeRange(
             start=target.start, end=target.end, timezone="CST", label=target.label
         ),
+    )
+
+
+def validate_query_time_range(payload: dict[str, Any], target: IngestionChunk) -> RangeValidation:
+    extracted = extract_query_time_range(payload)
+    if extracted is None:
+        return RangeValidation(
+            status="failed",
+            requested_start=target.start,
+            requested_end=target.end,
+            extracted_start=None,
+            extracted_end=None,
+            error="No time range could be extracted after rewrite.",
+        )
+    tolerance = timedelta(seconds=1)
+    if (
+        abs(_as_utc(extracted.start) - _as_utc(target.start)) > tolerance
+        or abs(_as_utc(extracted.end) - _as_utc(target.end)) > tolerance
+    ):
+        return RangeValidation(
+            status="failed",
+            requested_start=target.start,
+            requested_end=target.end,
+            extracted_start=extracted.start,
+            extracted_end=extracted.end,
+            error=(
+                "Rewritten request range does not match target "
+                f"{_iso(target.start)} -> {_iso(target.end)}."
+            ),
+        )
+    return RangeValidation(
+        status="passed",
+        requested_start=target.start,
+        requested_end=target.end,
+        extracted_start=extracted.start,
+        extracted_end=extracted.end,
     )
 
 
@@ -48,15 +94,16 @@ def _rewrite(value: Any, target: IngestionChunk) -> bool:
     changed = False
     if isinstance(value, dict):
         namespace = value.get("predicateFnNamespace")
-        path = value.get("path")
+        path = _predicate_path(value)
         if _is_session_ts_predicate(namespace, path):
             namespace_list = cast(list[Any], namespace)
             arguments = value.get("arguments")
             if isinstance(arguments, list) and arguments:
+                value_index = 1 if isinstance(arguments[0], dict) and len(arguments) > 1 else 0
                 if namespace_list[-1] == "gte":
-                    arguments[0] = _format_like(arguments[0], target.start)
+                    arguments[value_index] = _format_like(arguments[value_index], target.start)
                 elif namespace_list[-1] == "lt":
-                    arguments[0] = _format_like(arguments[0], target.end)
+                    arguments[value_index] = _format_like(arguments[value_index], target.end)
                 changed = True
         for key, child in list(value.items()):
             if key == "ts" and _is_window(child):
@@ -71,8 +118,11 @@ def _rewrite(value: Any, target: IngestionChunk) -> bool:
             elif key in {"endTs"}:
                 value[key] = _format_like(child, target.end)
                 changed = True
-            elif key in {"period", "periodCount"} and isinstance(child, str | int | float):
+            elif key == "period" and isinstance(child, str | int | float):
                 continue
+            elif key == "periodCount" and isinstance(child, str | int | float):
+                value[key] = max(1, (target.end.date() - target.start.date()).days + 1)
+                changed = True
             elif _rewrite(child, target):
                 changed = True
     elif isinstance(value, list):
@@ -100,11 +150,12 @@ def _extract(
         if base and end_ts:
             candidates.append((base, end_ts, _timezone_from_offset(value.get("utcOffset")), None))
         namespace = value.get("predicateFnNamespace")
-        path = value.get("path")
+        path = _predicate_path(value)
         if _is_session_ts_predicate(namespace, path):
             arguments = value.get("arguments")
             if isinstance(arguments, list) and arguments:
-                point = _parse_time(arguments[0])
+                value_index = 1 if isinstance(arguments[0], dict) and len(arguments) > 1 else 0
+                point = _parse_time(arguments[value_index])
                 if point:
                     candidates.append((point, point, None, None))
         for child in value.values():
@@ -131,6 +182,18 @@ def _is_session_ts_predicate(namespace: Any, path: Any) -> bool:
         and isinstance(path, list)
         and path[-2:] == ["session", "ts"]
     )
+
+
+def _predicate_path(value: dict[str, Any]) -> Any:
+    path = value.get("path")
+    if path is not None:
+        return path
+    arguments = value.get("arguments")
+    if isinstance(arguments, list) and arguments:
+        first = arguments[0]
+        if isinstance(first, dict):
+            return first.get("path")
+    return None
 
 
 def _is_window(value: Any) -> bool:
@@ -195,3 +258,7 @@ def _as_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
     return value.astimezone(UTC)
+
+
+def _iso(value: datetime) -> str:
+    return _as_utc(value).isoformat().replace("+00:00", "Z")

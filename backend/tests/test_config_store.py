@@ -77,6 +77,41 @@ def test_config_store_persists_ingestion_depth_and_theme(tmp_path: Path) -> None
     assert saved.ingestion_depth_days == 730
     assert loaded.ingestion_depth_days == 730
     assert loaded.theme_preference == "dark"
+    assert loaded.session_mode == "controlled"
+
+
+def test_config_store_migrates_persisted_browser_session_to_controlled(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(qm_data_dir=tmp_path)
+    store = QuantumConfigStore(settings)
+    store.path.parent.mkdir(parents=True, exist_ok=True)
+    store.path.write_text(
+        """
+{
+  "schema_version": 2,
+  "browser": "chrome",
+  "session_mode": "browser",
+  "country": "MX",
+  "countries": [
+    {
+      "country": "MX",
+      "base_url": "https://bbvamx.quantummetric.com",
+      "dashboard_id": "demo",
+      "team_id": "team",
+      "tab": 0,
+      "enabled": true
+    }
+  ],
+  "verify_tls": true
+}
+""".strip()
+    )
+
+    loaded = store.read()
+
+    assert loaded.session_mode == "controlled"
+    assert '"session_mode": "controlled"' in store.path.read_text()
 
 
 def test_config_store_persists_dashboards_widgets_and_schema_version(tmp_path: Path) -> None:

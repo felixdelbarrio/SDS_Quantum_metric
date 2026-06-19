@@ -85,20 +85,34 @@ class IngestionService:
         job.endpoint_current = "/analytics + /analytics/historical"
         config = self.config_store.read()
         try:
-            day_chunks = _chunks_for_requested_days(request.days)
-            if day_chunks:
+            explicit_range = _explicit_range_from_request(request)
+            day_chunks = [] if explicit_range else _chunks_for_requested_days(request.days)
+            if explicit_range:
+                ingestion_range = explicit_range
+            elif day_chunks:
                 ingestion_range = IngestionRange(
                     mode="backfill",
                     start=min(chunk.start for chunk in day_chunks),
                     end=max(chunk.end for chunk in day_chunks),
                     latest_source_end=None,
                     lookback_days=len(day_chunks),
+                    range_key=request.range_key or "custom",
+                    capture_mode="daily",
                 )
             else:
-                ingestion_range = build_ingestion_range(
+                legacy_range = build_ingestion_range(
                     self.parquet_store.latest_source_end(request.country.value),
                     depth_days=config.ingestion_depth_days,
                     incremental_reprocess_days=self.settings.quantum_incremental_reprocess_days,
+                )
+                ingestion_range = IngestionRange(
+                    mode=legacy_range.mode,
+                    start=legacy_range.start,
+                    end=legacy_range.end,
+                    latest_source_end=legacy_range.latest_source_end,
+                    lookback_days=legacy_range.lookback_days,
+                    range_key=request.range_key or "today",
+                    capture_mode="daily",
                 )
             country_config = config.required_country_config(request.country)
             dashboard = country_config.default_dashboard()
@@ -128,11 +142,17 @@ class IngestionService:
                 cookies = self.cookie_provider.from_manual_header(
                     manual_cookie, str(discovery.base_url)
                 )
+            elif config.session_mode == "controlled":
+                cookies = []
             else:
                 cookies = self.cookie_provider.load(config.browser.value, str(discovery.base_url))
             chunks = day_chunks or plan_ingestion_chunks(
                 ingestion_range,
-                chunk_days=self.settings.quantum_ingestion_chunk_days,
+                chunk_days=(
+                    max(1, self.settings.quantum_ingestion_chunk_days)
+                    if ingestion_range.capture_mode == "daily"
+                    else 3650
+                ),
             )
             covered_ranges = self.parquet_store.covered_source_ranges(request.country.value)
             chunks_to_capture = [
@@ -216,6 +236,9 @@ class IngestionService:
                     end=chunk.end,
                     latest_source_end=ingestion_range.latest_source_end,
                     lookback_days=ingestion_range.lookback_days,
+                    range_key=ingestion_range.range_key,
+                    timezone=ingestion_range.timezone,
+                    capture_mode=ingestion_range.capture_mode,
                 )
                 captured = await asyncio.to_thread(
                     capture_quantum_dashboard_cards,
@@ -229,9 +252,17 @@ class IngestionService:
                     errors_tab=discovery.errors_tab,
                     ingestion_id=job.ingestion_id,
                     ingestion_range=chunk_range,
+                    session_mode=config.session_mode.value,
                     progress_callback=progress_callback,
                 )
                 captured = _filter_enabled_rows(captured, enabled_roles)
+                if not captured:
+                    raise RuntimeError(
+                        "No Quantum analytics responses were captured for "
+                        f"{request.country.value} {chunk.label}. "
+                        "Check that the selected Quantum session is authenticated and "
+                        "that the dashboard emits /analytics responses for this range."
+                    )
                 chunk_rows = sum(int(row.get("row_count") or 0) for row in captured)
                 merge, build, report = _publish_completed_chunk(
                     self.parquet_store,
@@ -277,6 +308,7 @@ class IngestionService:
                     request.country.value,
                     ingestion_id=job.ingestion_id,
                     enabled_roles=enabled_roles,
+                    range_key=ingestion_range.range_key,
                 )
                 update_progress(job, status="running_regression", message="Ejecutando regresion.")
                 report = run_regression(
@@ -284,6 +316,7 @@ class IngestionService:
                     request.country.value,
                     ingestion_id=job.ingestion_id,
                     enabled_roles=enabled_roles,
+                    range_key=ingestion_range.range_key,
                 )
             elif build and report:
                 update_progress(
@@ -303,6 +336,7 @@ class IngestionService:
                     request.country.value,
                     ingestion_id=job.ingestion_id,
                     enabled_roles=enabled_roles,
+                    range_key=ingestion_range.range_key,
                 )
             if report is None:
                 report = run_regression(
@@ -310,6 +344,7 @@ class IngestionService:
                     request.country.value,
                     ingestion_id=job.ingestion_id,
                     enabled_roles=enabled_roles,
+                    range_key=ingestion_range.range_key,
                 )
             job.mandatory_cards_total = build.mandatory_cards
             job.mandatory_cards_captured = build.mandatory_cards_captured
@@ -389,6 +424,45 @@ def _chunks_for_requested_days(days: list[str]) -> list[IngestionChunk]:
     return chunks
 
 
+def _explicit_range_from_request(request: IngestionCreate) -> IngestionRange | None:
+    start_day = parse_date(request.start_date)
+    end_day = parse_date(request.end_date)
+    if start_day is None and end_day is None:
+        return None
+    start_day = start_day or end_day
+    end_day = end_day or start_day
+    if start_day is None or end_day is None:
+        return None
+    if end_day < start_day:
+        start_day, end_day = end_day, start_day
+    start, _ = _day_bounds(start_day)
+    _, end = _day_bounds(end_day)
+    return IngestionRange(
+        mode="backfill",
+        start=start,
+        end=end,
+        latest_source_end=None,
+        lookback_days=(end_day - start_day).days + 1,
+        range_key=request.range_key or "custom",
+        capture_mode="range_contract",
+    )
+
+
+def _today_range(range_key: str) -> IngestionRange:
+    zone = zoneinfo_for("CST")
+    today = datetime.now(zone).date()
+    start, end = _day_bounds(today)
+    return IngestionRange(
+        mode="incremental",
+        start=start,
+        end=end,
+        latest_source_end=None,
+        lookback_days=1,
+        range_key=range_key or "today",
+        capture_mode="range_contract",
+    )
+
+
 def _parse_requested_day(value: str) -> date | None:
     return parse_date(value)
 
@@ -408,13 +482,33 @@ def _publish_completed_chunk(
     rows: list[dict[str, Any]],
     ingestion_id: str,
     enabled_roles: set[str],
+    range_key: str | None = None,
 ) -> tuple[RawCallMergeResult | None, DerivedBuildResult, RegressionReport]:
+    resolved_range_key = range_key or _range_key_from_rows(rows)
     merge = store.merge_raw_calls(country, rows) if rows else None
     build = build_derived_datasets(
-        store, country, ingestion_id=ingestion_id, enabled_roles=enabled_roles
+        store,
+        country,
+        ingestion_id=ingestion_id,
+        enabled_roles=enabled_roles,
+        range_key=resolved_range_key,
     )
-    report = run_regression(store, country, ingestion_id=ingestion_id, enabled_roles=enabled_roles)
+    report = run_regression(
+        store,
+        country,
+        ingestion_id=ingestion_id,
+        enabled_roles=enabled_roles,
+        range_key=resolved_range_key,
+    )
     return merge, build, report
+
+
+def _range_key_from_rows(rows: list[dict[str, Any]]) -> str:
+    for row in rows:
+        value = str(row.get("range_key") or "").strip()
+        if value:
+            return value
+    return "today"
 
 
 def _set_chunk_status(job: IngestionJob, index: int, status: str) -> None:

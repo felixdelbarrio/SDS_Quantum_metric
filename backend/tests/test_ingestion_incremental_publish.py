@@ -113,6 +113,60 @@ async def test_ingestion_publishes_dashboard_after_each_completed_chunk(
     assert job.progress_percent == 100
 
 
+@pytest.mark.asyncio
+async def test_ingestion_fails_when_capture_returns_no_analytics_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = Settings(qm_data_dir=tmp_path)
+    store = ParquetStore(settings)
+    service = IngestionService(
+        settings,
+        _ConfigStore(settings),
+        store,
+        cast(BrowserCookieProvider, _CookieProvider()),
+    )
+    now = datetime(2026, 6, 17, tzinfo=UTC)
+    chunk = IngestionChunk(now - timedelta(days=1), now, "2026-06-16 -> 2026-06-17")
+
+    monkeypatch.setattr(
+        "backend.app.ingestion.service.build_ingestion_range",
+        lambda *args, **kwargs: IngestionRange("backfill", chunk.start, chunk.end, None, 1),
+    )
+    monkeypatch.setattr(
+        "backend.app.ingestion.service.plan_ingestion_chunks", lambda *args, **kwargs: [chunk]
+    )
+    monkeypatch.setattr(
+        "backend.app.ingestion.service.discover_dashboard_from_config",
+        lambda **kwargs: DashboardDiscoveryResult(
+            country="MX",
+            base_url="https://bbvamx.quantummetric.com",
+            dashboard_id="dash",
+            team_id="team",
+            summary_tab=0,
+            errors_tab=1,
+            tabs=[],
+            source="env",
+            message="ok",
+        ),
+    )
+    monkeypatch.setattr(
+        "backend.app.ingestion.service.capture_quantum_dashboard_cards", lambda **kwargs: []
+    )
+
+    job = IngestionJob(
+        ingestion_id="ingestion-id",
+        country="MX",
+        status="pending",
+        started_at=now,
+    )
+
+    await service._run(job, IngestionCreate(country=Country.MX))
+
+    assert job.status == "failed"
+    assert any("No Quantum analytics responses" in error for error in job.errors)
+    assert job.calls_captured == 0
+
+
 class _ConfigStore(QuantumConfigStore):
     def read(self) -> QuantumConfig:
         return self.default()

@@ -24,11 +24,13 @@ type MockOptions = {
 };
 
 const requests: string[] = [];
+const postBodies: unknown[] = [];
 
 describe("HomePage local dashboard", () => {
   beforeEach(() => {
     localStorage.clear();
     requests.length = 0;
+    postBodies.length = 0;
     useAppStore.setState({
       activeCountry: "MX",
       hasCountryPreference: false,
@@ -133,14 +135,47 @@ describe("HomePage local dashboard", () => {
       ),
     ).toBeInTheDocument();
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "Ingestar dias faltantes" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Actualizar hoy" }));
 
     await waitFor(() => {
       expect(
         requests.some(
           (request) => request === "POST /api/ingestions/missing-days",
+        ),
+      ).toBe(true);
+    });
+    expect(postBodies[0]).toMatchObject({
+      range_key: "today",
+      start_date: todayInMexico(),
+      end_date: todayInMexico(),
+    });
+  });
+
+  it("solicita Yesterday y Last 7 Days con range_key explicito", async () => {
+    mockFetch();
+    renderHome();
+    const selector = await screen.findByLabelText("Fecha");
+
+    fireEvent.change(selector, { target: { value: "yesterday" } });
+
+    await waitFor(() => {
+      expect(
+        requests.some(
+          (request) =>
+            request.includes("/local-dashboard/summary") &&
+            request.includes("range_key=yesterday"),
+        ),
+      ).toBe(true);
+    });
+
+    fireEvent.change(selector, { target: { value: "last_7_days" } });
+
+    await waitFor(() => {
+      expect(
+        requests.some(
+          (request) =>
+            request.includes("/local-dashboard/summary") &&
+            request.includes("range_key=last_7_days"),
         ),
       ).toBe(true);
     });
@@ -303,6 +338,9 @@ function mockFetch(options: MockOptions = {}) {
           ? `${url.pathname}${url.search}`
           : `${method} ${url.pathname}`,
       );
+      if (method !== "GET" && init?.body) {
+        postBodies.push(JSON.parse(String(init.body)));
+      }
       const payload = responseFor(url, options);
       return new Response(JSON.stringify(payload), {
         status: 200,

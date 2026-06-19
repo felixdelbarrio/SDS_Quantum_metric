@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CheckCircle2,
   Database,
+  FolderDown,
   Globe2,
   LayoutDashboard,
   Monitor,
@@ -59,12 +60,13 @@ type QuantumWidgetConfig = {
 type QuantumConfig = {
   schema_version?: number;
   browser: "chrome" | "edge" | "safari" | "firefox";
-  session_mode: "browser" | "manual";
+  session_mode: "controlled" | "browser" | "manual";
   country: CountryCode;
   countries: QuantumCountryConfig[];
   verify_tls: boolean;
   ingestion_depth_days: number;
   theme_preference: ThemePreference;
+  export_path: string;
 };
 
 export function QuantumPage() {
@@ -350,7 +352,9 @@ export function QuantumPage() {
                   )
                 }
               >
-                <option value="browser">Browser</option>
+                <option value="controlled">
+                  Sesion controlada de la aplicacion
+                </option>
                 <option value="manual">Manual</option>
               </select>
             </label>
@@ -389,6 +393,25 @@ export function QuantumPage() {
               <small>dias</small>
             </label>
           </div>
+        </section>
+
+        <section className="config-panel config-export-panel">
+          <div className="section-heading compact">
+            <h2 className="heading-with-icon">
+              <FolderDown size={18} aria-hidden="true" />
+              Ruta de exportaciones
+            </h2>
+          </div>
+          <label className="field config-field-card">
+            <FolderDown size={18} aria-hidden="true" />
+            <span>Descargas</span>
+            <input
+              value={current.export_path}
+              placeholder="~/Downloads"
+              onChange={(event) => update("export_path", event.target.value)}
+            />
+            <small>Se usa solo al exportar.</small>
+          </label>
         </section>
 
         <section className="config-panel config-country-panel">
@@ -854,7 +877,7 @@ function normalizeConfig(config: QuantumConfig): QuantumConfig {
   const countries = (config.countries ?? []).map(normalizeCountryConfig);
   return {
     browser: config.browser ?? "chrome",
-    session_mode: config.session_mode ?? "browser",
+    session_mode: config.session_mode ?? "controlled",
     country: countries.some((row) => row.country === config.country)
       ? config.country
       : (countries[0]?.country ?? "MX"),
@@ -864,6 +887,7 @@ function normalizeConfig(config: QuantumConfig): QuantumConfig {
       ? config.ingestion_depth_days
       : 30,
     theme_preference: config.theme_preference ?? "system",
+    export_path: config.export_path || "~/Downloads",
     schema_version: config.schema_version,
   };
 }

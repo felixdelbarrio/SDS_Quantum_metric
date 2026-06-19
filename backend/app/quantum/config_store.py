@@ -32,12 +32,13 @@ class QuantumConfigStore:
         )
         return QuantumConfig(
             browser=BrowserName(self.settings.qm_browser),
-            session_mode=SessionMode(self.settings.qm_session_mode),
+            session_mode=SessionMode(_safe_default_session_mode(self.settings.qm_session_mode)),
             country=Country(self.settings.qm_country),
             countries=self._countries_from_settings(),
             verify_tls=self.settings.qm_verify_tls,
             ingestion_depth_days=self.settings.quantum_ingestion_depth_days,
             theme_preference=theme_preference,
+            export_path=str(self.settings.qm_export_dir),
         )
 
     def read(self) -> QuantumConfig:
@@ -45,13 +46,17 @@ class QuantumConfigStore:
         if not path.exists():
             return self.default()
         data = json.loads(path.read_text())
-        config = QuantumConfig.model_validate(data)
+        config = _harden_browser_session_mode(QuantumConfig.model_validate(data))
         if path == self.legacy_path and not self.path.exists():
+            self._write_json(config)
+        elif data.get("session_mode") == SessionMode.browser.value:
             self._write_json(config)
         return config
 
     def write(self, update: QuantumConfigUpdate) -> QuantumConfig:
-        config = QuantumConfig.model_validate(update.model_dump(exclude={"manual_cookie"}))
+        config = _harden_browser_session_mode(
+            QuantumConfig.model_validate(update.model_dump(exclude={"manual_cookie"}))
+        )
         self._write_json(config)
         self._sync_env(config)
         return config
@@ -126,6 +131,7 @@ class QuantumConfigStore:
             "QM_VERIFY_TLS": "true" if config.verify_tls else "false",
             "QUANTUM_INGESTION_DEPTH_DAYS": str(config.ingestion_depth_days),
             "QUANTUM_THEME_PREFERENCE": config.theme_preference,
+            "QM_EXPORT_DIR": config.export_path,
             "QM_DASHBOARD_ID": dashboard.dashboard_id if dashboard else selected.dashboard_id,
             "QM_TEAM_ID": dashboard.team_id if dashboard else selected.team_id,
             "QM_DASHBOARD_TAB": str(dashboard.summary_tab if dashboard else selected.tab),
@@ -166,3 +172,13 @@ class QuantumConfigStore:
 
 def ensure_parent(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+
+
+def _safe_default_session_mode(value: str) -> str:
+    return "controlled" if value == "browser" else value
+
+
+def _harden_browser_session_mode(config: QuantumConfig) -> QuantumConfig:
+    if config.session_mode == SessionMode.browser:
+        return config.model_copy(update={"session_mode": SessionMode.controlled})
+    return config

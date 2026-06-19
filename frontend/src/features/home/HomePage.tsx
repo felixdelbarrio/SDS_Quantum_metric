@@ -98,6 +98,7 @@ export function HomePage() {
         segment,
         startDate: dateRange.startDate,
         endDate: dateRange.endDate,
+        rangeKey: dateRange.preset,
       }),
     enabled: hasDashboardData,
   });
@@ -137,6 +138,7 @@ export function HomePage() {
         segment,
         startDate: dateRange.startDate,
         endDate: dateRange.endDate,
+        rangeKey: dateRange.preset,
       }),
     enabled: activeTab === "errors" && hasDashboardData,
   });
@@ -155,7 +157,11 @@ export function HomePage() {
 
   const missingDaysMutation = useMutation({
     mutationFn: () =>
-      ingestMissingDays(selectedCountry, coverage.data?.missing_days ?? []),
+      ingestMissingDays(selectedCountry, coverage.data?.missing_days ?? [], {
+        rangeKey: dateRange.preset,
+        startDate: dateRange.startDate,
+        endDate: dateRange.endDate,
+      }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       void queryClient.invalidateQueries({ queryKey: ["ingestions"] });

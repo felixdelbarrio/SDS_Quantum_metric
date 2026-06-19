@@ -9,12 +9,23 @@ python -m backend.app.quantum_dashboard.regression --country MX
 
 Tambien puede ejecutarse desde Datasets con `Ejecutar regresion`.
 
+Para rangos no Today:
+
+```bash
+python -m backend.app.quantum_dashboard.regression --country MX --range-key yesterday
+python -m backend.app.quantum_dashboard.regression --country MX --range-key last_7_days
+```
+
 ## Reportes
 
 - `docs/regression/latest-web-vs-local.md`
 - `docs/regression/latest-web-vs-local.json`
+- `docs/regression/today-web-vs-local.md`
+- `docs/regression/yesterday-web-vs-local.md`
+- `docs/regression/last-7-days-web-vs-local.md`
 - `data/parquet/country={country}/regression/web_vs_local_results/`
 - `data/parquet/country={country}/regression/discrepancies/`
+- `data/parquet/country={country}/range_key={range}/regression/...`
 
 ## Interpretacion
 
@@ -25,6 +36,7 @@ La regresion falla si:
 - falta `chart_payload` en una card grafica;
 - falta etiqueta de periodo en `chart_payload`;
 - el rango temporal local no coincide con el rango capturado de Quantum Web;
+- el `range_key` de los raw calls no coincide con el rango consultado;
 - faltan ejes, leyenda, series o puntos;
 - una tabla pierde hijos expandibles;
 - valores principales difieren por encima de tolerancia.

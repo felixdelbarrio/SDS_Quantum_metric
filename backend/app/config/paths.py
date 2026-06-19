@@ -27,6 +27,10 @@ def default_user_log_dir() -> Path:
     return Path(user_log_dir(APP_NAME, APP_AUTHOR))
 
 
+def default_downloads_dir() -> Path:
+    return Path.home() / "Downloads"
+
+
 def frontend_dist_path() -> Path:
     candidates = [
         app_bundle_root() / "frontend" / "dist",
