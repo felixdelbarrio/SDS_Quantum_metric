@@ -125,6 +125,65 @@ def test_regression_passes_and_writes_report(tmp_path: Path) -> None:
     assert (store.settings.reports_dir / "regression/latest-web-vs-local.md").exists()
 
 
+def test_builder_uses_capture_chunk_range_when_source_range_is_missing(
+    tmp_path: Path,
+) -> None:
+    store = ParquetStore(Settings(qm_data_dir=tmp_path))
+    rows = [
+        {
+            **row,
+            "source_ts_start": None,
+            "source_ts_end": None,
+            "capture_chunk_start": "2026-06-18T06:00:00Z",
+            "capture_chunk_end": "2026-06-19T05:59:59Z",
+        }
+        for row in _fixture_rows()
+    ]
+    store.merge_raw_calls("MX", rows)
+
+    result = build_derived_datasets(store, "MX")
+
+    assert not [
+        error
+        for error in result.parser_errors
+        if error["error_code"] == "failed_period_label_mismatch"
+    ]
+    chart_payloads = store.read_country_dataset("MX", "derived/chart_payloads")
+    assert chart_payloads
+    assert all(row["period_label"] for row in chart_payloads)
+
+
+def test_regression_allows_parent_only_summary_table_when_web_has_no_children(
+    tmp_path: Path,
+) -> None:
+    store = _store_with_fixtures(tmp_path)
+    build_derived_datasets(store, "MX")
+    summary_rows = store.read_country_dataset("MX", "derived/summary_detail_table")
+    parent_rows = [row for row in summary_rows if not row.get("parent_row_id")]
+    snapshots = []
+    for snapshot in store.read_country_dataset("MX", "web_snapshots"):
+        if snapshot.get("card_role") == "summary.detail_by_app_name_os":
+            snapshot = {
+                **snapshot,
+                "visible_table_rows": parent_rows[:10],
+            }
+        snapshots.append(snapshot)
+    store.write_country_dataset("MX", "derived/summary_detail_table", parent_rows)
+    store.write_country_dataset(
+        "MX",
+        "web_snapshots",
+        snapshots,
+        file_name="web_snapshots.parquet",
+    )
+
+    report = run_regression(store, "MX")
+
+    detail = next(
+        card for card in report.cards if card.card_role == "summary.detail_by_app_name_os"
+    )
+    assert detail.status == "passed"
+
+
 def test_regression_fails_when_mandatory_card_is_missing(tmp_path: Path) -> None:
     store = ParquetStore(Settings(qm_data_dir=tmp_path))
     rows = [row for row in _fixture_rows() if row["card_role"] != "errors.top_errors_by_error_name"]

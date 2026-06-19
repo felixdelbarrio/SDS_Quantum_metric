@@ -46,6 +46,32 @@ describe("QuantumPage configuration", () => {
     ).toBeInTheDocument();
     expect(screen.getAllByText("Default del pais")).toHaveLength(2);
   });
+
+  it("renderiza configuracion legacy sin dashboards sin pantalla en blanco", async () => {
+    mockFetch({
+      browser: "chrome",
+      session_mode: "browser",
+      country: "MX",
+      countries: [
+        {
+          country: "MX",
+          base_url: "https://bbvamx.quantummetric.com",
+          enabled: true,
+          dashboard_resolved: true,
+        },
+      ],
+      verify_tls: true,
+      ingestion_depth_days: 7,
+      theme_preference: "light",
+    });
+    renderConfig();
+
+    expect(await screen.findByText("Quantum")).toBeInTheDocument();
+    expect((await screen.findAllByText("Mexico")).length).toBeGreaterThan(0);
+    expect(
+      await screen.findByText(/Ejecuta Test pais o anade un dashboard manual/i),
+    ).toBeInTheDocument();
+  });
 });
 
 function renderConfig() {
@@ -59,54 +85,58 @@ function renderConfig() {
   );
 }
 
-function mockFetch() {
+function mockFetch(body: unknown = defaultQuantumConfig()) {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
     if (url.endsWith("/api/config/quantum")) {
-      return json({
-        browser: "chrome",
-        session_mode: "browser",
+      return json(body);
+    }
+    return json({});
+  });
+}
+
+function defaultQuantumConfig() {
+  return {
+    browser: "chrome",
+    session_mode: "browser",
+    country: "MX",
+    countries: [
+      {
         country: "MX",
-        countries: [
+        base_url: "https://bbvamx.quantummetric.com",
+        enabled: true,
+        is_default: true,
+        dashboard_resolved: true,
+        dashboards: [
           {
-            country: "MX",
-            base_url: "https://bbvamx.quantummetric.com",
-            enabled: true,
+            dashboard_id: "dash-default",
+            name: "Dashboard default",
+            dashboard_type: "Quantum dashboard",
+            team_id: "team",
+            summary_tab: 0,
+            errors_tab: 1,
             is_default: true,
-            dashboard_resolved: true,
-            dashboards: [
+            is_manual: false,
+            validated: true,
+            validation_status: "ok",
+            widgets: [
               {
-                dashboard_id: "dash-default",
-                name: "Dashboard default",
-                dashboard_type: "Quantum dashboard",
-                team_id: "team",
-                summary_tab: 0,
-                errors_tab: 1,
-                is_default: true,
-                is_manual: false,
-                validated: true,
-                validation_status: "ok",
-                widgets: [
-                  {
-                    role: "summary.page_views",
-                    title: "Paginas vistas",
-                    widget_id: "card-page-views",
-                    widget_type: "CHART",
-                    tab: "summary",
-                    enabled: true,
-                  },
-                ],
+                role: "summary.page_views",
+                title: "Paginas vistas",
+                widget_id: "card-page-views",
+                widget_type: "CHART",
+                tab: "summary",
+                enabled: true,
               },
             ],
           },
         ],
-        verify_tls: true,
-        ingestion_depth_days: 30,
-        theme_preference: "dark",
-      });
-    }
-    return json({});
-  });
+      },
+    ],
+    verify_tls: true,
+    ingestion_depth_days: 30,
+    theme_preference: "dark",
+  };
 }
 
 function json(body: unknown) {

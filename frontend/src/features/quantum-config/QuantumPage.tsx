@@ -73,7 +73,8 @@ export function QuantumPage() {
   const setThemePreference = useAppStore((state) => state.setThemePreference);
   const config = useQuery({
     queryKey: ["quantum-config"],
-    queryFn: () => apiGet<QuantumConfig>("/config/quantum"),
+    queryFn: async () =>
+      normalizeConfig(await apiGet<QuantumConfig>("/config/quantum")),
   });
   const [form, setForm] = useState<QuantumConfig | null>(null);
   const [manualCookie, setManualCookie] = useState("");
@@ -207,7 +208,7 @@ export function QuantumPage() {
       return {
         ...countryRow,
         dashboards: normalizeDashboards([
-          ...countryRow.dashboards,
+          ...(countryRow.dashboards ?? []),
           emptyDashboardConfig(),
         ]),
       };
@@ -826,7 +827,7 @@ function widget(
 }
 
 function normalizeDashboards(
-  dashboards: QuantumDashboardConfig[],
+  dashboards: QuantumDashboardConfig[] = [],
 ): QuantumDashboardConfig[] {
   if (!dashboards.length) return dashboards;
   const defaultIndex = dashboards.findIndex(
@@ -836,8 +837,69 @@ function normalizeDashboards(
   return dashboards.map((dashboard, index) => ({
     ...dashboard,
     is_default: index === resolvedDefault,
-    widgets: dashboard.widgets.length
+    widgets: dashboard.widgets?.length
       ? dashboard.widgets
       : defaultWidgetConfig(),
   }));
+}
+
+type LegacyCountryConfig = Partial<QuantumCountryConfig> & {
+  country: CountryCode;
+  dashboard_id?: string;
+  team_id?: string;
+  tab?: number;
+};
+
+function normalizeConfig(config: QuantumConfig): QuantumConfig {
+  const countries = (config.countries ?? []).map(normalizeCountryConfig);
+  return {
+    browser: config.browser ?? "chrome",
+    session_mode: config.session_mode ?? "browser",
+    country: countries.some((row) => row.country === config.country)
+      ? config.country
+      : (countries[0]?.country ?? "MX"),
+    countries,
+    verify_tls: config.verify_tls ?? true,
+    ingestion_depth_days: Number.isInteger(config.ingestion_depth_days)
+      ? config.ingestion_depth_days
+      : 30,
+    theme_preference: config.theme_preference ?? "system",
+    schema_version: config.schema_version,
+  };
+}
+
+function normalizeCountryConfig(
+  row: LegacyCountryConfig,
+): QuantumCountryConfig {
+  return {
+    country: row.country,
+    base_url: row.base_url ?? "",
+    enabled: row.enabled ?? true,
+    is_default: row.is_default ?? false,
+    dashboard_resolved: row.dashboard_resolved ?? Boolean(row.dashboard_id),
+    dashboards: normalizeDashboards(
+      row.dashboards?.length ? row.dashboards : legacyDashboardConfig(row),
+    ),
+  };
+}
+
+function legacyDashboardConfig(
+  row: LegacyCountryConfig,
+): QuantumDashboardConfig[] {
+  if (!row.dashboard_id) return [];
+  return [
+    {
+      dashboard_id: row.dashboard_id,
+      name: "Dashboard default",
+      dashboard_type: "Quantum dashboard",
+      team_id: row.team_id ?? "",
+      summary_tab: row.tab ?? 0,
+      errors_tab: 1,
+      is_default: true,
+      is_manual: false,
+      validated: true,
+      validation_status: "ok",
+      widgets: defaultWidgetConfig(),
+    },
+  ];
 }
