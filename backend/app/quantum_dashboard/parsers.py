@@ -306,7 +306,6 @@ def _parse_error_percentage(role: VisualRole, response_json: dict[str, Any]) -> 
             parsed["app_name"] = parsed["name"]
         if parsed["error_session_percent"] is not None:
             rows.append(parsed)
-    rows.sort(key=lambda item: _sort_number(item.get("error_session_percent")), reverse=True)
     if not rows:
         return _error(role, "row_shape_unknown", "Error percentage table has no parseable rows.")
     return ParserResult(
@@ -639,10 +638,12 @@ def build_line_chart_payload_from_series(
     desktop_points: list[dict[str, Any]],
     response_json: dict[str, Any] | None = None,
     aggregate_daily: bool = False,
+    period_end: str | datetime | None = None,
 ) -> dict[str, Any] | None:
     point_builder = _visual_timeseries_points if aggregate_daily else _captured_timeseries_points
-    mobile_visual_points = point_builder(mobile_points, unit)
-    desktop_visual_points = point_builder(desktop_points, unit)
+    parsed_period_end = parse_datetime(period_end, timezone="CST") if aggregate_daily else None
+    mobile_visual_points = point_builder(mobile_points, unit, period_end=parsed_period_end)
+    desktop_visual_points = point_builder(desktop_points, unit, period_end=parsed_period_end)
     all_points = [*mobile_visual_points, *desktop_visual_points]
     if not all_points:
         return None
@@ -787,10 +788,13 @@ def _bands(response_json: dict[str, Any]) -> list[dict[str, Any]]:
 def _visual_timeseries_points(
     points: list[dict[str, Any]],
     unit: str,
+    *,
+    period_end: datetime | None = None,
 ) -> list[dict[str, Any]]:
     buckets: dict[str, list[float]] = {}
     bucket_ts: dict[str, str] = {}
     zone = zoneinfo_for("CST")
+    partial_final_day = _partial_final_day(period_end, zone)
     for point in points:
         parsed = parse_datetime(point.get("ts"), timezone="CST")
         value = _to_number(point.get("value"))
@@ -800,6 +804,8 @@ def _visual_timeseries_points(
             value *= 100
         local = parsed.astimezone(zone)
         key = local.date().isoformat()
+        if key == partial_final_day:
+            continue
         bucket_start = datetime.combine(local.date(), datetime.min.time(), tzinfo=zone)
         bucket_ts[key] = bucket_start.astimezone(UTC).isoformat().replace("+00:00", "Z")
         buckets.setdefault(key, []).append(value)
@@ -827,10 +833,22 @@ def _visual_timeseries_points(
     return visual_points
 
 
+def _partial_final_day(period_end: datetime | None, zone: Any) -> str | None:
+    if period_end is None:
+        return None
+    local_end = period_end.astimezone(zone)
+    if local_end.hour == 23 and local_end.minute == 59:
+        return None
+    return local_end.date().isoformat()
+
+
 def _captured_timeseries_points(
     points: list[dict[str, Any]],
     unit: str,
+    *,
+    period_end: datetime | None = None,
 ) -> list[dict[str, Any]]:
+    del period_end
     parsed_points: list[tuple[datetime, dict[str, Any]]] = []
     zone = zoneinfo_for("CST")
     for point in points:

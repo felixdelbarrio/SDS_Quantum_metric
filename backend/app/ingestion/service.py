@@ -441,6 +441,8 @@ def _chunks_for_requested_days(days: list[str]) -> list[IngestionChunk]:
 
 
 def _explicit_range_from_request(request: IngestionCreate) -> IngestionRange | None:
+    zone = zoneinfo_for("CST")
+    today = datetime.now(zone).date()
     start_day = parse_date(request.start_date)
     end_day = parse_date(request.end_date)
     if start_day is None and end_day is None:
@@ -453,6 +455,10 @@ def _explicit_range_from_request(request: IngestionCreate) -> IngestionRange | N
         start_day, end_day = end_day, start_day
     start, _ = _day_bounds(start_day)
     _, end = _day_bounds(end_day)
+    if end_day >= today:
+        end = min(end, _quantum_relative_range_end())
+    if end < start:
+        end = start
     return IngestionRange(
         mode="backfill",
         start=start,
@@ -464,21 +470,28 @@ def _explicit_range_from_request(request: IngestionCreate) -> IngestionRange | N
     )
 
 
-def _preset_range(range_key: str | None) -> IngestionRange | None:
+def _preset_range(range_key: str | None, *, now: datetime | None = None) -> IngestionRange | None:
     key = (range_key or "last_7_days").strip().lower()
     zone = zoneinfo_for("CST")
-    today = datetime.now(zone).date()
+    today = (now.astimezone(zone) if now else datetime.now(zone)).date()
     if key == "today":
         start_day = end_day = today
+        dynamic_end = True
     elif key == "yesterday":
         start_day = end_day = today - timedelta(days=1)
+        dynamic_end = False
     elif key == "last_7_days":
         start_day = today - timedelta(days=6)
         end_day = today
+        dynamic_end = True
     else:
         return None
     start, _ = _day_bounds(start_day)
     _, end = _day_bounds(end_day)
+    if dynamic_end:
+        end = min(end, _quantum_relative_range_end(now))
+    if end < start:
+        end = start
     return IngestionRange(
         mode="backfill",
         start=start,
@@ -488,6 +501,13 @@ def _preset_range(range_key: str | None) -> IngestionRange | None:
         range_key=key,
         capture_mode="range_contract",
     )
+
+
+def _quantum_relative_range_end(now: datetime | None = None) -> datetime:
+    zone = zoneinfo_for("CST")
+    local_now = now.astimezone(zone) if now else datetime.now(zone)
+    current_hour_start = local_now.replace(minute=0, second=0, microsecond=0)
+    return (current_hour_start - timedelta(hours=1, seconds=1)).astimezone(UTC)
 
 
 def _parse_requested_day(value: str) -> date | None:

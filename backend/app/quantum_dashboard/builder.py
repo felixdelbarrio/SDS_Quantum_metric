@@ -306,6 +306,15 @@ def _with_related_timeseries(
             widget["total"] = total
     base_timeseries = _parsed_timeseries(related_calls.base_timeseries, role)
     comparison_timeseries = _parsed_timeseries(related_calls.comparison_timeseries, role)
+    period_call = (
+        related_calls.comparison_timeseries
+        or related_calls.base_timeseries
+        or related_calls.comparison_total_metric
+        or related_calls.base_total_metric
+        or related_calls.comparison_metric
+        or related_calls.base_metric
+    )
+    period = _period_from_call(period_call or {})
     if base_timeseries or comparison_timeseries:
         chart_payload = build_line_chart_payload_from_series(
             role=role,
@@ -319,19 +328,11 @@ def _with_related_timeseries(
                 )
             ),
             aggregate_daily=range_key == "last_7_days",
+            period_end=period.get("end") if period else None,
         )
         if isinstance(chart_payload, dict):
             widget["chart_payload"] = chart_payload
             widget["timeseries"] = _flatten_chart_series(chart_payload)
-    period_call = (
-        related_calls.comparison_timeseries
-        or related_calls.base_timeseries
-        or related_calls.comparison_total_metric
-        or related_calls.base_total_metric
-        or related_calls.comparison_metric
-        or related_calls.base_metric
-    )
-    period = _period_from_call(period_call or {})
     if period:
         widget["period"] = period
     payload = widget.get("chart_payload")
