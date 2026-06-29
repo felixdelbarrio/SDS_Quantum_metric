@@ -10,6 +10,7 @@ import polars as pl
 from backend.app.analytics.models import TableColumn
 from backend.app.analytics.normalizer import humanize_key
 from backend.app.analytics.segments import parse_segment
+from backend.app.observability.sanitizer import sanitize_error
 from backend.app.quantum.config_store import QuantumConfigStore
 from backend.app.quantum.schemas import COUNTRY_LABELS, COUNTRY_ORDER, Country
 from backend.app.quantum_dashboard.builder import (
@@ -21,12 +22,13 @@ from backend.app.quantum_dashboard.builder import (
     DATASET_SUMMARY_TABLE,
     DATASET_SUMMARY_WIDGETS,
     DATASET_VISUAL_CONTRACTS,
+    build_derived_datasets,
     range_dataset_path,
 )
 from backend.app.quantum_dashboard.catalog import MANDATORY_CARDS, required_roles
 from backend.app.quantum_dashboard.models import DashboardTab
 from backend.app.quantum_dashboard.periods import format_period_label, parse_datetime
-from backend.app.quantum_dashboard.regression import REGRESSION_REPORT_PATH
+from backend.app.quantum_dashboard.regression import REGRESSION_REPORT_PATH, run_regression
 from backend.app.storage.parquet_store import ParquetStore
 
 SUMMARY_COLUMNS = [
@@ -93,17 +95,19 @@ class LocalDashboardService:
         return {"countries": countries, "default_country": first_ready or configured}
 
     def status(self, country: str, *, range_key: str = "today") -> dict[str, Any]:
-        raw_calls = self._raw_calls(country)
+        enabled_roles = self._enabled_roles(country)
+        repair_error = self._ensure_range_contract(country, range_key, enabled_roles)
+        all_raw_calls = self._raw_calls(country)
+        raw_calls = self._raw_calls_for_range(country, range_key)
         contracts = self._read_dataset(country, DATASET_VISUAL_CONTRACTS, range_key)
         contract_roles = {str(row.get("visual_role")) for row in contracts}
-        enabled_roles = self._enabled_roles(country)
         contract_roles = {role for role in contract_roles if role in enabled_roles}
         regression = self._latest_regression(country, range_key)
-        summary_ready = self._tab_ready("summary", contract_roles) and (
+        summary_ready = self._tab_ready("summary", contract_roles, enabled_roles) and (
             self._dataset_exists(country, DATASET_SUMMARY_WIDGETS, range_key)
             and self._dataset_exists(country, DATASET_SUMMARY_TABLE, range_key)
         )
-        errors_ready = self._tab_ready("errors", contract_roles) and (
+        errors_ready = self._tab_ready("errors", contract_roles, enabled_roles) and (
             self._dataset_exists(country, DATASET_ERRORS_WIDGETS, range_key)
             and self._dataset_exists(country, DATASET_ERRORS_TOP_ERRORS, range_key)
             and self._dataset_exists(country, DATASET_ERRORS_APP_NAME, range_key)
@@ -122,12 +126,17 @@ class LocalDashboardService:
         elif raw_calls and not (summary_ready and errors_ready):
             reason = (
                 "Datos raw disponibles, pero no existe dataset analitico derivado completo. "
-                "Ejecuta regenerar derivados o una nueva ingesta."
+                "La reconstruccion automatica no pudo dejarlo listo."
             )
+        elif all_raw_calls and not contracts:
+            reason = "No hay ingesta local para el rango seleccionado."
+        if repair_error:
+            reason = f"No se pudo completar la reparacion automatica: {repair_error}"
+        mandatory_roles = [role for role in required_roles() if role in enabled_roles]
         return {
             "country": country,
             "range_key": range_key,
-            "has_data": bool(raw_calls or contracts),
+            "has_data": bool(all_raw_calls or contracts),
             "last_ingestion_id": self._last_ingestion(country, "ingestion_id"),
             "last_ingestion_at": self._last_ingestion(country, "started_at"),
             "regression_status": regression.get("status") or "failed_missing_card",
@@ -136,8 +145,8 @@ class LocalDashboardService:
             "rows": sum(int(row.get("row_count") or 0) for row in raw_calls),
             "cards": len(contract_roles),
             "captured_cards": len(contract_roles),
-            "mandatory_cards": len([role for role in required_roles() if role in enabled_roles]),
-            "mandatory_cards_captured": len(required_roles()) - len(missing_roles),
+            "mandatory_cards": len(mandatory_roles),
+            "mandatory_cards_captured": len(mandatory_roles) - len(missing_roles),
             "summary_ready": summary_ready,
             "errors_ready": errors_ready,
             "derived_datasets": self._derived_dataset_count(country, range_key),
@@ -490,8 +499,57 @@ class LocalDashboardService:
             "available_datasets": self._available_dataset_names(country),
         }
 
-    def _tab_ready(self, tab: DashboardTab, contract_roles: set[str]) -> bool:
-        return all(role in contract_roles for role in required_roles(tab))
+    def _ensure_range_contract(
+        self,
+        country: str,
+        range_key: str,
+        enabled_roles: set[str],
+    ) -> str | None:
+        raw_calls = self._raw_calls_for_range(country, range_key)
+        if not raw_calls:
+            return None
+        derived_ready = all(
+            self._dataset_exists(country, dataset, range_key)
+            for dataset in (
+                DATASET_SUMMARY_WIDGETS,
+                DATASET_SUMMARY_TABLE,
+                DATASET_ERRORS_WIDGETS,
+                DATASET_ERRORS_TOP_ERRORS,
+                DATASET_ERRORS_APP_NAME,
+                DATASET_CHART_PAYLOADS,
+            )
+        )
+        regression = self._latest_regression(country, range_key)
+        regression_ready = _regression_usable(regression.get("status"))
+        if derived_ready and regression_ready:
+            return None
+        try:
+            if not derived_ready:
+                build_derived_datasets(
+                    self.store,
+                    country,
+                    raw_calls=raw_calls,
+                    enabled_roles=enabled_roles,
+                    range_key=range_key,
+                )
+            if not regression_ready:
+                run_regression(
+                    self.store,
+                    country,
+                    enabled_roles=enabled_roles,
+                    range_key=range_key,
+                )
+        except Exception as exc:
+            return sanitize_error(exc)
+        return None
+
+    def _tab_ready(
+        self,
+        tab: DashboardTab,
+        contract_roles: set[str],
+        enabled_roles: set[str],
+    ) -> bool:
+        return all(role in contract_roles for role in required_roles(tab) if role in enabled_roles)
 
     def _derived_dataset_count(self, country: str, range_key: str) -> int:
         return sum(
@@ -513,6 +571,14 @@ class LocalDashboardService:
         for file in files:
             rows.extend(pl.read_parquet(file).to_dicts())
         return rows
+
+    def _raw_calls_for_range(self, country: str, range_key: str) -> list[dict[str, Any]]:
+        key = _safe_range_key(range_key)
+        return [
+            row
+            for row in self._raw_calls(country)
+            if _safe_range_key(_text(row.get("range_key")) or "today") == key
+        ]
 
     def _latest_regression(self, country: str, range_key: str = "today") -> dict[str, Any]:
         rows = self._read_dataset(country, DATASET_REGRESSION_RESULTS, range_key)
@@ -934,6 +1000,15 @@ def _text(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _safe_range_key(range_key: str | None) -> str:
+    raw = (range_key or "").strip().lower()
+    if raw in {"today", "yesterday", "last_7_days", "custom"}:
+        return raw
+    return "".join(
+        character if character.isalnum() or character == "_" else "_" for character in raw
+    )
 
 
 def local_dashboard_root(store: ParquetStore, country: str) -> Path:

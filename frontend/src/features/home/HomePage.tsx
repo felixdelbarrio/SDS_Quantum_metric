@@ -40,7 +40,11 @@ export function HomePage() {
   const [segment, setSegment] = useState<string | null>(null);
   const [dateRange, setDateRange] = useState<DateRange>(() => {
     const today = todayInMexico();
-    return { preset: "today", startDate: today, endDate: today };
+    return {
+      preset: "last_7_days",
+      startDate: addDays(today, -6),
+      endDate: today,
+    };
   });
   const [dimensionPanelOpen, setDimensionPanelOpen] = useState(false);
   const [segmentPanelOpen, setSegmentPanelOpen] = useState(false);
@@ -301,6 +305,12 @@ function todayInMexico() {
     parts.map((part) => [part.type, part.value]),
   );
   return `${value.year}-${value.month}-${value.day}`;
+}
+
+function addDays(value: string, days: number) {
+  const date = new Date(`${value}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
 }
 
 function asCountryCode(value: string): CountryCode {

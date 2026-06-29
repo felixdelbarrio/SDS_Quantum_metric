@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from backend.app.auth.browser_cookies import BrowserCookieProvider
@@ -100,20 +100,24 @@ class IngestionService:
                     capture_mode="daily",
                 )
             else:
-                legacy_range = build_ingestion_range(
-                    self.parquet_store.latest_source_end(request.country.value),
-                    depth_days=config.ingestion_depth_days,
-                    incremental_reprocess_days=self.settings.quantum_incremental_reprocess_days,
-                )
-                ingestion_range = IngestionRange(
-                    mode=legacy_range.mode,
-                    start=legacy_range.start,
-                    end=legacy_range.end,
-                    latest_source_end=legacy_range.latest_source_end,
-                    lookback_days=legacy_range.lookback_days,
-                    range_key=request.range_key or "today",
-                    capture_mode="daily",
-                )
+                preset_range = _preset_range(request.range_key)
+                if preset_range:
+                    ingestion_range = preset_range
+                else:
+                    legacy_range = build_ingestion_range(
+                        self.parquet_store.latest_source_end(request.country.value),
+                        depth_days=config.ingestion_depth_days,
+                        incremental_reprocess_days=self.settings.quantum_incremental_reprocess_days,
+                    )
+                    ingestion_range = IngestionRange(
+                        mode=legacy_range.mode,
+                        start=legacy_range.start,
+                        end=legacy_range.end,
+                        latest_source_end=legacy_range.latest_source_end,
+                        lookback_days=legacy_range.lookback_days,
+                        range_key=request.range_key or "custom",
+                        capture_mode="daily",
+                    )
             country_config = config.required_country_config(request.country)
             dashboard = country_config.default_dashboard()
             if not dashboard or not dashboard.dashboard_id or not dashboard.validated:
@@ -448,17 +452,28 @@ def _explicit_range_from_request(request: IngestionCreate) -> IngestionRange | N
     )
 
 
-def _today_range(range_key: str) -> IngestionRange:
+def _preset_range(range_key: str | None) -> IngestionRange | None:
+    key = (range_key or "last_7_days").strip().lower()
     zone = zoneinfo_for("CST")
     today = datetime.now(zone).date()
-    start, end = _day_bounds(today)
+    if key == "today":
+        start_day = end_day = today
+    elif key == "yesterday":
+        start_day = end_day = today - timedelta(days=1)
+    elif key == "last_7_days":
+        start_day = today - timedelta(days=6)
+        end_day = today
+    else:
+        return None
+    start, _ = _day_bounds(start_day)
+    _, end = _day_bounds(end_day)
     return IngestionRange(
-        mode="incremental",
+        mode="backfill",
         start=start,
         end=end,
         latest_source_end=None,
-        lookback_days=1,
-        range_key=range_key or "today",
+        lookback_days=(end_day - start_day).days + 1,
+        range_key=key,
         capture_mode="range_contract",
     )
 

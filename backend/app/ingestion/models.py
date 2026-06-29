@@ -11,7 +11,7 @@ from backend.app.quantum.schemas import Country
 class IngestionCreate(BaseModel):
     country: Country
     days: list[str] = Field(default_factory=list)
-    range_key: str = "today"
+    range_key: str = "last_7_days"
     start_date: str | None = None
     end_date: str | None = None
 

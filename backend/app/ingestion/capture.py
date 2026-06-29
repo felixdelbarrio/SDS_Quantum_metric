@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -122,6 +123,14 @@ class QuantumAnalyticsCaptureSession:
         ingestion_ts = datetime.now(UTC).isoformat()
         rows: list[dict[str, Any]] = []
         range_validation_errors: list[str] = []
+        console_errors: list[str] = []
+        request_failures: list[str] = []
+        analytics_state: dict[str, Any] = {
+            "requests": 0,
+            "responses": 0,
+            "last_response_at": time.monotonic(),
+            "statuses": [],
+        }
         page = self._context.new_page()
 
         def on_route(route: Any) -> None:
@@ -132,6 +141,7 @@ class QuantumAnalyticsCaptureSession:
             if not self._is_quantum_analytics(request.url):
                 route.continue_()
                 return
+            analytics_state["requests"] = int(analytics_state["requests"]) + 1
             request_json = _parse_json(request.post_data or "")
             rewritten, changed = apply_ingestion_range(request_json, ingestion_range)
             if changed:
@@ -145,9 +155,15 @@ class QuantumAnalyticsCaptureSession:
             parsed = urlparse(response.url)
             if not self._is_quantum_analytics(response.url):
                 return
+            analytics_state["responses"] = int(analytics_state["responses"]) + 1
+            analytics_state["last_response_at"] = time.monotonic()
+            cast(list[int], analytics_state["statuses"]).append(int(response.status))
             request = response.request
             request_json = _parse_json(request.post_data or "")
-            response_json = _parse_json(response.body().decode("utf-8", "replace"))
+            try:
+                response_json = _parse_json(response.body().decode("utf-8", "replace"))
+            except Exception:
+                response_json = {}
             query_range = extract_query_time_range(request_json)
             range_validation = None
             if ingestion_range is not None:
@@ -229,12 +245,29 @@ class QuantumAnalyticsCaptureSession:
                 }
             )
 
+        def on_console(message: Any) -> None:
+            if message.type in {"error", "warning"}:
+                console_errors.append(f"{message.type}: {message.text}"[:240])
+
+        def on_request_failed(request: Any) -> None:
+            if self._is_quantum_analytics(request.url):
+                failure = request.failure
+                request_failures.append(str(failure or request.url)[:240])
+
         page.route("**/*", on_route)
         page.on("response", on_response)
+        page.on("console", on_console)
+        page.on("requestfailed", on_request_failed)
         try:
             page.goto(dashboard_url, wait_until="domcontentloaded", timeout=60_000)
-            page.wait_for_timeout(self.wait_seconds * 1000)
+            _wait_for_analytics_settle(page, rows, analytics_state, self.wait_seconds)
         finally:
+            diagnostics = _capture_diagnostics(
+                page,
+                analytics_state,
+                console_errors=console_errors,
+                request_failures=request_failures,
+            )
             page.close()
         if range_validation_errors:
             unique_errors = list(dict.fromkeys(range_validation_errors))
@@ -242,6 +275,8 @@ class QuantumAnalyticsCaptureSession:
                 "Quantum range validation failed before persisting raw calls: "
                 + " | ".join(unique_errors[:5])
             )
+        if not rows:
+            raise RuntimeError("No Quantum analytics responses were captured. " + diagnostics)
         return rows
 
     def _is_quantum_analytics(self, url: str) -> bool:
@@ -293,6 +328,73 @@ def _parse_json(raw: str) -> dict[str, Any]:
     except Exception:
         return {}
     return value if isinstance(value, dict) else {"value": value}
+
+
+def _wait_for_analytics_settle(
+    page: Any,
+    rows: list[dict[str, Any]],
+    analytics_state: dict[str, Any],
+    wait_seconds: int,
+) -> None:
+    started = time.monotonic()
+    deadline = started + max(5, wait_seconds)
+    quiet_seconds = 3.0
+    minimum_seconds = 5.0
+    while time.monotonic() < deadline:
+        page.wait_for_timeout(500)
+        now = time.monotonic()
+        if rows and now - started >= minimum_seconds:
+            last_response_at = float(analytics_state.get("last_response_at") or started)
+            if now - last_response_at >= quiet_seconds:
+                return
+        if not rows and now - started >= 8 and _looks_unauthenticated(page):
+            return
+
+
+def _capture_diagnostics(
+    page: Any,
+    analytics_state: dict[str, Any],
+    *,
+    console_errors: list[str],
+    request_failures: list[str],
+) -> str:
+    try:
+        title = page.title()
+    except Exception:
+        title = ""
+    try:
+        final_url = page.url
+    except Exception:
+        final_url = ""
+    auth_hint = " login_detected=true" if _looks_unauthenticated(page) else ""
+    statuses = ",".join(str(status) for status in analytics_state.get("statuses", [])[-10:])
+    return (
+        f"final_url={final_url or '-'} title={title or '-'}"
+        f" analytics_requests={analytics_state.get('requests', 0)}"
+        f" analytics_responses={analytics_state.get('responses', 0)}"
+        f" analytics_statuses={statuses or '-'}"
+        f"{auth_hint}"
+        f" request_failures={request_failures[:3]}"
+        f" console={console_errors[:3]}"
+    )
+
+
+def _looks_unauthenticated(page: Any) -> bool:
+    try:
+        current = f"{page.url} {page.title()}".casefold()
+    except Exception:
+        current = ""
+    auth_markers = (
+        "login",
+        "signin",
+        "sign-in",
+        "saml",
+        "oauth",
+        "authenticate",
+        "microsoftonline",
+        "okta",
+    )
+    return any(marker in current for marker in auth_markers)
 
 
 def _sanitize_headers(headers: dict[str, str]) -> dict[str, str]:
