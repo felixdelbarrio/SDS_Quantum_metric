@@ -51,6 +51,16 @@ export function KpiWidget({ widget }: Props) {
       </div>
       {hasValue ? (
         <>
+          {widget.breakdown.length ? (
+            <div className="kpi-segment-values">
+              {widget.breakdown.slice(0, 2).map((item) => (
+                <span key={item.label}>
+                  <small>{item.label}</small>
+                  <strong>{formatValue(item.value, widget.unit)}</strong>
+                </span>
+              ))}
+            </div>
+          ) : null}
           <QuantumChart payload={widget.chart_payload} title={widget.title} />
           <div className="breakdown-list">
             {widget.breakdown.slice(0, 3).map((item) => (

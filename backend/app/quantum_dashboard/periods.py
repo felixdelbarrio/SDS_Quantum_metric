@@ -23,6 +23,13 @@ def format_period_label(
     if normalized_preset == "yesterday":
         return f"Yesterday ({range_text})"
     if normalized_preset == "last_7_days":
+        if not (end_local.hour == 23 and end_local.minute == 59):
+            return (
+                "Last 7 Days "
+                f"({_format_date(start_local.date())} - {_format_date(end_local.date())}, "
+                f"{_format_time(start_local)} - "
+                f"{_format_time(end_local)} {label_for_timezone(timezone)})"
+            )
         return (
             f"{_format_date(start_local.date())} - "
             f"{_format_date(end_local.date())} ({label_for_timezone(timezone)})"

@@ -91,7 +91,7 @@ describe("HomePage local dashboard", () => {
     const today = todayInMexico();
 
     expect(await screen.findByText("Paginas vistas")).toBeInTheDocument();
-    expect(await screen.findByText("150")).toBeInTheDocument();
+    expect((await screen.findAllByText("150")).length).toBeGreaterThan(0);
     expect(await screen.findAllByText("Jun 16, 2026 (CST)")).not.toHaveLength(
       0,
     );

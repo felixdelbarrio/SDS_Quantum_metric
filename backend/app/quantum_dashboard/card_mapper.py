@@ -94,9 +94,14 @@ def map_card_role(call: dict[str, Any]) -> VisualRole | None:
             role = REAL_SUMMARY_METRIC_IDS.get(metric_id)
             if role:
                 return role
+        role = _summary_role_from_metric_shape(request_json)
+        if role:
+            return role
 
     if tab == "errors":
         if card_type == "TABLE":
+            if view_name == "coreMetrics" and not metric_ids and not dimension_paths:
+                return None
             if any(path and path[-1] == "event" for path in dimension_paths):
                 return ERRORS_TOP_ERRORS
             if any("mde_value" in path for path in dimension_paths):
@@ -112,7 +117,12 @@ def map_card_role(call: dict[str, Any]) -> VisualRole | None:
                 for metric_id in metric_ids
             ):
                 return ERRORS_APP_COMPARISON
-            return ERRORS_EVOLUTION
+            if any(
+                REAL_ERRORS_METRIC_IDS.get(metric_id) == ERRORS_TOP_ERRORS
+                for metric_id in metric_ids
+            ):
+                return ERRORS_EVOLUTION
+            return None
 
     haystack = _canonical(
         " ".join(
@@ -196,6 +206,39 @@ def _dimension_paths(request_json: dict[str, Any]) -> list[list[str]]:
         path = item.get("path")
         if isinstance(path, list):
             paths.append([str(part) for part in path])
+    return paths
+
+
+def _summary_role_from_metric_shape(request_json: dict[str, Any]) -> VisualRole | None:
+    query = request_json.get("query")
+    container = query if isinstance(query, dict) else request_json
+    metrics = container.get("metrics") if isinstance(container, dict) else None
+    if not metrics:
+        return None
+    paths = _paths(metrics)
+    metric_text = _canonical(json.dumps(metrics, ensure_ascii=False, default=str))
+    if ("session", "total_engaged_seconds") in paths:
+        return SUMMARY_AVG_SESSION_DURATION
+    if ("hit", "id") in paths:
+        return SUMMARY_PAGE_VIEWS
+    if ("session", "id") in paths:
+        if "pagina exitosa" in metric_text:
+            return SUMMARY_CONVERTED_SESSIONS
+        return SUMMARY_SESSIONS
+    return None
+
+
+def _paths(value: Any) -> set[tuple[str, ...]]:
+    paths: set[tuple[str, ...]] = set()
+    if isinstance(value, dict):
+        path = value.get("path")
+        if isinstance(path, list):
+            paths.add(tuple(str(part) for part in path))
+        for child in value.values():
+            paths.update(_paths(child))
+    elif isinstance(value, list):
+        for item in value:
+            paths.update(_paths(item))
     return paths
 
 
