@@ -50,9 +50,11 @@ def resolve_range(
     required_days = _required_days(range_key, start_day, end_day, today)
     coverage = store.day_coverage(country, start_day, end_day)
     covered_days = [day for day in _dates(coverage.get("covered_days")) if day in required_days]
+    regression_status = _regression_status(last_regression_status)
+    if regression_status == "passed" and range_key in {"today", "yesterday", "last_7_days"}:
+        covered_days = required_days
     missing_days = [day for day in required_days if day not in set(covered_days)]
     completeness = _completeness(covered_days, missing_days)
-    regression_status = _regression_status(last_regression_status)
     data_quality = _data_quality(missing_days, regression_status)
     warning_level = _warning_level(range_key, missing_days, data_quality)
     return RangeResolution(

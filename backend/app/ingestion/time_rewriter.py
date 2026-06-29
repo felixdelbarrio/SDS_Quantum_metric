@@ -95,7 +95,7 @@ def _rewrite(value: Any, target: IngestionChunk) -> bool:
     if isinstance(value, dict):
         namespace = value.get("predicateFnNamespace")
         path = _predicate_path(value)
-        if _is_session_ts_predicate(namespace, path):
+        if _is_quantum_ts_predicate(namespace, path):
             namespace_list = cast(list[Any], namespace)
             arguments = value.get("arguments")
             if isinstance(arguments, list) and arguments:
@@ -123,6 +123,9 @@ def _rewrite(value: Any, target: IngestionChunk) -> bool:
             elif key == "periodCount" and isinstance(child, str | int | float):
                 value[key] = max(1, (target.end.date() - target.start.date()).days + 1)
                 changed = True
+            elif key == "dimensionFills":
+                if _rewrite_dimension_fills(child, target):
+                    changed = True
             elif _rewrite(child, target):
                 changed = True
     elif isinstance(value, list):
@@ -151,13 +154,16 @@ def _extract(
             candidates.append((base, end_ts, _timezone_from_offset(value.get("utcOffset")), None))
         namespace = value.get("predicateFnNamespace")
         path = _predicate_path(value)
-        if _is_session_ts_predicate(namespace, path):
+        if _is_quantum_ts_predicate(namespace, path):
             arguments = value.get("arguments")
             if isinstance(arguments, list) and arguments:
                 value_index = 1 if isinstance(arguments[0], dict) and len(arguments) > 1 else 0
                 point = _parse_time(arguments[value_index])
                 if point:
                     candidates.append((point, point, None, None))
+        dimension_fills = value.get("dimensionFills")
+        if dimension_fills is not None:
+            _extract_dimension_fills(dimension_fills, candidates)
         for child in value.values():
             _extract(child, candidates)
     elif isinstance(value, list):
@@ -175,12 +181,12 @@ def _merge_predicates(candidates: list[tuple[datetime, datetime, str | None, str
         candidates.insert(0, (min(starts), max(starts), None, None))
 
 
-def _is_session_ts_predicate(namespace: Any, path: Any) -> bool:
+def _is_quantum_ts_predicate(namespace: Any, path: Any) -> bool:
     return (
         isinstance(namespace, list)
         and namespace[-1:] in (["gte"], ["lt"])
         and isinstance(path, list)
-        and path[-2:] == ["session", "ts"]
+        and path[-2:] in (["session", "ts"], ["hit", "ts"])
     )
 
 
@@ -198,6 +204,55 @@ def _predicate_path(value: dict[str, Any]) -> Any:
 
 def _is_window(value: Any) -> bool:
     return isinstance(value, list) and len(value) == 2
+
+
+def _rewrite_dimension_fills(value: Any, target: IngestionChunk) -> bool:
+    changed = False
+    if isinstance(value, dict):
+        arguments = value.get("arguments")
+        if _is_dimension_fill_window(arguments):
+            window = cast(list[Any], arguments)
+            window[0] = _format_like(window[0], target.start)
+            window[1] = _format_like(window[1], target.end)
+            changed = True
+        for child in value.values():
+            if _rewrite_dimension_fills(child, target):
+                changed = True
+    elif isinstance(value, list):
+        for child in value:
+            if _rewrite_dimension_fills(child, target):
+                changed = True
+    return changed
+
+
+def _extract_dimension_fills(
+    value: Any,
+    candidates: list[tuple[datetime, datetime, str | None, str | None]],
+) -> None:
+    if isinstance(value, dict):
+        arguments = value.get("arguments")
+        if _is_dimension_fill_window(arguments):
+            window = cast(list[Any], arguments)
+            start = _parse_time(window[0])
+            end = _parse_time(window[1])
+            if start and end:
+                timezone = _timezone_from_offset(window[3]) if len(window) > 3 else None
+                candidates.append((start, end, timezone, None))
+        for child in value.values():
+            _extract_dimension_fills(child, candidates)
+    elif isinstance(value, list):
+        for child in value:
+            _extract_dimension_fills(child, candidates)
+
+
+def _is_dimension_fill_window(value: Any) -> bool:
+    return (
+        isinstance(value, list)
+        and len(value) >= 3
+        and _parse_time(value[0]) is not None
+        and _parse_time(value[1]) is not None
+        and isinstance(value[2], int | float | str)
+    )
 
 
 def _format_like(template: Any, value: datetime) -> str | int | float:

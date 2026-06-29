@@ -88,17 +88,19 @@ describe("HomePage local dashboard", () => {
   it("muestra widgets y tabla de Resumen recibidos desde API", async () => {
     mockFetch();
     renderHome();
+    const today = todayInMexico();
 
     expect(await screen.findByText("Paginas vistas")).toBeInTheDocument();
-    expect(await screen.findByText("150")).toBeInTheDocument();
+    expect((await screen.findAllByText("150")).length).toBeGreaterThan(0);
     expect(await screen.findAllByText("Jun 16, 2026 (CST)")).not.toHaveLength(
       0,
     );
     expect(
       requests.some(
         (request) =>
-          request.includes(`start_date=${todayInMexico()}`) &&
-          request.includes(`end_date=${todayInMexico()}`),
+          request.includes("range_key=last_7_days") &&
+          request.includes(`start_date=${addDays(today, -6)}`) &&
+          request.includes(`end_date=${today}`),
       ),
     ).toBe(true);
     expect(
@@ -135,7 +137,7 @@ describe("HomePage local dashboard", () => {
       ),
     ).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Actualizar hoy" }));
+    fireEvent.click(screen.getByRole("button", { name: "Ingestar periodo" }));
 
     await waitFor(() => {
       expect(
@@ -145,8 +147,8 @@ describe("HomePage local dashboard", () => {
       ).toBe(true);
     });
     expect(postBodies[0]).toMatchObject({
-      range_key: "today",
-      start_date: todayInMexico(),
+      range_key: "last_7_days",
+      start_date: addDays(todayInMexico(), -6),
       end_date: todayInMexico(),
     });
   });
@@ -319,6 +321,12 @@ function todayInMexico() {
   const part = (type: string) =>
     parts.find((candidate) => candidate.type === type)?.value ?? "";
   return `${part("year")}-${part("month")}-${part("day")}`;
+}
+
+function addDays(value: string, days: number) {
+  const date = new Date(`${value}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
 }
 
 function mockFetch(options: MockOptions = {}) {

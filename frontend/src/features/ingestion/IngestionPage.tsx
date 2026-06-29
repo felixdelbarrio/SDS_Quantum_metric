@@ -103,10 +103,11 @@ export function IngestionPage() {
   const create = useMutation({
     mutationFn: () => {
       const today = todayInMexico();
+      const start = addDays(today, -6);
       return apiPost<IngestionJob>("/ingestions", {
         country: activeCountry,
-        range_key: "today",
-        start_date: today,
+        range_key: "last_7_days",
+        start_date: start,
         end_date: today,
       });
     },
@@ -324,10 +325,7 @@ function IngestionHistoryTable({ jobs }: { jobs: IngestionJob[] }) {
               <td>{job.status}</td>
               <td>{formatDate(job.started_at)}</td>
               <td>{formatDate(job.finished_at)}</td>
-              <td>
-                {job.regression_status ??
-                  String(job.details?.regression_status ?? "-")}
-              </td>
+              <td title={ingestionResult(job)}>{ingestionResult(job)}</td>
             </tr>
           ))}
         </tbody>
@@ -354,6 +352,15 @@ function isTerminalJob(job: IngestionJob) {
   );
 }
 
+function ingestionResult(job: IngestionJob) {
+  const regression =
+    job.regression_status ?? String(job.details?.regression_status ?? "");
+  if (regression) return regression;
+  const failure = String(job.details?.failure ?? job.errors[0] ?? "");
+  if (!failure) return "-";
+  return failure.length > 120 ? `${failure.slice(0, 117)}...` : failure;
+}
+
 function todayInMexico() {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: "America/Mexico_City",
@@ -365,6 +372,12 @@ function todayInMexico() {
     parts.map((part) => [part.type, part.value]),
   );
   return `${value.year}-${value.month}-${value.day}`;
+}
+
+function addDays(value: string, days: number) {
+  const date = new Date(`${value}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
 }
 
 function formatDate(value?: string | null) {

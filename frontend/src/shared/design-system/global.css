@@ -736,6 +736,33 @@ textarea:focus-visible {
   letter-spacing: 0;
 }
 
+.kpi-segment-values {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.kpi-segment-values span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.kpi-segment-values small {
+  color: var(--color-muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.kpi-segment-values strong {
+  overflow: hidden;
+  color: var(--color-text);
+  font-size: 18px;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .delta {
   font-size: 12px;
 }

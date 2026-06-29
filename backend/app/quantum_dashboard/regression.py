@@ -303,6 +303,24 @@ def _compare_chart_contract(
             range_key=range_key,
             details="Line chart must expose Mobile and Desktop series.",
         )
+    if payload.get("chart_type") == "line" and range_key == "last_7_days":
+        series_by_label = {
+            str(item.get("label")): _list(item.get("points"))
+            for item in series
+            if isinstance(item, dict)
+        }
+        for label in ("Mobile", "Desktop"):
+            points = series_by_label.get(label) or []
+            if not points or len(points) > 8:
+                return _card_result(
+                    spec.tab,
+                    role,
+                    spec.title,
+                    "failed_series_shape_mismatch",
+                    range_key=range_key,
+                    local_value=len(points),
+                    details=f"{label} series must be daily for Last 7 Days.",
+                )
     web_points = len(_list(snapshot.get("visible_series")))
     local_points = sum(len(_list(item.get("points"))) for item in series if isinstance(item, dict))
     if web_points and local_points < web_points:

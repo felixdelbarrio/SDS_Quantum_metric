@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 
 from backend.app.ingestion.policy import apply_ingestion_range, build_ingestion_range
+from backend.app.ingestion.service import _preset_range
 
 
 def test_backfill_range_uses_maximum_window_when_no_local_data() -> None:
@@ -40,6 +41,20 @@ def test_ingestion_range_accepts_custom_depth_and_reprocess_days() -> None:
 
     assert backfill.start == datetime(2026, 5, 14, 12, 0, tzinfo=UTC)
     assert incremental.start == datetime(2026, 6, 8, 8, 30, tzinfo=UTC)
+
+
+def test_relative_presets_use_quantum_web_complete_hour_cutoff() -> None:
+    now = datetime(2026, 6, 29, 11, 20, tzinfo=UTC)
+
+    today = _preset_range("today", now=now)
+    last_7_days = _preset_range("last_7_days", now=now)
+
+    assert today is not None
+    assert today.start == datetime(2026, 6, 29, 6, 0, tzinfo=UTC)
+    assert today.end == datetime(2026, 6, 29, 9, 59, 59, tzinfo=UTC)
+    assert last_7_days is not None
+    assert last_7_days.start == datetime(2026, 6, 23, 6, 0, tzinfo=UTC)
+    assert last_7_days.end == datetime(2026, 6, 29, 9, 59, 59, tzinfo=UTC)
 
 
 def test_apply_ingestion_range_rewrites_nested_ts_preserving_timestamp_shape() -> None:

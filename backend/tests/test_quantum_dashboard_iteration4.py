@@ -18,7 +18,10 @@ from backend.app.quantum_dashboard.discovery import (
     discover_dashboard_from_config,
     parse_dashboard_url,
 )
-from backend.app.quantum_dashboard.parsers import parse_card
+from backend.app.quantum_dashboard.parsers import (
+    build_line_chart_payload_from_series,
+    parse_card,
+)
 from backend.app.quantum_dashboard.regression import run_regression
 from backend.app.quantum_dashboard.service import LocalDashboardService
 from backend.app.storage.parquet_store import ParquetStore
@@ -229,6 +232,11 @@ def test_local_dashboard_apis_read_derived_data_offline(tmp_path: Path) -> None:
         "error_sessions_percentage_evolution",
         "error_sessions_by_app_name",
     }
+    donut = next(
+        widget for widget in errors["widgets"] if widget["id"] == "error_sessions_by_app_name"
+    )
+    assert donut["value"] == donut["total"]
+    assert donut["breakdown"]
     assert top_errors["rows"][0]["name"] == "TypeError"
     assert app_name["rows"][0]["name"] == "pagos"
 
@@ -470,6 +478,21 @@ def test_real_quantum_card_mapper_uses_tab_card_type_metrics_and_dimensions() ->
         )
         == "errors.error_sessions_by_app_name_comparison"
     )
+    assert map_card_role(_summary_metric_shape_call(["hit", "id"])) == "summary.page_views"
+    assert map_card_role(_summary_metric_shape_call(["session", "id"])) == "summary.sessions"
+    assert (
+        map_card_role(_summary_metric_shape_call(["session", "id"], filter_text="pagina exitosa"))
+        == "summary.converted_sessions"
+    )
+    assert (
+        map_card_role(
+            _summary_metric_shape_call(
+                ["session", "total_engaged_seconds"],
+                aggregation=["qm", "default", "aggregations", "avg"],
+            )
+        )
+        == "summary.avg_session_duration"
+    )
 
 
 def test_parsers_support_real_quantum_rows_and_results_shapes() -> None:
@@ -520,6 +543,25 @@ def test_parsers_support_real_quantum_rows_and_results_shapes() -> None:
     assert top_errors.data["rows"][0]["error_sessions"] == 10607
     assert top_errors.data["rows"][0]["error_session_percent"] == 100
 
+    error_percentage = parse_card(
+        _parser_call(
+            response_json={
+                "rows": [
+                    {"dimensions": ["operaciones con cheques"], "metrics": [1]},
+                    {"dimensions": ["solicitar qr"], "metrics": [1]},
+                    {"dimensions": ["agregar curp"], "metrics": [1]},
+                ]
+            }
+        ),
+        "errors.error_session_percentage_by_app_name",
+    )
+    assert error_percentage.status == "ok"
+    assert [row["name"] for row in error_percentage.data["rows"]] == [
+        "operaciones con cheques",
+        "solicitar qr",
+        "agregar curp",
+    ]
+
     donut = parse_card(
         _parser_call(
             response_json={
@@ -533,6 +575,31 @@ def test_parsers_support_real_quantum_rows_and_results_shapes() -> None:
     )
     assert donut.status == "ok"
     assert donut.data["widget"]["total"] == 2550
+
+    web_donut = parse_card(
+        _parser_call(
+            response_json={
+                "rows": [
+                    {"dimensions": [""], "metrics": [100]},
+                    {"dimensions": ["a"], "metrics": [30]},
+                    {"dimensions": ["b"], "metrics": [20]},
+                    {"dimensions": ["c"], "metrics": [10]},
+                    {"dimensions": ["d"], "metrics": [5]},
+                    {"dimensions": ["e"], "metrics": [5]},
+                ]
+            }
+        ),
+        "errors.error_sessions_by_app_name_comparison",
+    )
+    assert web_donut.status == "ok"
+    assert [item["name"] for item in web_donut.data["widget"]["series"]] == [
+        "Null",
+        "Other",
+        "a",
+        "b",
+        "c",
+    ]
+    assert web_donut.data["widget"]["series"][0]["percent"] == 58.82
 
     historical = parse_card(
         _parser_call(
@@ -559,6 +626,86 @@ def test_parsers_support_real_quantum_rows_and_results_shapes() -> None:
         {"ts": "1781589600", "value": 10.0},
         {"ts": "1781593200", "value": 12.0},
     ]
+
+
+def test_line_chart_payload_combines_devices_as_daily_visual_series() -> None:
+    payload = build_line_chart_payload_from_series(
+        role="summary.page_views",
+        title="Paginas vistas",
+        unit="count",
+        mobile_points=[
+            {"ts": "2026-06-23T07:00:00Z", "value": 10},
+            {"ts": "2026-06-23T19:00:00Z", "value": 20},
+            {"ts": "2026-06-24T07:00:00Z", "value": 30},
+        ],
+        desktop_points=[
+            {"ts": "2026-06-23T07:00:00Z", "value": 1},
+            {"ts": "2026-06-24T07:00:00Z", "value": 2},
+        ],
+        response_json={"metadata": {"timezone": "CST"}},
+        aggregate_daily=True,
+    )
+
+    assert payload is not None
+    assert payload["granularity"] == "daily"
+    assert [series["label"] for series in payload["series"]] == ["Mobile", "Desktop"]
+    assert [point["value"] for point in payload["series"][0]["points"]] == [30.0, 30.0]
+    assert [point["value"] for point in payload["series"][1]["points"]] == [1.0, 2.0]
+    assert all(len(series["points"]) <= 7 for series in payload["series"])
+
+    seconds_payload = build_line_chart_payload_from_series(
+        role="summary.avg_session_duration",
+        title="Tiempo medio de sesion",
+        unit="seconds",
+        mobile_points=[],
+        desktop_points=[
+            {"ts": "2026-06-23T07:00:00Z", "value": 0},
+            {"ts": "2026-06-23T08:00:00Z", "value": 120},
+            {"ts": "2026-06-23T09:00:00Z", "value": 240},
+        ],
+        response_json={"metadata": {"timezone": "CST"}},
+        aggregate_daily=True,
+    )
+
+    assert seconds_payload is not None
+    assert seconds_payload["series"][1]["points"][0]["value"] == 180.0
+
+    partial_payload = build_line_chart_payload_from_series(
+        role="summary.page_views",
+        title="Paginas vistas",
+        unit="count",
+        mobile_points=[
+            {"ts": "2026-06-23T07:00:00Z", "value": 10},
+            {"ts": "2026-06-28T07:00:00Z", "value": 20},
+            {"ts": "2026-06-29T07:00:00Z", "value": 999},
+        ],
+        desktop_points=[],
+        response_json={"metadata": {"timezone": "CST"}},
+        aggregate_daily=True,
+        period_end="2026-06-29T09:59:59Z",
+    )
+
+    assert partial_payload is not None
+    assert [point["label"] for point in partial_payload["series"][0]["points"]] == [
+        "Jun 23",
+        "Jun 28",
+    ]
+
+    captured_payload = build_line_chart_payload_from_series(
+        role="summary.page_views",
+        title="Paginas vistas",
+        unit="count",
+        mobile_points=[
+            {"ts": "2026-06-23T08:00:00Z", "value": 10},
+            {"ts": "2026-06-23T07:00:00Z", "value": 5},
+        ],
+        desktop_points=[],
+        response_json={"metadata": {"timezone": "CST"}},
+    )
+
+    assert captured_payload is not None
+    assert captured_payload["granularity"] == "captured"
+    assert [point["value"] for point in captured_payload["series"][0]["points"]] == [5.0, 10.0]
 
 
 def _store_with_fixtures(tmp_path: Path) -> ParquetStore:
@@ -598,6 +745,50 @@ def _real_call(
                     },
                     "dimensions": {"dimensions": dimensions},
                 }
+            }
+        ),
+        "response_json": "{}",
+    }
+
+
+def _summary_metric_shape_call(
+    path: list[str],
+    *,
+    aggregation: list[str] | None = None,
+    filter_text: str | None = None,
+) -> dict[str, Any]:
+    metric_filter: dict[str, Any] = {"arguments": []}
+    if filter_text:
+        metric_filter = {
+            "arguments": [
+                {
+                    "predicateFnNamespace": ["qm", "default", "predicates", "like"],
+                    "arguments": [{"path": ["event", "value"]}, filter_text],
+                }
+            ]
+        }
+    return {
+        "tab": "summary",
+        "card_type": "CHART",
+        "view_name": "timeSeriesQuery",
+        "metric_ids": "[]",
+        "request_json": json.dumps(
+            {
+                "metadata": {"cardType": "CHART", "viewName": "timeSeriesQuery"},
+                "metrics": {
+                    "metrics": [
+                        {
+                            "measures": [
+                                {
+                                    "aggregationFnNamespace": aggregation
+                                    or ["qm", "default", "aggregations", "count"],
+                                    "column": {"path": path},
+                                    "filter": metric_filter,
+                                }
+                            ]
+                        }
+                    ]
+                },
             }
         ),
         "response_json": "{}",

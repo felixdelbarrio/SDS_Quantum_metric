@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
 from backend.app.analytics.normalizer import canonicalize_key, parse_json_object
 from backend.app.quantum_dashboard.card_mapper import card_title_for_role, map_card_role
-from backend.app.quantum_dashboard.catalog import ROLE_SPECS, required_roles
+from backend.app.quantum_dashboard.catalog import ERRORS_APP_COMPARISON, ROLE_SPECS, required_roles
 from backend.app.quantum_dashboard.models import (
     CardContract,
     DashboardPeriod,
@@ -16,7 +17,7 @@ from backend.app.quantum_dashboard.models import (
     VisualRole,
     WebSnapshot,
 )
-from backend.app.quantum_dashboard.parsers import parse_card
+from backend.app.quantum_dashboard.parsers import build_line_chart_payload_from_series, parse_card
 from backend.app.quantum_dashboard.periods import format_period_label, parse_datetime
 from backend.app.quantum_dashboard.semantics import semantic_intent, semantic_state
 from backend.app.storage.parquet_store import ParquetStore, hash_json
@@ -43,6 +44,16 @@ REQUIRED_CHART_ROLES: set[VisualRole] = {
 }
 
 
+@dataclass
+class RelatedRoleCalls:
+    base_metric: dict[str, Any] | None = None
+    comparison_metric: dict[str, Any] | None = None
+    base_total_metric: dict[str, Any] | None = None
+    comparison_total_metric: dict[str, Any] | None = None
+    base_timeseries: dict[str, Any] | None = None
+    comparison_timeseries: dict[str, Any] | None = None
+
+
 def build_derived_datasets(
     store: ParquetStore,
     country: str,
@@ -61,9 +72,11 @@ def build_derived_datasets(
     )
     selected = _latest_call_by_role(calls)
     selected = {role: call for role, call in selected.items() if str(role) in enabled_role_set}
-    timeseries_by_role = _timeseries_call_by_role(calls)
-    timeseries_by_role = {
-        role: call for role, call in timeseries_by_role.items() if str(role) in enabled_role_set
+    related_calls_by_role = _related_calls_by_role(calls)
+    related_calls_by_role = {
+        role: calls
+        for role, calls in related_calls_by_role.items()
+        if str(role) in enabled_role_set
     }
     now = datetime.now(UTC).isoformat()
     contracts: list[CardContract] = []
@@ -91,7 +104,12 @@ def build_derived_datasets(
             )
             continue
 
-        result = _with_related_timeseries(result, timeseries_by_role.get(role), role)
+        result = _with_related_timeseries(
+            result,
+            related_calls_by_role.get(role),
+            role,
+            range_key=range_key,
+        )
 
         contracts.append(contract)
         snapshots.append(_snapshot_from_result(country, contract, result, call, now))
@@ -206,27 +224,38 @@ def _latest_call_by_role(calls: list[dict[str, Any]]) -> dict[VisualRole, dict[s
     return selected
 
 
-def _timeseries_call_by_role(calls: list[dict[str, Any]]) -> dict[VisualRole, dict[str, Any]]:
-    selected: dict[VisualRole, dict[str, Any]] = {}
-    scores: dict[VisualRole, int] = {}
+def _related_calls_by_role(calls: list[dict[str, Any]]) -> dict[VisualRole, RelatedRoleCalls]:
+    selected: dict[VisualRole, RelatedRoleCalls] = {}
+    scores: dict[tuple[VisualRole, str], int] = {}
     last_role_by_card: dict[str, VisualRole] = {}
     for call in calls:
-        role = map_card_role(call)
+        mapped_role = map_card_role(call)
         card_id = _text(call.get("card_id"))
         view_name = str(call.get("view_name") or "")
-        if role is not None and card_id:
-            last_role_by_card[card_id] = role
-        if "timeSeriesQuery" not in view_name:
+        if mapped_role is not None and card_id:
+            last_role_by_card[card_id] = mapped_role
+        role = mapped_role or (last_role_by_card.get(card_id) if card_id else None)
+        if role is None:
             continue
-        inferred_role = role
-        if inferred_role is None and card_id:
-            inferred_role = last_role_by_card.get(card_id)
-        if inferred_role is None:
+        if _response_has_error(call):
             continue
-        score = _timeseries_score(call)
-        if inferred_role not in selected or score >= scores[inferred_role]:
-            selected[inferred_role] = {**call, "card_role": inferred_role}
-            scores[inferred_role] = score
+        related = selected.setdefault(role, RelatedRoleCalls())
+        variant = "comparison" if "ComparisonSegment" in view_name else "base"
+        if "timeSeriesQuery" in view_name:
+            slot = f"{variant}_timeseries"
+            score = _timeseries_score(call)
+        elif view_name in {"coreMetrics", "coreMetricsComparisonSegment"}:
+            slot = f"{variant}_total_metric"
+            score = _call_score(role, call)
+        elif ":historical" in view_name:
+            continue
+        else:
+            slot = f"{variant}_metric"
+            score = _call_score(role, call)
+        key = (role, slot)
+        if score >= scores.get(key, -1):
+            setattr(related, slot, {**call, "card_role": role})
+            scores[key] = score
     return selected
 
 
@@ -242,29 +271,114 @@ def _timeseries_score(call: dict[str, Any]) -> int:
 
 def _with_related_timeseries(
     result: ParserResult,
-    timeseries_call: dict[str, Any] | None,
+    related_calls: RelatedRoleCalls | None,
     role: VisualRole,
+    *,
+    range_key: str,
 ) -> ParserResult:
-    if timeseries_call is None:
+    if related_calls is None:
         return result
-    parsed = parse_card(timeseries_call, role)
     widget = result.data.get("widget")
-    timeseries_widget = parsed.data.get("widget") if parsed.status == "ok" else None
-    if not isinstance(widget, dict) or not isinstance(timeseries_widget, dict):
+    if not isinstance(widget, dict):
         return result
-    timeseries = timeseries_widget.get("timeseries")
-    if isinstance(timeseries, list) and timeseries:
-        widget["timeseries"] = timeseries
-    chart_payload = timeseries_widget.get("chart_payload")
-    if isinstance(chart_payload, dict) and chart_payload.get("series"):
-        widget["chart_payload"] = chart_payload
-    period = _period_from_call(timeseries_call)
+    base_widget = _parsed_widget(related_calls.base_metric, role)
+    comparison_widget = _parsed_widget(related_calls.comparison_metric, role)
+    if base_widget or comparison_widget:
+        breakdown = []
+        if base_widget and base_widget.get("value") is not None:
+            breakdown.append({"label": "Desktop", "value": base_widget["value"]})
+        if comparison_widget and comparison_widget.get("value") is not None:
+            breakdown.append({"label": "Mobile", "value": comparison_widget["value"]})
+        if breakdown:
+            widget["breakdown"] = breakdown
+            unit = str(widget.get("unit") or ROLE_SPECS[role].unit or "count")
+            if unit == "count":
+                widget["value"] = round(sum(float(item["value"]) for item in breakdown), 2)
+            elif comparison_widget and comparison_widget.get("value") is not None:
+                widget["value"] = comparison_widget["value"]
+    if role == ERRORS_APP_COMPARISON:
+        total = _donut_total_from_related_metric(
+            related_calls.base_total_metric or related_calls.comparison_total_metric,
+            role,
+        )
+        if total is not None:
+            widget["value"] = total
+            widget["total"] = total
+    base_timeseries = _parsed_timeseries(related_calls.base_timeseries, role)
+    comparison_timeseries = _parsed_timeseries(related_calls.comparison_timeseries, role)
+    period_call = (
+        related_calls.comparison_timeseries
+        or related_calls.base_timeseries
+        or related_calls.comparison_total_metric
+        or related_calls.base_total_metric
+        or related_calls.comparison_metric
+        or related_calls.base_metric
+    )
+    period = _period_from_call(period_call or {})
+    if base_timeseries or comparison_timeseries:
+        chart_payload = build_line_chart_payload_from_series(
+            role=role,
+            title=str(widget.get("title") or ROLE_SPECS[role].title),
+            unit=str(widget.get("unit") or ROLE_SPECS[role].unit or "count"),
+            mobile_points=comparison_timeseries,
+            desktop_points=base_timeseries,
+            response_json=parse_json_object(
+                (related_calls.comparison_timeseries or related_calls.base_timeseries or {}).get(
+                    "response_json"
+                )
+            ),
+            aggregate_daily=range_key == "last_7_days",
+            period_end=period.get("end") if period else None,
+        )
+        if isinstance(chart_payload, dict):
+            widget["chart_payload"] = chart_payload
+            widget["timeseries"] = _flatten_chart_series(chart_payload)
     if period:
         widget["period"] = period
-        payload = widget.get("chart_payload")
-        if isinstance(payload, dict):
-            payload["timezone"] = period.get("timezone") or payload.get("timezone")
+    payload = widget.get("chart_payload")
+    if isinstance(payload, dict) and period:
+        payload["timezone"] = period.get("timezone") or payload.get("timezone")
     return ParserResult(role=result.role, status=result.status, data=result.data)
+
+
+def _parsed_widget(call: dict[str, Any] | None, role: VisualRole) -> dict[str, Any] | None:
+    if call is None:
+        return None
+    parsed = parse_card(call, role)
+    widget = parsed.data.get("widget") if parsed.status == "ok" else None
+    return widget if isinstance(widget, dict) else None
+
+
+def _parsed_timeseries(call: dict[str, Any] | None, role: VisualRole) -> list[dict[str, Any]]:
+    widget = _parsed_widget(call, role)
+    if not widget:
+        return []
+    timeseries = widget.get("timeseries")
+    return timeseries if isinstance(timeseries, list) else []
+
+
+def _donut_total_from_related_metric(call: dict[str, Any] | None, role: VisualRole) -> float | None:
+    widget = _parsed_widget(call, role)
+    if not widget:
+        return None
+    total = widget.get("total") or widget.get("value")
+    return _float_or_none(total)
+
+
+def _flatten_chart_series(chart_payload: dict[str, Any]) -> list[dict[str, Any]]:
+    output: list[dict[str, Any]] = []
+    series = chart_payload.get("series")
+    if not isinstance(series, list):
+        return output
+    for item in series:
+        if not isinstance(item, dict):
+            continue
+        label = item.get("label")
+        points = item.get("points")
+        if not isinstance(points, list):
+            continue
+        output.extend({**point, "series": label} for point in _list_of_dicts(points))
+    return output
 
 
 def _call_score(role: VisualRole, call: dict[str, Any]) -> int:
@@ -274,11 +388,14 @@ def _call_score(role: VisualRole, call: dict[str, Any]) -> int:
         "summary.detail_by_app_name_os",
         "errors.top_errors_by_error_name",
         "errors.error_session_percentage_by_app_name",
+        "errors.error_sessions_by_app_name_comparison",
     }:
         if view_name == "table":
             score += 1000
         if view_name == "topN":
             score += 900
+        if view_name == "dimensionQuery":
+            score += 800
     else:
         if view_name in {"coreMetricsComparisonSegment", "dimensionQueryComparisonSegment"}:
             score += 1200
@@ -290,7 +407,14 @@ def _call_score(role: VisualRole, call: dict[str, Any]) -> int:
             score += 50
     if call.get("metric_ids") not in (None, "", "[]"):
         score += 25
+    if _response_has_error(call):
+        score -= 1000
     return score
+
+
+def _response_has_error(call: dict[str, Any]) -> bool:
+    response = parse_json_object(call.get("response_json"))
+    return bool(response.get("error"))
 
 
 def _contract_from_call(

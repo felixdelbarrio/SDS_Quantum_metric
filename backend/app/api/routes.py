@@ -642,7 +642,7 @@ def local_dashboard_status(
     store: Annotated[ParquetStore, Depends(parquet_store_dep)],
     config_store: Annotated[QuantumConfigStore, Depends(config_store_dep)],
     country: str = "MX",
-    range_key: str = "today",
+    range_key: str = "last_7_days",
 ) -> dict[str, object]:
     return LocalDashboardService(store, config_store).status(country, range_key=range_key)
 
@@ -653,7 +653,7 @@ def local_dashboard_coverage(
     country: str = "MX",
     start: str | None = None,
     end: str | None = None,
-    range_key: str = "custom",
+    range_key: str = "last_7_days",
 ) -> dict[str, object]:
     try:
         resolution = resolve_range(
@@ -681,7 +681,7 @@ def local_dashboard_summary(
     segment: str | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
-    range_key: str = "today",
+    range_key: str = "last_7_days",
 ) -> dict[str, object]:
     return LocalDashboardService(store, config_store).summary(
         country,
@@ -705,7 +705,7 @@ def local_dashboard_summary_table(
     segment: str | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
-    range_key: str = "today",
+    range_key: str = "last_7_days",
 ) -> dict[str, object]:
     return LocalDashboardService(store, config_store).summary_table(
         country,
@@ -729,7 +729,7 @@ def local_dashboard_errors(
     segment: str | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
-    range_key: str = "today",
+    range_key: str = "last_7_days",
 ) -> dict[str, object]:
     return LocalDashboardService(store, config_store).errors(
         country,
@@ -753,7 +753,7 @@ def local_dashboard_top_errors(
     segment: str | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
-    range_key: str = "today",
+    range_key: str = "last_7_days",
 ) -> dict[str, object]:
     return LocalDashboardService(store, config_store).top_errors_table(
         country,
@@ -780,7 +780,7 @@ def local_dashboard_error_app_name(
     segment: str | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
-    range_key: str = "today",
+    range_key: str = "last_7_days",
 ) -> dict[str, object]:
     return LocalDashboardService(store, config_store).app_name_error_table(
         country,
@@ -803,7 +803,7 @@ def local_dashboard_card_detail(
     country: str = "MX",
     start_date: str | None = None,
     end_date: str | None = None,
-    range_key: str = "today",
+    range_key: str = "last_7_days",
 ) -> dict[str, object]:
     return LocalDashboardService(store, config_store).card_detail(
         country, card_role, start_date=start_date, end_date=end_date, range_key=range_key
@@ -816,7 +816,7 @@ def local_dashboard_card_breakdown(
     store: Annotated[ParquetStore, Depends(parquet_store_dep)],
     config_store: Annotated[QuantumConfigStore, Depends(config_store_dep)],
     country: str = "MX",
-    range_key: str = "today",
+    range_key: str = "last_7_days",
 ) -> dict[str, object]:
     return LocalDashboardService(store, config_store).card_breakdown(
         country, card_role, range_key=range_key
@@ -829,7 +829,7 @@ def local_dashboard_card_points(
     store: Annotated[ParquetStore, Depends(parquet_store_dep)],
     config_store: Annotated[QuantumConfigStore, Depends(config_store_dep)],
     country: str = "MX",
-    range_key: str = "today",
+    range_key: str = "last_7_days",
 ) -> dict[str, object]:
     return LocalDashboardService(store, config_store).card_points(
         country, card_role, range_key=range_key

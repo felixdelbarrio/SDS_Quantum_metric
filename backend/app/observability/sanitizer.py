@@ -8,7 +8,7 @@ SECRET_KEY_RE = re.compile(
     r"(cookie|token|authorization|secret|password|refresh|access)", re.IGNORECASE
 )
 JWT_RE = re.compile(r"eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}")
-COOKIE_PAIR_RE = re.compile(r"([A-Za-z0-9_:\-.]+)=([^;\s]{12,})")
+COOKIE_PAIR_RE = re.compile(r"([A-Za-z0-9_:\-.]+)=([^;\"',}\]\s]{12,})")
 
 
 def redact_text(value: str) -> str:

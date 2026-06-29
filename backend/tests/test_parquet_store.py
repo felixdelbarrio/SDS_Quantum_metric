@@ -246,6 +246,90 @@ def test_parquet_store_merge_uses_capture_chunk_range_when_source_range_missing(
     assert store.card_data("new-capture-range")[0]["card_id"] == "new-capture-range"
 
 
+def test_parquet_store_merge_keeps_overlapping_different_range_keys(tmp_path: Path) -> None:
+    store = ParquetStore(Settings(qm_data_dir=tmp_path))
+    last_7_days = {
+        **_raw_call(
+            ingestion_id="last-7",
+            card_id="last-7-card",
+            source_ts_start="2026-06-23T06:00:00Z",
+            source_ts_end="2026-06-30T05:59:59Z",
+        ),
+        "range_key": "last_7_days",
+    }
+    today = {
+        **_raw_call(
+            ingestion_id="today-old",
+            card_id="today-old-card",
+            source_ts_start="2026-06-29T06:00:00Z",
+            source_ts_end="2026-06-30T05:59:59Z",
+        ),
+        "range_key": "today",
+    }
+    store.merge_raw_calls("MX", [last_7_days, today])
+
+    replacement = {
+        **_raw_call(
+            ingestion_id="today-new",
+            card_id="today-new-card",
+            source_ts_start="2026-06-29T06:00:00Z",
+            source_ts_end="2026-06-30T05:59:59Z",
+        ),
+        "range_key": "today",
+    }
+    result = store.merge_raw_calls("MX", [replacement])
+
+    assert result.rows_replaced == 1
+    assert result.rows_after == 2
+    assert {row["card_id"] for row in store.read_country_dataset("MX", "raw_api_calls")} == {
+        "last-7-card",
+        "today-new-card",
+    }
+
+
+def test_parquet_store_merge_kept_rows_use_full_schema_inference(tmp_path: Path) -> None:
+    store = ParquetStore(Settings(qm_data_dir=tmp_path))
+    legacy_rows = [
+        _raw_call(
+            ingestion_id="legacy",
+            card_id=f"legacy-{index}",
+            source_ts_start="2026-06-29T06:00:00Z",
+            source_ts_end="2026-06-30T05:59:59Z",
+        )
+        for index in range(120)
+    ]
+    modern_today = {
+        **_raw_call(
+            ingestion_id="today",
+            card_id="today-modern",
+            source_ts_start="2026-06-29T06:00:00Z",
+            source_ts_end="2026-06-30T05:59:59Z",
+        ),
+        "range_key": "today",
+        "card_role": "summary.sessions",
+    }
+    store.merge_raw_calls("MX", [*legacy_rows, modern_today])
+
+    result = store.merge_raw_calls(
+        "MX",
+        [
+            {
+                **_raw_call(
+                    ingestion_id="last-7",
+                    card_id="last-7-modern",
+                    source_ts_start="2026-06-23T06:00:00Z",
+                    source_ts_end="2026-06-30T05:59:59Z",
+                ),
+                "range_key": "last_7_days",
+                "card_role": "summary.avg_session_duration",
+            }
+        ],
+    )
+
+    assert result.rows_after == 122
+    assert store.card_data("last-7-modern")[0]["card_role"] == "summary.avg_session_duration"
+
+
 def test_parquet_store_lists_merged_covered_source_ranges(tmp_path: Path) -> None:
     store = ParquetStore(Settings(qm_data_dir=tmp_path))
     store.merge_raw_calls(

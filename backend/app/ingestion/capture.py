@@ -3,8 +3,9 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 from urllib.parse import urlparse
@@ -93,6 +94,10 @@ class QuantumAnalyticsCaptureSession:
                 ignore_https_errors=not self.settings.qm_verify_tls,
                 args=["--disable-dev-shm-usage", "--no-first-run"],
             )
+            if self.cookies:
+                self._context.add_cookies(
+                    cast(Any, [cookie.as_playwright() for cookie in self.cookies])
+                )
         else:
             self._browser = _launch_headless_browser(self._playwright, self.settings)
             self._context = self._browser.new_context(
@@ -122,6 +127,17 @@ class QuantumAnalyticsCaptureSession:
         ingestion_ts = datetime.now(UTC).isoformat()
         rows: list[dict[str, Any]] = []
         range_validation_errors: list[str] = []
+        console_errors: list[str] = []
+        request_failures: list[str] = []
+        analytics_state: dict[str, Any] = {
+            "requests": 0,
+            "responses": 0,
+            "last_response_at": time.monotonic(),
+            "statuses": [],
+            "range_validation_errors": 0,
+        }
+        routed_payloads_by_id: dict[int, dict[str, Any]] = {}
+        routed_payloads_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
         page = self._context.new_page()
 
         def on_route(route: Any) -> None:
@@ -132,8 +148,14 @@ class QuantumAnalyticsCaptureSession:
             if not self._is_quantum_analytics(request.url):
                 route.continue_()
                 return
-            request_json = _parse_json(request.post_data or "")
+            analytics_state["requests"] = int(analytics_state["requests"]) + 1
+            raw_post_data = request.post_data or ""
+            request_json = _parse_json(raw_post_data)
             rewritten, changed = apply_ingestion_range(request_json, ingestion_range)
+            routed_payloads_by_id[id(request)] = rewritten if changed else request_json
+            routed_payloads_by_key[(request.method, request.url, raw_post_data)] = (
+                rewritten if changed else request_json
+            )
             if changed:
                 route.continue_(
                     post_data=json.dumps(rewritten, ensure_ascii=False, separators=(",", ":"))
@@ -145,10 +167,26 @@ class QuantumAnalyticsCaptureSession:
             parsed = urlparse(response.url)
             if not self._is_quantum_analytics(response.url):
                 return
+            analytics_state["responses"] = int(analytics_state["responses"]) + 1
+            analytics_state["last_response_at"] = time.monotonic()
+            cast(list[int], analytics_state["statuses"]).append(int(response.status))
             request = response.request
-            request_json = _parse_json(request.post_data or "")
-            response_json = _parse_json(response.body().decode("utf-8", "replace"))
+            raw_post_data = request.post_data or ""
+            request_json = routed_payloads_by_id.pop(id(request), None)
+            if request_json is None:
+                request_json = routed_payloads_by_key.pop(
+                    (request.method, request.url, raw_post_data),
+                    _parse_json(raw_post_data),
+                )
+            try:
+                response_json = _parse_json(response.body().decode("utf-8", "replace"))
+            except Exception:
+                response_json = {}
             query_range = extract_query_time_range(request_json)
+            effective_source_end = _effective_source_end(
+                query_range.end if query_range else None,
+                response_json,
+            )
             range_validation = None
             if ingestion_range is not None:
                 validation_target = IngestionChunk(
@@ -159,6 +197,9 @@ class QuantumAnalyticsCaptureSession:
                 range_validation = validate_query_time_range(request_json, validation_target)
                 if range_validation.status != "passed":
                     message = range_validation.error or "Range validation failed."
+                    analytics_state["range_validation_errors"] = (
+                        int(analytics_state["range_validation_errors"]) + 1
+                    )
                     range_validation_errors.append(f"{parsed.path}: {message}")
                     return
             query = (
@@ -197,7 +238,14 @@ class QuantumAnalyticsCaptureSession:
                     "parse_error": None,
                     "captured_at": ingestion_ts,
                     "source_ts_start": _iso(query_range.start) if query_range else None,
-                    "source_ts_end": _iso(query_range.end) if query_range else None,
+                    "source_ts_end": _iso(effective_source_end)
+                    if effective_source_end
+                    else _iso(query_range.end)
+                    if query_range
+                    else None,
+                    "effective_source_ts_end": _iso(effective_source_end)
+                    if effective_source_end
+                    else None,
                     "source_period_label": query_range.label if query_range else None,
                     "source_timezone": query_range.timezone if query_range else "CST",
                     "capture_chunk_start": _iso(ingestion_range.start) if ingestion_range else None,
@@ -229,19 +277,39 @@ class QuantumAnalyticsCaptureSession:
                 }
             )
 
+        def on_console(message: Any) -> None:
+            if message.type in {"error", "warning"}:
+                console_errors.append(f"{message.type}: {message.text}"[:240])
+
+        def on_request_failed(request: Any) -> None:
+            if self._is_quantum_analytics(request.url):
+                failure = request.failure
+                request_failures.append(str(failure or request.url)[:240])
+
+        _prepare_dashboard_page(page)
         page.route("**/*", on_route)
         page.on("response", on_response)
+        page.on("console", on_console)
+        page.on("requestfailed", on_request_failed)
         try:
             page.goto(dashboard_url, wait_until="domcontentloaded", timeout=60_000)
-            page.wait_for_timeout(self.wait_seconds * 1000)
+            _wait_for_analytics_settle(page, rows, analytics_state, self.wait_seconds)
         finally:
+            diagnostics = _capture_diagnostics(
+                page,
+                analytics_state,
+                console_errors=console_errors,
+                request_failures=request_failures,
+            )
             page.close()
-        if range_validation_errors:
+        if range_validation_errors and not rows:
             unique_errors = list(dict.fromkeys(range_validation_errors))
             raise RuntimeError(
                 "Quantum range validation failed before persisting raw calls: "
                 + " | ".join(unique_errors[:5])
             )
+        if not rows:
+            raise RuntimeError("No Quantum analytics responses were captured. " + diagnostics)
         return rows
 
     def _is_quantum_analytics(self, url: str) -> bool:
@@ -293,6 +361,125 @@ def _parse_json(raw: str) -> dict[str, Any]:
     except Exception:
         return {}
     return value if isinstance(value, dict) else {"value": value}
+
+
+def _effective_source_end(
+    requested_end: datetime | None,
+    response_json: dict[str, Any],
+) -> datetime | None:
+    if requested_end is None:
+        return None
+    stats = response_json.get("stats")
+    if not isinstance(stats, dict):
+        return requested_end
+    archive_cutoff = stats.get("archive_cutoff_ts")
+    if not isinstance(archive_cutoff, int | float):
+        return requested_end
+    cutoff = _complete_hour_end(datetime.fromtimestamp(archive_cutoff, UTC))
+    return min(requested_end, cutoff)
+
+
+def _complete_hour_end(value: datetime) -> datetime:
+    hour_start = value.astimezone(UTC).replace(minute=0, second=0, microsecond=0)
+    return hour_start - timedelta(seconds=1)
+
+
+def _wait_for_analytics_settle(
+    page: Any,
+    rows: list[dict[str, Any]],
+    analytics_state: dict[str, Any],
+    wait_seconds: int,
+) -> None:
+    started = time.monotonic()
+    deadline = started + max(5, wait_seconds)
+    quiet_seconds = 8.0
+    minimum_seconds = 35.0
+    next_scroll_at = started + 2.0
+    while time.monotonic() < deadline:
+        page.wait_for_timeout(500)
+        now = time.monotonic()
+        if now >= next_scroll_at:
+            _scroll_dashboard(page)
+            next_scroll_at = now + 1.5
+        if rows and now - started >= minimum_seconds:
+            last_response_at = float(analytics_state.get("last_response_at") or started)
+            if now - last_response_at >= quiet_seconds:
+                return
+        if not rows and now - started >= 8 and _looks_unauthenticated(page):
+            return
+
+
+def _prepare_dashboard_page(page: Any) -> None:
+    try:
+        page.set_viewport_size({"width": 1920, "height": 2400})
+    except Exception:
+        return
+
+
+def _scroll_dashboard(page: Any) -> None:
+    try:
+        page.evaluate(
+            """
+            () => {
+              const doc = document.documentElement;
+              const body = document.body;
+              const maxY = Math.max(body.scrollHeight, doc.scrollHeight) - window.innerHeight;
+              if (maxY <= 0) return;
+              const step = Math.max(Math.floor(window.innerHeight * 0.75), 600);
+              const next = window.scrollY + step >= maxY ? 0 : window.scrollY + step;
+              window.scrollTo({ top: next, behavior: "auto" });
+            }
+            """
+        )
+    except Exception:
+        return
+
+
+def _capture_diagnostics(
+    page: Any,
+    analytics_state: dict[str, Any],
+    *,
+    console_errors: list[str],
+    request_failures: list[str],
+) -> str:
+    try:
+        title = page.title()
+    except Exception:
+        title = ""
+    try:
+        final_url = page.url
+    except Exception:
+        final_url = ""
+    auth_hint = " login_detected=true" if _looks_unauthenticated(page) else ""
+    statuses = ",".join(str(status) for status in analytics_state.get("statuses", [])[-10:])
+    return (
+        f"final_url={final_url or '-'} title={title or '-'}"
+        f" analytics_requests={analytics_state.get('requests', 0)}"
+        f" analytics_responses={analytics_state.get('responses', 0)}"
+        f" analytics_statuses={statuses or '-'}"
+        f" range_validation_errors={analytics_state.get('range_validation_errors', 0)}"
+        f"{auth_hint}"
+        f" request_failures={request_failures[:3]}"
+        f" console={console_errors[:3]}"
+    )
+
+
+def _looks_unauthenticated(page: Any) -> bool:
+    try:
+        current = f"{page.url} {page.title()}".casefold()
+    except Exception:
+        current = ""
+    auth_markers = (
+        "login",
+        "signin",
+        "sign-in",
+        "saml",
+        "oauth",
+        "authenticate",
+        "microsoftonline",
+        "okta",
+    )
+    return any(marker in current for marker in auth_markers)
 
 
 def _sanitize_headers(headers: dict[str, str]) -> dict[str, str]:
