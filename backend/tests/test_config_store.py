@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from pytest import MonkeyPatch
+
 from backend.app.config.settings import Settings
 from backend.app.quantum.config_store import QuantumConfigStore
 from backend.app.quantum.schemas import (
@@ -42,11 +44,15 @@ def test_config_store_does_not_persist_manual_cookie(tmp_path: Path) -> None:
     assert "manual_cookie" not in text
 
 
-def test_config_store_default_ingestion_depth_is_30_days(tmp_path: Path) -> None:
+def test_config_store_default_ingestion_depth_is_7_days(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.delenv("QUANTUM_INGESTION_DEPTH_DAYS", raising=False)
+    monkeypatch.chdir(tmp_path)
     settings = Settings(qm_data_dir=tmp_path)
     store = QuantumConfigStore(settings)
 
-    assert store.default().ingestion_depth_days == 30
+    assert store.default().ingestion_depth_days == 7
 
 
 def test_config_store_persists_ingestion_depth_and_theme(tmp_path: Path) -> None:

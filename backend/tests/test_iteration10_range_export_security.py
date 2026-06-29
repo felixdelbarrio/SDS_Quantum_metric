@@ -70,6 +70,29 @@ def test_range_key_isolates_yesterday_from_today(tmp_path: Path) -> None:
     assert today["widgets"][0]["value"] != yesterday["widgets"][0]["value"]
 
 
+def test_missing_range_does_not_reuse_other_range_raw_calls(tmp_path: Path) -> None:
+    store = ParquetStore(Settings(qm_data_dir=tmp_path))
+    today_rows = [
+        {
+            **row,
+            "range_key": "today",
+            "range_start": "2026-06-18T06:00:00Z",
+            "range_end": "2026-06-19T05:59:59Z",
+            "capture_mode": "range_contract",
+        }
+        for row in _fixture_rows()
+    ]
+    store.merge_raw_calls("MX", today_rows)
+    build_derived_datasets(store, "MX", range_key="today")
+    run_regression(store, "MX", range_key="today")
+
+    status = LocalDashboardService(store).status("MX", range_key="last_7_days")
+
+    assert status["has_data"] is True
+    assert status["calls"] == 0
+    assert status["reason"] == "No hay ingesta local para el rango seleccionado."
+
+
 def test_export_endpoint_creates_zip_in_requested_downloads_path(tmp_path: Path) -> None:
     settings = Settings(qm_data_dir=tmp_path / "data", qm_export_dir=tmp_path / "Downloads")
     store = ParquetStore(settings)

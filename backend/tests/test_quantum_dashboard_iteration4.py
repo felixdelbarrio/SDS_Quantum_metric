@@ -229,6 +229,11 @@ def test_local_dashboard_apis_read_derived_data_offline(tmp_path: Path) -> None:
         "error_sessions_percentage_evolution",
         "error_sessions_by_app_name",
     }
+    donut = next(
+        widget for widget in errors["widgets"] if widget["id"] == "error_sessions_by_app_name"
+    )
+    assert donut["value"] == donut["total"]
+    assert donut["breakdown"]
     assert top_errors["rows"][0]["name"] == "TypeError"
     assert app_name["rows"][0]["name"] == "pagos"
 

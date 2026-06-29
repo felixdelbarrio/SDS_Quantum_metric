@@ -3,10 +3,10 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
-from backend.app.auth.browser_cookies import BrowserCookieProvider
+from backend.app.auth.browser_cookies import BrowserCookieProvider, CookieAccessError
 from backend.app.auth.session_store import secret_store
 from backend.app.config.settings import Settings
 from backend.app.ingestion.models import IngestionCreate, IngestionJob
@@ -100,20 +100,24 @@ class IngestionService:
                     capture_mode="daily",
                 )
             else:
-                legacy_range = build_ingestion_range(
-                    self.parquet_store.latest_source_end(request.country.value),
-                    depth_days=config.ingestion_depth_days,
-                    incremental_reprocess_days=self.settings.quantum_incremental_reprocess_days,
-                )
-                ingestion_range = IngestionRange(
-                    mode=legacy_range.mode,
-                    start=legacy_range.start,
-                    end=legacy_range.end,
-                    latest_source_end=legacy_range.latest_source_end,
-                    lookback_days=legacy_range.lookback_days,
-                    range_key=request.range_key or "today",
-                    capture_mode="daily",
-                )
+                preset_range = _preset_range(request.range_key)
+                if preset_range:
+                    ingestion_range = preset_range
+                else:
+                    legacy_range = build_ingestion_range(
+                        self.parquet_store.latest_source_end(request.country.value),
+                        depth_days=config.ingestion_depth_days,
+                        incremental_reprocess_days=self.settings.quantum_incremental_reprocess_days,
+                    )
+                    ingestion_range = IngestionRange(
+                        mode=legacy_range.mode,
+                        start=legacy_range.start,
+                        end=legacy_range.end,
+                        latest_source_end=legacy_range.latest_source_end,
+                        lookback_days=legacy_range.lookback_days,
+                        range_key=request.range_key or "custom",
+                        capture_mode="daily",
+                    )
             country_config = config.required_country_config(request.country)
             dashboard = country_config.default_dashboard()
             if not dashboard or not dashboard.dashboard_id or not dashboard.validated:
@@ -142,10 +146,19 @@ class IngestionService:
                 cookies = self.cookie_provider.from_manual_header(
                     manual_cookie, str(discovery.base_url)
                 )
+                capture_session_mode = config.session_mode.value
             elif config.session_mode == "controlled":
-                cookies = []
+                try:
+                    cookies = self.cookie_provider.load(
+                        config.browser.value, str(discovery.base_url)
+                    )
+                    capture_session_mode = "browser"
+                except CookieAccessError:
+                    cookies = []
+                    capture_session_mode = config.session_mode.value
             else:
                 cookies = self.cookie_provider.load(config.browser.value, str(discovery.base_url))
+                capture_session_mode = config.session_mode.value
             chunks = day_chunks or plan_ingestion_chunks(
                 ingestion_range,
                 chunk_days=(
@@ -154,12 +167,15 @@ class IngestionService:
                     else 3650
                 ),
             )
-            covered_ranges = self.parquet_store.covered_source_ranges(request.country.value)
-            chunks_to_capture = [
-                chunk
-                for chunk in chunks
-                if day_chunks or not _is_chunk_covered(chunk, covered_ranges)
-            ]
+            if ingestion_range.capture_mode == "range_contract":
+                chunks_to_capture = chunks
+            else:
+                covered_ranges = self.parquet_store.covered_source_ranges(request.country.value)
+                chunks_to_capture = [
+                    chunk
+                    for chunk in chunks
+                    if day_chunks or not _is_chunk_covered(chunk, covered_ranges)
+                ]
             job.planned_chunks = len(chunks)
             job.chunks = [
                 {
@@ -252,7 +268,7 @@ class IngestionService:
                     errors_tab=discovery.errors_tab,
                     ingestion_id=job.ingestion_id,
                     ingestion_range=chunk_range,
-                    session_mode=config.session_mode.value,
+                    session_mode=capture_session_mode,
                     progress_callback=progress_callback,
                 )
                 captured = _filter_enabled_rows(captured, enabled_roles)
@@ -448,17 +464,28 @@ def _explicit_range_from_request(request: IngestionCreate) -> IngestionRange | N
     )
 
 
-def _today_range(range_key: str) -> IngestionRange:
+def _preset_range(range_key: str | None) -> IngestionRange | None:
+    key = (range_key or "last_7_days").strip().lower()
     zone = zoneinfo_for("CST")
     today = datetime.now(zone).date()
-    start, end = _day_bounds(today)
+    if key == "today":
+        start_day = end_day = today
+    elif key == "yesterday":
+        start_day = end_day = today - timedelta(days=1)
+    elif key == "last_7_days":
+        start_day = today - timedelta(days=6)
+        end_day = today
+    else:
+        return None
+    start, _ = _day_bounds(start_day)
+    _, end = _day_bounds(end_day)
     return IngestionRange(
-        mode="incremental",
+        mode="backfill",
         start=start,
         end=end,
         latest_source_end=None,
-        lookback_days=1,
-        range_key=range_key or "today",
+        lookback_days=(end_day - start_day).days + 1,
+        range_key=key,
         capture_mode="range_contract",
     )
 
@@ -533,21 +560,23 @@ def _filter_enabled_rows(
     rows: list[dict[str, Any]],
     enabled_roles: set[str],
 ) -> list[dict[str, Any]]:
-    card_role_by_id: dict[str, str] = {}
+    card_roles_by_id: dict[str, set[str]] = {}
     for row in rows:
         role = map_card_role(row)
         card_id = str(row.get("card_id") or "")
         if role is not None and card_id:
-            card_role_by_id[card_id] = role
+            card_roles_by_id.setdefault(card_id, set()).add(str(role))
     filtered: list[dict[str, Any]] = []
     for row in rows:
         role = map_card_role(row)
         card_id = str(row.get("card_id") or "")
-        if role is not None:
-            if role in enabled_roles:
-                filtered.append(row)
+        resolved_role = str(role) if role is not None else None
+        inferred_roles = card_roles_by_id.get(card_id, set())
+        if resolved_role is None and len(inferred_roles) == 1:
+            resolved_role = next(iter(inferred_roles))
+        if resolved_role is not None:
+            if resolved_role in enabled_roles:
+                filtered.append({**row, "card_role": resolved_role})
             continue
-        inferred = card_role_by_id.get(card_id)
-        if inferred is None or inferred in enabled_roles:
-            filtered.append(row)
+        filtered.append(row)
     return filtered

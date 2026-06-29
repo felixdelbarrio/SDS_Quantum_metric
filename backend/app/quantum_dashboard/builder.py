@@ -274,11 +274,14 @@ def _call_score(role: VisualRole, call: dict[str, Any]) -> int:
         "summary.detail_by_app_name_os",
         "errors.top_errors_by_error_name",
         "errors.error_session_percentage_by_app_name",
+        "errors.error_sessions_by_app_name_comparison",
     }:
         if view_name == "table":
             score += 1000
         if view_name == "topN":
             score += 900
+        if view_name == "dimensionQuery":
+            score += 800
     else:
         if view_name in {"coreMetricsComparisonSegment", "dimensionQueryComparisonSegment"}:
             score += 1200
@@ -290,7 +293,14 @@ def _call_score(role: VisualRole, call: dict[str, Any]) -> int:
             score += 50
     if call.get("metric_ids") not in (None, "", "[]"):
         score += 25
+    if _response_has_error(call):
+        score -= 1000
     return score
+
+
+def _response_has_error(call: dict[str, Any]) -> bool:
+    response = parse_json_object(call.get("response_json"))
+    return bool(response.get("error"))
 
 
 def _contract_from_call(
