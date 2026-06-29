@@ -5,7 +5,7 @@ import os
 import sys
 import time
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 from urllib.parse import urlparse
@@ -375,8 +375,13 @@ def _effective_source_end(
     archive_cutoff = stats.get("archive_cutoff_ts")
     if not isinstance(archive_cutoff, int | float):
         return requested_end
-    cutoff = datetime.fromtimestamp(archive_cutoff, UTC)
+    cutoff = _complete_hour_end(datetime.fromtimestamp(archive_cutoff, UTC))
     return min(requested_end, cutoff)
+
+
+def _complete_hour_end(value: datetime) -> datetime:
+    hour_start = value.astimezone(UTC).replace(minute=0, second=0, microsecond=0)
+    return hour_start - timedelta(seconds=1)
 
 
 def _wait_for_analytics_settle(

@@ -543,6 +543,25 @@ def test_parsers_support_real_quantum_rows_and_results_shapes() -> None:
     assert top_errors.data["rows"][0]["error_sessions"] == 10607
     assert top_errors.data["rows"][0]["error_session_percent"] == 100
 
+    error_percentage = parse_card(
+        _parser_call(
+            response_json={
+                "rows": [
+                    {"dimensions": ["operaciones con cheques"], "metrics": [1]},
+                    {"dimensions": ["solicitar qr"], "metrics": [1]},
+                    {"dimensions": ["agregar curp"], "metrics": [1]},
+                ]
+            }
+        ),
+        "errors.error_session_percentage_by_app_name",
+    )
+    assert error_percentage.status == "ok"
+    assert [row["name"] for row in error_percentage.data["rows"]] == [
+        "operaciones con cheques",
+        "solicitar qr",
+        "agregar curp",
+    ]
+
     donut = parse_card(
         _parser_call(
             response_json={
@@ -650,6 +669,27 @@ def test_line_chart_payload_combines_devices_as_daily_visual_series() -> None:
 
     assert seconds_payload is not None
     assert seconds_payload["series"][1]["points"][0]["value"] == 180.0
+
+    partial_payload = build_line_chart_payload_from_series(
+        role="summary.page_views",
+        title="Paginas vistas",
+        unit="count",
+        mobile_points=[
+            {"ts": "2026-06-23T07:00:00Z", "value": 10},
+            {"ts": "2026-06-28T07:00:00Z", "value": 20},
+            {"ts": "2026-06-29T07:00:00Z", "value": 999},
+        ],
+        desktop_points=[],
+        response_json={"metadata": {"timezone": "CST"}},
+        aggregate_daily=True,
+        period_end="2026-06-29T09:59:59Z",
+    )
+
+    assert partial_payload is not None
+    assert [point["label"] for point in partial_payload["series"][0]["points"]] == [
+        "Jun 23",
+        "Jun 28",
+    ]
 
     captured_payload = build_line_chart_payload_from_series(
         role="summary.page_views",

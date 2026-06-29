@@ -595,30 +595,16 @@ class LocalDashboardService:
         return str(value) if value is not None else None
 
     def _period(self, country: str, range_key: str) -> dict[str, str | None]:
-        rows = [
-            *self._read_dataset(country, DATASET_VISUAL_CONTRACTS, range_key),
-            *self._read_dataset(country, DATASET_SUMMARY_WIDGETS, range_key),
-            *self._read_dataset(country, DATASET_ERRORS_WIDGETS, range_key),
-            *self._read_dataset(country, DATASET_CHART_PAYLOADS, range_key),
-        ]
-        starts: list[str] = []
-        ends: list[str] = []
-        timezone: object | None = None
-        for row in rows:
-            period = row.get("period")
-            if isinstance(period, dict):
-                _append_period_values(period, starts, ends)
-                timezone = timezone or period.get("timezone")
-            _append_period_values(row, starts, ends)
-            timezone = timezone or row.get("period_timezone")
-        start = min(starts) if starts else None
-        end = max(ends) if ends else None
-        return {
-            "start": start,
-            "end": end,
-            "timezone": str(timezone) if timezone else None,
-            "label": _period_label(start, end, str(timezone) if timezone else "CST"),
-        }
+        for dataset in (
+            DATASET_VISUAL_CONTRACTS,
+            DATASET_SUMMARY_WIDGETS,
+            DATASET_ERRORS_WIDGETS,
+            DATASET_CHART_PAYLOADS,
+        ):
+            period = _first_period(self._read_dataset(country, dataset, range_key))
+            if period["start"] or period["end"]:
+                return period
+        return _period_response(None, None, None)
 
     def _available_dataset_names(self, country: str) -> list[str]:
         root = self.store.settings.parquet_dir / f"country={country}"
@@ -925,17 +911,37 @@ def _number(value: Any) -> float:
     return 0.0
 
 
-def _append_period_values(
-    row: dict[str, Any],
-    starts: list[str],
-    ends: list[str],
-) -> None:
-    start = row.get("start") or row.get("period_start")
-    end = row.get("end") or row.get("period_end")
-    if start:
-        starts.append(str(start))
-    if end:
-        ends.append(str(end))
+def _first_period(rows: list[dict[str, Any]]) -> dict[str, str | None]:
+    for row in rows:
+        period = row.get("period")
+        if isinstance(period, dict):
+            start = _text(period.get("start"))
+            end = _text(period.get("end"))
+            timezone = _text(period.get("timezone"))
+            if start or end:
+                return _period_response(start, end, timezone)
+        start = _text(row.get("range_start") or row.get("period_start") or row.get("start"))
+        end = _text(row.get("range_end") or row.get("period_end") or row.get("end"))
+        timezone = _text(
+            row.get("range_timezone") or row.get("period_timezone") or row.get("timezone")
+        )
+        if start or end:
+            return _period_response(start, end, timezone)
+    return _period_response(None, None, None)
+
+
+def _period_response(
+    start: str | None,
+    end: str | None,
+    timezone: str | None,
+) -> dict[str, str | None]:
+    zone = timezone or "CST"
+    return {
+        "start": start,
+        "end": end,
+        "timezone": timezone,
+        "label": _period_label(start, end, zone),
+    }
 
 
 def _period_matches(
