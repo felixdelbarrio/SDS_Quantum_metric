@@ -6,7 +6,7 @@ import uuid
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
-from backend.app.auth.browser_cookies import BrowserCookieProvider
+from backend.app.auth.browser_cookies import BrowserCookieProvider, CookieAccessError
 from backend.app.auth.session_store import secret_store
 from backend.app.config.settings import Settings
 from backend.app.ingestion.models import IngestionCreate, IngestionJob
@@ -147,7 +147,12 @@ class IngestionService:
                     manual_cookie, str(discovery.base_url)
                 )
             elif config.session_mode == "controlled":
-                cookies = []
+                try:
+                    cookies = self.cookie_provider.load(
+                        config.browser.value, str(discovery.base_url)
+                    )
+                except CookieAccessError:
+                    cookies = []
             else:
                 cookies = self.cookie_provider.load(config.browser.value, str(discovery.base_url))
             chunks = day_chunks or plan_ingestion_chunks(

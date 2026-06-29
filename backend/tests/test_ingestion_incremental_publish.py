@@ -28,7 +28,7 @@ async def test_ingestion_publishes_dashboard_after_each_completed_chunk(
         settings,
         _ConfigStore(settings),
         store,
-        cast(BrowserCookieProvider, _CookieProvider()),
+        cast(BrowserCookieProvider, _CookieProvider(cookies=["chrome-session"])),
     )
     now = datetime(2026, 6, 17, tzinfo=UTC)
     chunks = [
@@ -41,6 +41,8 @@ async def test_ingestion_publishes_dashboard_after_each_completed_chunk(
 
     def fake_capture(**kwargs: Any) -> list[dict[str, Any]]:
         ingestion_range = kwargs["ingestion_range"]
+        assert kwargs["session_mode"] == "controlled"
+        assert kwargs["cookies"] == ["chrome-session"]
         return [
             {
                 "row_count": 10,
@@ -173,8 +175,11 @@ class _ConfigStore(QuantumConfigStore):
 
 
 class _CookieProvider:
+    def __init__(self, cookies: list[str] | None = None) -> None:
+        self.cookies = cookies or []
+
     def load(self, *_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
-        return []
+        return cast(list[dict[str, Any]], self.cookies)
 
 
 class _Build:

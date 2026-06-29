@@ -94,6 +94,10 @@ class QuantumAnalyticsCaptureSession:
                 ignore_https_errors=not self.settings.qm_verify_tls,
                 args=["--disable-dev-shm-usage", "--no-first-run"],
             )
+            if self.cookies:
+                self._context.add_cookies(
+                    cast(Any, [cookie.as_playwright() for cookie in self.cookies])
+                )
         else:
             self._browser = _launch_headless_browser(self._playwright, self.settings)
             self._context = self._browser.new_context(
@@ -130,7 +134,10 @@ class QuantumAnalyticsCaptureSession:
             "responses": 0,
             "last_response_at": time.monotonic(),
             "statuses": [],
+            "range_validation_errors": 0,
         }
+        routed_payloads_by_id: dict[int, dict[str, Any]] = {}
+        routed_payloads_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
         page = self._context.new_page()
 
         def on_route(route: Any) -> None:
@@ -142,8 +149,13 @@ class QuantumAnalyticsCaptureSession:
                 route.continue_()
                 return
             analytics_state["requests"] = int(analytics_state["requests"]) + 1
-            request_json = _parse_json(request.post_data or "")
+            raw_post_data = request.post_data or ""
+            request_json = _parse_json(raw_post_data)
             rewritten, changed = apply_ingestion_range(request_json, ingestion_range)
+            routed_payloads_by_id[id(request)] = rewritten if changed else request_json
+            routed_payloads_by_key[(request.method, request.url, raw_post_data)] = (
+                rewritten if changed else request_json
+            )
             if changed:
                 route.continue_(
                     post_data=json.dumps(rewritten, ensure_ascii=False, separators=(",", ":"))
@@ -159,7 +171,13 @@ class QuantumAnalyticsCaptureSession:
             analytics_state["last_response_at"] = time.monotonic()
             cast(list[int], analytics_state["statuses"]).append(int(response.status))
             request = response.request
-            request_json = _parse_json(request.post_data or "")
+            raw_post_data = request.post_data or ""
+            request_json = routed_payloads_by_id.pop(id(request), None)
+            if request_json is None:
+                request_json = routed_payloads_by_key.pop(
+                    (request.method, request.url, raw_post_data),
+                    _parse_json(raw_post_data),
+                )
             try:
                 response_json = _parse_json(response.body().decode("utf-8", "replace"))
             except Exception:
@@ -175,6 +193,9 @@ class QuantumAnalyticsCaptureSession:
                 range_validation = validate_query_time_range(request_json, validation_target)
                 if range_validation.status != "passed":
                     message = range_validation.error or "Range validation failed."
+                    analytics_state["range_validation_errors"] = (
+                        int(analytics_state["range_validation_errors"]) + 1
+                    )
                     range_validation_errors.append(f"{parsed.path}: {message}")
                     return
             query = (
@@ -269,7 +290,7 @@ class QuantumAnalyticsCaptureSession:
                 request_failures=request_failures,
             )
             page.close()
-        if range_validation_errors:
+        if range_validation_errors and not rows:
             unique_errors = list(dict.fromkeys(range_validation_errors))
             raise RuntimeError(
                 "Quantum range validation failed before persisting raw calls: "
@@ -373,6 +394,7 @@ def _capture_diagnostics(
         f" analytics_requests={analytics_state.get('requests', 0)}"
         f" analytics_responses={analytics_state.get('responses', 0)}"
         f" analytics_statuses={statuses or '-'}"
+        f" range_validation_errors={analytics_state.get('range_validation_errors', 0)}"
         f"{auth_hint}"
         f" request_failures={request_failures[:3]}"
         f" console={console_errors[:3]}"

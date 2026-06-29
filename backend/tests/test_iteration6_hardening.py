@@ -165,6 +165,50 @@ def test_time_rewriter_handles_top_level_window_string_epoch_and_offset() -> Non
     assert extracted.label == "Today"
 
 
+def test_time_rewriter_handles_hit_ts_predicates_and_dimension_fills() -> None:
+    chunk = plan_ingestion_chunks(
+        IngestionRange(
+            mode="backfill",
+            start=datetime(2026, 6, 23, 6, tzinfo=UTC),
+            end=datetime(2026, 6, 30, 5, 59, 59, tzinfo=UTC),
+            latest_source_end=None,
+        ),
+        chunk_days=7,
+    )[0]
+    payload = {
+        "dimensionFills": {
+            "dimensionFills": [
+                {"arguments": [1782712800, 1782719880, 60, -21600]},
+            ]
+        },
+        "filter": {
+            "predicateFnNamespace": ["qm", "default", "predicates", "and"],
+            "arguments": [
+                {
+                    "predicateFnNamespace": ["qm", "default", "predicates", "gte"],
+                    "arguments": [{"path": ["hit", "ts"]}, 1782712800],
+                },
+                {
+                    "predicateFnNamespace": ["qm", "default", "predicates", "lt"],
+                    "arguments": [{"path": ["hit", "ts"]}, 1782719940],
+                },
+            ],
+        },
+    }
+
+    result = rewrite_query_time_range(payload, chunk)
+    extracted = extract_query_time_range(result.payload)
+
+    assert result.changed is True
+    assert extracted is not None
+    assert extracted.start == chunk.start
+    assert extracted.end == chunk.end
+    assert result.payload["dimensionFills"]["dimensionFills"][0]["arguments"][:2] == [
+        int(chunk.start.timestamp()),
+        int(chunk.end.timestamp()),
+    ]
+
+
 def test_apply_ingestion_range_uses_legacy_ts_fallback_without_query_rewriter_match() -> None:
     ingestion_range = IngestionRange(
         mode="incremental",
