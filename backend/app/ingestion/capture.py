@@ -275,6 +275,7 @@ class QuantumAnalyticsCaptureSession:
                 failure = request.failure
                 request_failures.append(str(failure or request.url)[:240])
 
+        _prepare_dashboard_page(page)
         page.route("**/*", on_route)
         page.on("response", on_response)
         page.on("console", on_console)
@@ -359,17 +360,47 @@ def _wait_for_analytics_settle(
 ) -> None:
     started = time.monotonic()
     deadline = started + max(5, wait_seconds)
-    quiet_seconds = 3.0
-    minimum_seconds = 5.0
+    quiet_seconds = 8.0
+    minimum_seconds = 35.0
+    next_scroll_at = started + 2.0
     while time.monotonic() < deadline:
         page.wait_for_timeout(500)
         now = time.monotonic()
+        if now >= next_scroll_at:
+            _scroll_dashboard(page)
+            next_scroll_at = now + 1.5
         if rows and now - started >= minimum_seconds:
             last_response_at = float(analytics_state.get("last_response_at") or started)
             if now - last_response_at >= quiet_seconds:
                 return
         if not rows and now - started >= 8 and _looks_unauthenticated(page):
             return
+
+
+def _prepare_dashboard_page(page: Any) -> None:
+    try:
+        page.set_viewport_size({"width": 1920, "height": 2400})
+    except Exception:
+        return
+
+
+def _scroll_dashboard(page: Any) -> None:
+    try:
+        page.evaluate(
+            """
+            () => {
+              const doc = document.documentElement;
+              const body = document.body;
+              const maxY = Math.max(body.scrollHeight, doc.scrollHeight) - window.innerHeight;
+              if (maxY <= 0) return;
+              const step = Math.max(Math.floor(window.innerHeight * 0.75), 600);
+              const next = window.scrollY + step >= maxY ? 0 : window.scrollY + step;
+              window.scrollTo({ top: next, behavior: "auto" });
+            }
+            """
+        )
+    except Exception:
+        return
 
 
 def _capture_diagnostics(

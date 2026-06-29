@@ -11,7 +11,7 @@ from backend.app.config.settings import Settings
 from backend.app.ingestion.models import IngestionCreate, IngestionJob
 from backend.app.ingestion.planner import IngestionChunk
 from backend.app.ingestion.policy import IngestionRange
-from backend.app.ingestion.service import IngestionService
+from backend.app.ingestion.service import IngestionService, _filter_enabled_rows
 from backend.app.quantum.config_store import QuantumConfigStore
 from backend.app.quantum.schemas import Country, QuantumConfig
 from backend.app.quantum_dashboard.models import DashboardDiscoveryResult
@@ -41,7 +41,7 @@ async def test_ingestion_publishes_dashboard_after_each_completed_chunk(
 
     def fake_capture(**kwargs: Any) -> list[dict[str, Any]]:
         ingestion_range = kwargs["ingestion_range"]
-        assert kwargs["session_mode"] == "controlled"
+        assert kwargs["session_mode"] == "browser"
         assert kwargs["cookies"] == ["chrome-session"]
         return [
             {
@@ -167,6 +167,32 @@ async def test_ingestion_fails_when_capture_returns_no_analytics_calls(
     assert job.status == "failed"
     assert any("No Quantum analytics responses" in error for error in job.errors)
     assert job.calls_captured == 0
+
+
+def test_filter_enabled_rows_materializes_resolved_card_role() -> None:
+    rows = [
+        {
+            "tab": "summary",
+            "card_id": "summary-card",
+            "card_type": "CHART",
+            "metric_ids": '["bde22d61-91c0-4d27-8ee3-ef467daea00c"]',
+            "request_json": "{}",
+        },
+        {
+            "tab": "summary",
+            "card_id": "summary-card",
+            "card_type": "CHART",
+            "metric_ids": "[]",
+            "request_json": "{}",
+        },
+    ]
+
+    filtered = _filter_enabled_rows(rows, {"summary.page_views"})
+
+    assert [row.get("card_role") for row in filtered] == [
+        "summary.page_views",
+        "summary.page_views",
+    ]
 
 
 class _ConfigStore(QuantumConfigStore):

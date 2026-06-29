@@ -146,15 +146,19 @@ class IngestionService:
                 cookies = self.cookie_provider.from_manual_header(
                     manual_cookie, str(discovery.base_url)
                 )
+                capture_session_mode = config.session_mode.value
             elif config.session_mode == "controlled":
                 try:
                     cookies = self.cookie_provider.load(
                         config.browser.value, str(discovery.base_url)
                     )
+                    capture_session_mode = "browser"
                 except CookieAccessError:
                     cookies = []
+                    capture_session_mode = config.session_mode.value
             else:
                 cookies = self.cookie_provider.load(config.browser.value, str(discovery.base_url))
+                capture_session_mode = config.session_mode.value
             chunks = day_chunks or plan_ingestion_chunks(
                 ingestion_range,
                 chunk_days=(
@@ -163,12 +167,15 @@ class IngestionService:
                     else 3650
                 ),
             )
-            covered_ranges = self.parquet_store.covered_source_ranges(request.country.value)
-            chunks_to_capture = [
-                chunk
-                for chunk in chunks
-                if day_chunks or not _is_chunk_covered(chunk, covered_ranges)
-            ]
+            if ingestion_range.capture_mode == "range_contract":
+                chunks_to_capture = chunks
+            else:
+                covered_ranges = self.parquet_store.covered_source_ranges(request.country.value)
+                chunks_to_capture = [
+                    chunk
+                    for chunk in chunks
+                    if day_chunks or not _is_chunk_covered(chunk, covered_ranges)
+                ]
             job.planned_chunks = len(chunks)
             job.chunks = [
                 {
@@ -261,7 +268,7 @@ class IngestionService:
                     errors_tab=discovery.errors_tab,
                     ingestion_id=job.ingestion_id,
                     ingestion_range=chunk_range,
-                    session_mode=config.session_mode.value,
+                    session_mode=capture_session_mode,
                     progress_callback=progress_callback,
                 )
                 captured = _filter_enabled_rows(captured, enabled_roles)
@@ -553,21 +560,23 @@ def _filter_enabled_rows(
     rows: list[dict[str, Any]],
     enabled_roles: set[str],
 ) -> list[dict[str, Any]]:
-    card_role_by_id: dict[str, str] = {}
+    card_roles_by_id: dict[str, set[str]] = {}
     for row in rows:
         role = map_card_role(row)
         card_id = str(row.get("card_id") or "")
         if role is not None and card_id:
-            card_role_by_id[card_id] = role
+            card_roles_by_id.setdefault(card_id, set()).add(str(role))
     filtered: list[dict[str, Any]] = []
     for row in rows:
         role = map_card_role(row)
         card_id = str(row.get("card_id") or "")
-        if role is not None:
-            if role in enabled_roles:
-                filtered.append(row)
+        resolved_role = str(role) if role is not None else None
+        inferred_roles = card_roles_by_id.get(card_id, set())
+        if resolved_role is None and len(inferred_roles) == 1:
+            resolved_role = next(iter(inferred_roles))
+        if resolved_role is not None:
+            if resolved_role in enabled_roles:
+                filtered.append({**row, "card_role": resolved_role})
             continue
-        inferred = card_role_by_id.get(card_id)
-        if inferred is None or inferred in enabled_roles:
-            filtered.append(row)
+        filtered.append(row)
     return filtered

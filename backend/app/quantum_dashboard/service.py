@@ -700,14 +700,18 @@ def _widget_from_row(row: dict[str, Any]) -> dict[str, Any]:
     }
     period["label"] = _period_label(period["start"], period["end"], period["timezone"])
     if row.get("chart_type") == "donut":
+        series = _list(row.get("series"))
         return {
             "id": row.get("id"),
             "role": row.get("card_role"),
             "range_key": row.get("range_key"),
             "title": row.get("title") or row.get("card_title"),
             "chart_type": "donut",
+            "value": row.get("total"),
+            "unit": "count",
+            "breakdown": series,
             "total": row.get("total"),
-            "series": _list(row.get("series")),
+            "series": series,
             "chart_payload": _with_period_label(row.get("chart_payload"), period),
             "comparison": row.get("comparison"),
             "delta_percent": row.get("delta_percent"),
