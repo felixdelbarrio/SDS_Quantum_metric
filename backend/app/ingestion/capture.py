@@ -183,6 +183,10 @@ class QuantumAnalyticsCaptureSession:
             except Exception:
                 response_json = {}
             query_range = extract_query_time_range(request_json)
+            effective_source_end = _effective_source_end(
+                query_range.end if query_range else None,
+                response_json,
+            )
             range_validation = None
             if ingestion_range is not None:
                 validation_target = IngestionChunk(
@@ -234,7 +238,14 @@ class QuantumAnalyticsCaptureSession:
                     "parse_error": None,
                     "captured_at": ingestion_ts,
                     "source_ts_start": _iso(query_range.start) if query_range else None,
-                    "source_ts_end": _iso(query_range.end) if query_range else None,
+                    "source_ts_end": _iso(effective_source_end)
+                    if effective_source_end
+                    else _iso(query_range.end)
+                    if query_range
+                    else None,
+                    "effective_source_ts_end": _iso(effective_source_end)
+                    if effective_source_end
+                    else None,
                     "source_period_label": query_range.label if query_range else None,
                     "source_timezone": query_range.timezone if query_range else "CST",
                     "capture_chunk_start": _iso(ingestion_range.start) if ingestion_range else None,
@@ -350,6 +361,22 @@ def _parse_json(raw: str) -> dict[str, Any]:
     except Exception:
         return {}
     return value if isinstance(value, dict) else {"value": value}
+
+
+def _effective_source_end(
+    requested_end: datetime | None,
+    response_json: dict[str, Any],
+) -> datetime | None:
+    if requested_end is None:
+        return None
+    stats = response_json.get("stats")
+    if not isinstance(stats, dict):
+        return requested_end
+    archive_cutoff = stats.get("archive_cutoff_ts")
+    if not isinstance(archive_cutoff, int | float):
+        return requested_end
+    cutoff = datetime.fromtimestamp(archive_cutoff, UTC)
+    return min(requested_end, cutoff)
 
 
 def _wait_for_analytics_settle(

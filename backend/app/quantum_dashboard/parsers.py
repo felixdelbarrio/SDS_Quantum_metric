@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from backend.app.analytics.normalizer import (
@@ -20,11 +21,11 @@ from backend.app.quantum_dashboard.catalog import (
     SUMMARY_SESSIONS,
 )
 from backend.app.quantum_dashboard.chart_axes import (
-    format_tick_label,
     readable_x_ticks,
     readable_y_ticks,
 )
 from backend.app.quantum_dashboard.models import ParserResult, VisualRole
+from backend.app.quantum_dashboard.periods import parse_datetime, zoneinfo_for
 
 METRIC_ALIASES: dict[VisualRole, tuple[str, ...]] = {
     SUMMARY_PAGE_VIEWS: ("page_views", "pageviews", "page view count", "paginas vistas"),
@@ -326,20 +327,22 @@ def _parse_donut(role: VisualRole, response_json: dict[str, Any]) -> ParserResul
             name = (
                 _string_from_row(flat, ERROR_TABLE_ALIASES["app_name"])
                 or _string_from_row(flat, ERROR_TABLE_ALIASES["name"])
-                or _dimension_at(row, 0)
+                or _dimension_label(row, 0)
             )
             value = _number_from_row(flat, ERROR_TABLE_ALIASES["sessions_with_error"])
             if value is None:
                 value = _metric_at(row, 0)
-            if name and value is not None:
+            if value is not None:
                 series.append({"name": name, "value": value, "percent": 0.0})
+    series = _group_web_donut_series(series)
     total = _number_from_object(response_json, ("total", "visible_value"))
+    percentage_total = round(sum(point["value"] for point in series), 2) if series else None
     if total is None:
-        total = round(sum(point["value"] for point in series), 2) if series else None
-    if total:
+        total = percentage_total
+    if percentage_total:
         for point in series:
             if not point.get("percent"):
-                point["percent"] = round((point["value"] / total) * 100, 2)
+                point["percent"] = round((point["value"] / percentage_total) * 100, 2)
     if not series:
         return _error(role, "row_shape_unknown", "Donut card has no parseable series.")
     widget = {
@@ -473,6 +476,24 @@ def _series(response_json: dict[str, Any]) -> list[dict[str, Any]]:
     return series
 
 
+def _group_web_donut_series(series: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if len(series) <= 5:
+        return series
+    null_items = [item for item in series if str(item.get("name") or "").strip() == "Null"]
+    named_items = [item for item in series if str(item.get("name") or "").strip() != "Null"]
+    keep = named_items[:3]
+    other_value = round(sum(float(item.get("value") or 0) for item in named_items[3:]), 2)
+    grouped: list[dict[str, Any]] = []
+    if null_items:
+        grouped.append(
+            {"name": "Null", "value": round(sum(item["value"] for item in null_items), 2)}
+        )
+    if other_value:
+        grouped.append({"name": "Other", "value": other_value})
+    grouped.extend(keep)
+    return grouped
+
+
 def _comparison(response_json: dict[str, Any]) -> dict[str, Any] | None:
     comparison = response_json.get("comparison")
     if isinstance(comparison, dict):
@@ -500,6 +521,19 @@ def _dimension_at(row: Any, index: int) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _dimension_label(row: Any, index: int) -> str:
+    if not isinstance(row, dict):
+        return "Null"
+    dimensions = row.get("dimensions")
+    if not isinstance(dimensions, list) or len(dimensions) <= index:
+        return "Null"
+    value = dimensions[index]
+    if value is None:
+        return "Null"
+    text = str(value).strip()
+    return text or "Null"
 
 
 def _metric_at(row: Any, index: int) -> float | None:
@@ -586,9 +620,33 @@ def _line_chart_payload(
     unit: str,
     points: list[dict[str, Any]],
 ) -> dict[str, Any] | None:
-    if not points:
+    return build_line_chart_payload_from_series(
+        role=role,
+        title=title,
+        unit=unit,
+        mobile_points=points,
+        desktop_points=[],
+        response_json=response_json,
+    )
+
+
+def build_line_chart_payload_from_series(
+    *,
+    role: VisualRole,
+    title: str,
+    unit: str,
+    mobile_points: list[dict[str, Any]],
+    desktop_points: list[dict[str, Any]],
+    response_json: dict[str, Any] | None = None,
+    aggregate_daily: bool = False,
+) -> dict[str, Any] | None:
+    point_builder = _visual_timeseries_points if aggregate_daily else _captured_timeseries_points
+    mobile_visual_points = point_builder(mobile_points, unit)
+    desktop_visual_points = point_builder(desktop_points, unit)
+    all_points = [*mobile_visual_points, *desktop_visual_points]
+    if not all_points:
         return None
-    y_values = [_to_number(point.get("value")) for point in points]
+    y_values = [_to_number(point.get("value")) for point in all_points]
     numeric_values = [value for value in y_values if value is not None]
     if not numeric_values:
         return None
@@ -596,19 +654,11 @@ def _line_chart_payload(
     y_max = max(numeric_values)
     if y_max == y_min:
         y_max = y_min + 1
-    x_ticks = _axis_ticks_from_points(points)
+    x_ticks = _axis_ticks_from_points(
+        mobile_visual_points if mobile_visual_points else desktop_visual_points,
+        preset="last_7_days" if aggregate_daily else None,
+    )
     y_ticks = _numeric_ticks(y_min, y_max, unit)
-    primary_points = [
-        {
-            "ts": str(point.get("ts")),
-            "label": str(point.get("label") or _short_ts_label(point.get("ts"))),
-            "value": _to_number(point.get("value")),
-            "raw_value": _to_number(point.get("value")),
-        }
-        for point in points
-        if point.get("ts") is not None and _to_number(point.get("value")) is not None
-    ]
-    desktop_points: list[dict[str, Any]] = []
     return {
         "chart_type": "line",
         "x_axis": {"ticks": x_ticks, "label": "Periodo"},
@@ -619,7 +669,7 @@ def _line_chart_payload(
                 "label": "Mobile",
                 "kind": "line",
                 "device": "mobile",
-                "points": primary_points,
+                "points": mobile_visual_points,
                 "visible": True,
             },
             {
@@ -627,18 +677,18 @@ def _line_chart_payload(
                 "label": "Desktop",
                 "kind": "line",
                 "device": "desktop",
-                "points": desktop_points,
+                "points": desktop_visual_points,
                 "visible": True,
             },
         ],
-        "bands": _bands(response_json),
+        "bands": _bands(response_json or {}),
         "legends": [
             {"id": "mobile", "label": "Mobile", "device": "mobile"},
             {"id": "desktop", "label": "Desktop", "device": "desktop"},
         ],
         "period_label": None,
-        "granularity": _granularity(points),
-        "timezone": _timezone(response_json),
+        "granularity": "daily" if aggregate_daily else "captured",
+        "timezone": _timezone(response_json or {}),
     }
 
 
@@ -681,8 +731,17 @@ def _donut_chart_payload(
     }
 
 
-def _axis_ticks_from_points(points: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return readable_x_ticks(points, timezone="CST")
+def _axis_ticks_from_points(
+    points: list[dict[str, Any]],
+    *,
+    preset: str | None,
+) -> list[dict[str, Any]]:
+    ticks = readable_x_ticks(points, timezone="CST", preset=preset)
+    by_value = {str(point.get("ts")): str(point.get("label") or "") for point in points}
+    return [
+        {**tick, "label": by_value.get(str(tick.get("value"))) or tick.get("label")}
+        for tick in ticks
+    ]
 
 
 def _numeric_ticks(min_value: float, max_value: float, unit: str) -> list[dict[str, Any]]:
@@ -698,7 +757,10 @@ def _format_tick(value: float, unit: str) -> str:
 
 
 def _short_ts_label(value: Any) -> str:
-    return format_tick_label(value, timezone="CST")
+    parsed = parse_datetime(value, timezone="CST")
+    if parsed is None:
+        return "" if value is None else str(value)[:12]
+    return parsed.astimezone(zoneinfo_for("CST")).strftime("%H:%M")
 
 
 def _bands(response_json: dict[str, Any]) -> list[dict[str, Any]]:
@@ -722,10 +784,74 @@ def _bands(response_json: dict[str, Any]) -> list[dict[str, Any]]:
     return bands
 
 
-def _granularity(points: list[dict[str, Any]]) -> str | None:
-    if len(points) < 2:
-        return None
-    return "captured"
+def _visual_timeseries_points(
+    points: list[dict[str, Any]],
+    unit: str,
+) -> list[dict[str, Any]]:
+    buckets: dict[str, list[float]] = {}
+    bucket_ts: dict[str, str] = {}
+    zone = zoneinfo_for("CST")
+    for point in points:
+        parsed = parse_datetime(point.get("ts"), timezone="CST")
+        value = _to_number(point.get("value"))
+        if parsed is None or value is None:
+            continue
+        if unit == "percent" and abs(value) <= 1:
+            value *= 100
+        local = parsed.astimezone(zone)
+        key = local.date().isoformat()
+        bucket_start = datetime.combine(local.date(), datetime.min.time(), tzinfo=zone)
+        bucket_ts[key] = bucket_start.astimezone(UTC).isoformat().replace("+00:00", "Z")
+        buckets.setdefault(key, []).append(value)
+    visual_points: list[dict[str, Any]] = []
+    for key in sorted(buckets):
+        values = buckets[key]
+        if not values:
+            continue
+        if unit in {"seconds", "percent"}:
+            signal_values = [value for value in values if value != 0]
+            value = sum(signal_values) / len(signal_values) if signal_values else 0
+        else:
+            value = sum(values)
+        ts = bucket_ts[key]
+        parsed_ts = parse_datetime(ts, timezone="CST")
+        label = parsed_ts.astimezone(zoneinfo_for("CST")).strftime("%b %d") if parsed_ts else key
+        visual_points.append(
+            {
+                "ts": ts,
+                "label": label,
+                "value": round(value, 2),
+                "raw_value": round(value, 2),
+            }
+        )
+    return visual_points
+
+
+def _captured_timeseries_points(
+    points: list[dict[str, Any]],
+    unit: str,
+) -> list[dict[str, Any]]:
+    parsed_points: list[tuple[datetime, dict[str, Any]]] = []
+    zone = zoneinfo_for("CST")
+    for point in points:
+        parsed = parse_datetime(point.get("ts"), timezone="CST")
+        value = _to_number(point.get("value"))
+        if parsed is None or value is None:
+            continue
+        if unit == "percent" and abs(value) <= 1:
+            value *= 100
+        parsed_points.append(
+            (
+                parsed,
+                {
+                    "ts": str(point.get("ts")),
+                    "label": parsed.astimezone(zone).strftime("%H:%M"),
+                    "value": round(value, 2),
+                    "raw_value": round(value, 2),
+                },
+            )
+        )
+    return [point for _, point in sorted(parsed_points, key=lambda item: item[0])]
 
 
 def _timezone(response_json: dict[str, Any]) -> str:

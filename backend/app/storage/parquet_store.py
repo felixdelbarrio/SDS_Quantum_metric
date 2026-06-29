@@ -575,15 +575,16 @@ class ParquetStore:
         bounds = _source_bounds(new_rows)
         if frame.is_empty() or bounds is None:
             return frame, 0
+        new_range_keys = {_row_range_key(row) for row in new_rows}
         kept: list[dict[str, Any]] = []
         replaced = 0
         for row in frame.to_dicts():
-            if _row_overlaps(row, bounds):
+            if _row_range_key(row) in new_range_keys and _row_overlaps(row, bounds):
                 replaced += 1
             else:
                 kept.append(row)
         if kept:
-            return pl.DataFrame(kept), replaced
+            return pl.DataFrame(kept, infer_schema_length=None), replaced
         return pl.DataFrame(schema=frame.schema), replaced
 
     def _publish_daily_raw_calls(self, country: str, frame: pl.DataFrame) -> None:
@@ -739,6 +740,13 @@ def _row_overlaps(row: dict[str, Any], bounds: tuple[datetime, datetime]) -> boo
         return False
     lower, upper = bounds
     return start <= upper and end >= lower
+
+
+def _row_range_key(row: dict[str, Any]) -> str:
+    value = row.get("range_key")
+    if value is None or str(value).strip() == "":
+        return "today"
+    return str(value).strip()
 
 
 def _parse_source_ts(value: Any) -> datetime | None:
