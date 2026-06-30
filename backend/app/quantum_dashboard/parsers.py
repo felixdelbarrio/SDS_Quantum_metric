@@ -66,8 +66,27 @@ SUMMARY_TABLE_ALIASES = {
     "page_views": ("page_views", "page views", "paginas vistas"),
     "sessions": ("sessions", "sesiones"),
     "conversions": ("conversions", "conversiones", "general conversiones"),
-    "page_views_delta_percent": ("page_views_delta_percent", "page views delta percent"),
-    "conversions_delta_percent": ("conversions_delta_percent", "conversions delta percent"),
+    "page_views_delta_percent": (
+        "page_views_delta_percent",
+        "page views delta percent",
+        "page views delta",
+        "delta page views",
+        "delta_page_views",
+    ),
+    "sessions_delta_percent": (
+        "sessions_delta_percent",
+        "sessions delta percent",
+        "sessions delta",
+        "delta sessions",
+        "delta_sessions",
+    ),
+    "conversions_delta_percent": (
+        "conversions_delta_percent",
+        "conversions delta percent",
+        "conversions delta",
+        "delta conversions",
+        "delta_conversiones",
+    ),
 }
 
 ERROR_TABLE_ALIASES = {
@@ -179,7 +198,7 @@ def _parse_summary_table(role: VisualRole, response_json: dict[str, Any]) -> Par
                 flat, SUMMARY_TABLE_ALIASES["page_views_delta_percent"]
             ),
             "sessions_delta_percent": _number_from_row(
-                flat, ("sessions_delta_percent", "sessions delta percent")
+                flat, SUMMARY_TABLE_ALIASES["sessions_delta_percent"]
             ),
             "conversions_delta_percent": _number_from_row(
                 flat, SUMMARY_TABLE_ALIASES["conversions_delta_percent"]
@@ -206,7 +225,7 @@ def _parse_summary_table(role: VisualRole, response_json: dict[str, Any]) -> Par
             rows.append(parsed)
     if not rows:
         return _error(role, "row_shape_unknown", "Summary detail table has no parseable rows.")
-    rows = _expandable_summary_rows(rows)
+    rows = _summary_rows_with_real_hierarchy(rows)
     return ParserResult(
         role=role,
         status="ok",
@@ -879,50 +898,44 @@ def _timezone(response_json: dict[str, Any]) -> str:
     return "CST"
 
 
-def _expandable_summary_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    if any(row.get("parent_row_id") is not None or row.get("depth") is not None for row in rows):
-        return [_with_hierarchy_defaults(row) for row in rows]
-    grouped: dict[str, list[dict[str, Any]]] = {}
-    for row in rows:
-        app_name = str(row.get("app_name") or row.get("name") or "Null")
-        grouped.setdefault(app_name, []).append(row)
-    output: list[dict[str, Any]] = []
-    for app_index, (app_name, children) in enumerate(grouped.items()):
-        parent_id = f"app:{app_name}"
-        parent = {
-            "row_id": parent_id,
-            "parent_row_id": None,
-            "depth": 0,
-            "is_expandable": True,
-            "is_expanded_default": app_index == 0,
-            "name": app_name,
-            "app_name": app_name,
-            "operating_system": None,
-            "page_views": round(sum(_to_number(row.get("page_views")) or 0 for row in children), 2),
-            "sessions": round(sum(_to_number(row.get("sessions")) or 0 for row in children), 2),
-            "conversions": round(
-                sum(_to_number(row.get("conversions")) or 0 for row in children), 2
-            ),
-            "page_views_delta_percent": _first_number(children, "page_views_delta_percent"),
-            "sessions_delta_percent": _first_number(children, "sessions_delta_percent"),
-            "conversions_delta_percent": _first_number(children, "conversions_delta_percent"),
-        }
-        parent.update(_semantic_states(parent))
-        output.append(parent)
-        child_rows = [child for child in children if _is_operating_system_child(child, app_name)]
-        for child_index, child in enumerate(child_rows):
-            child_row = {
-                **child,
-                "row_id": f"{parent_id}:os:{child.get('operating_system') or child_index}",
-                "parent_row_id": parent_id,
-                "depth": 1,
-                "is_expandable": False,
-                "is_expanded_default": True,
-                "name": child.get("operating_system") or child.get("name") or "Null",
-            }
-            child_row.update(_semantic_states(child_row))
-            output.append(child_row)
-    return output
+def _summary_rows_with_real_hierarchy(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    has_web_hierarchy = any(
+        row.get("parent_row_id") is not None
+        or row.get("depth") is not None
+        or row.get("is_expandable") is not None
+        for row in rows
+    )
+    if not has_web_hierarchy:
+        return [_flat_summary_row(row) for row in rows]
+
+    normalized = [_with_hierarchy_defaults(row) for row in rows]
+    children_by_parent: dict[str, int] = {}
+    for row in normalized:
+        parent = row.get("parent_row_id")
+        if parent is not None:
+            children_by_parent[str(parent)] = children_by_parent.get(str(parent), 0) + 1
+    for row in normalized:
+        row_id = str(row.get("row_id") or "")
+        children_count = children_by_parent.get(row_id, 0)
+        row["children_count"] = children_count
+        row["is_expandable"] = bool(row.get("is_expandable")) and children_count > 0
+        if not row["is_expandable"]:
+            row["is_expanded_default"] = False
+    return normalized
+
+
+def _flat_summary_row(row: dict[str, Any]) -> dict[str, Any]:
+    normalized = {
+        **row,
+        "row_id": None,
+        "parent_row_id": None,
+        "depth": 0,
+        "is_expandable": False,
+        "is_expanded_default": False,
+        "children_count": 0,
+    }
+    normalized.update(_semantic_states(normalized))
+    return normalized
 
 
 def _with_hierarchy_defaults(row: dict[str, Any]) -> dict[str, Any]:
@@ -937,21 +950,6 @@ def _with_hierarchy_defaults(row: dict[str, Any]) -> dict[str, Any]:
     }
     normalized.update(_semantic_states(normalized))
     return normalized
-
-
-def _is_operating_system_child(row: dict[str, Any], app_name: str) -> bool:
-    operating_system = str(row.get("operating_system") or "").strip()
-    if not operating_system or operating_system.casefold() == "null":
-        return False
-    return operating_system.casefold() != app_name.casefold()
-
-
-def _first_number(rows: list[dict[str, Any]], key: str) -> float | None:
-    for row in rows:
-        value = _to_number(row.get(key))
-        if value is not None:
-            return value
-    return None
 
 
 def _semantic_states(row: dict[str, Any]) -> dict[str, str]:

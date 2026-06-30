@@ -8,6 +8,8 @@
 4. Cambiar tabs de entidad para revisar RAW, contratos, derivados, chart payloads y regresion.
 
 La cabecera muestra la ruta persistente activa. Si se detecta `./data` legacy, migrar antes de borrar nada.
+Durante la carga inicial debe mostrarse `Cargando datasets`; `Sin datos ingestados` solo es valido
+cuando la respuesta termino y no hay datasets.
 
 ## Export
 
@@ -41,3 +43,9 @@ La UI exige escribir exactamente el codigo de pais antes de habilitar el boton d
 - Entidades se agrupan por categoria, dashboard ID y widget role.
 - `GET /api/datasets/{country}/evidence` muestra trazabilidad Web -> RAW -> derived -> API.
 - Import acepta ZIPs antiguos con `config/quantum.json`, pero escribe la ruta nueva.
+
+# Iteracion 11
+
+- Datasets separa estados `loading`, `error`, `loaded_empty` y `loaded_with_data`.
+- Las entidades y filas muestran estados de carga propios para no confundir una espera con ausencia de datos.
+- Los rangos se distinguen por `range_key`: `default`, `today`, `yesterday`, `last_7_days` y `custom`.

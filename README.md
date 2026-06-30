@@ -55,8 +55,10 @@ con regresion `passed` o `passed_with_tolerance`.
 
 La ingesta publica particiones diarias `parquet/country=<pais>/day=YYYY-MM-DD/raw_api_calls`
 y `parquet/country=<pais>/manifests/day_coverage.parquet`. Home consulta
-`/api/local-dashboard/coverage` y puede lanzar `/api/ingestions/missing-days` para completar
-dias ausentes sin bloquear la navegacion.
+`/api/local-dashboard/coverage` y puede lanzar `/api/ingestions/range` para capturar exactamente
+el periodo visible sin bloquear la navegacion. La pagina Ingesta usa la profundidad por defecto
+configurada y etiqueta esa captura como `range_key=default`; Home usa `today`, `yesterday`,
+`last_7_days` o `custom` segun el selector.
 
 Desde Iteracion 10, Today, Yesterday y Last 7 Days se consultan y persisten con `range_key`.
 Los widgets no agregables desde dias sueltos requieren contrato Quantum capturado para la ventana

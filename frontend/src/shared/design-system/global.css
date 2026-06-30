@@ -834,11 +834,31 @@ textarea:focus-visible {
   opacity: var(--chart-band-opacity);
 }
 
-.quantum-chart-series,
-.quantum-donut-segment {
+.quantum-chart-series {
   fill: none;
   stroke-width: 2;
   vector-effect: non-scaling-stroke;
+}
+
+.quantum-chart-bar {
+  cursor: pointer;
+  opacity: 0.88;
+  stroke: color-mix(
+    in srgb,
+    var(--surface-dashboard-elevated) 72%,
+    transparent
+  );
+  stroke-width: 1;
+  transition:
+    opacity var(--motion-duration-fast) var(--motion-ease-standard),
+    filter var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.quantum-chart-bar:hover,
+.quantum-chart-bar:focus-visible,
+.quantum-chart-bar[data-active="true"] {
+  filter: brightness(1.08);
+  opacity: 1;
 }
 
 .quantum-chart-series-0,
@@ -869,6 +889,26 @@ textarea:focus-visible {
 .chart-swatch-4 {
   stroke: var(--chart-donut-5);
   background: var(--chart-donut-5);
+}
+
+.quantum-chart-bar.quantum-chart-series-0 {
+  fill: var(--chart-mobile);
+}
+
+.quantum-chart-bar.quantum-chart-series-1 {
+  fill: var(--chart-desktop);
+}
+
+.quantum-chart-bar.quantum-chart-series-2 {
+  fill: var(--chart-donut-3);
+}
+
+.quantum-chart-bar.quantum-chart-series-3 {
+  fill: var(--chart-donut-4);
+}
+
+.quantum-chart-bar.quantum-chart-series-4 {
+  fill: var(--chart-donut-5);
 }
 
 .quantum-chart-point {
@@ -956,9 +996,71 @@ textarea:focus-visible {
 }
 
 .quantum-donut-segment {
+  fill: none;
   stroke-width: 5;
+  stroke-linecap: butt;
   transform: rotate(-90deg);
   transform-origin: center;
+}
+
+.quantum-donut-segment-0,
+.quantum-chart-donut .chart-swatch-0 {
+  stroke: var(--chart-donut-1);
+  background: var(--chart-donut-1);
+}
+
+.quantum-donut-segment-1,
+.quantum-chart-donut .chart-swatch-1 {
+  stroke: var(--chart-donut-2);
+  background: var(--chart-donut-2);
+}
+
+.quantum-donut-segment-2,
+.quantum-chart-donut .chart-swatch-2 {
+  stroke: var(--chart-donut-3);
+  background: var(--chart-donut-3);
+}
+
+.quantum-donut-segment-3,
+.quantum-chart-donut .chart-swatch-3 {
+  stroke: var(--chart-donut-4);
+  background: var(--chart-donut-4);
+}
+
+.quantum-donut-segment-4,
+.quantum-chart-donut .chart-swatch-4 {
+  stroke: var(--chart-donut-5);
+  background: var(--chart-donut-5);
+}
+
+.donut-breakdown {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  color: var(--color-muted);
+  font-size: 12px;
+  font-weight: 800;
+  list-style: none;
+}
+
+.donut-breakdown li,
+.donut-breakdown span {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.donut-breakdown li {
+  justify-content: space-between;
+}
+
+.donut-breakdown strong {
+  overflow: hidden;
+  color: var(--color-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .quantum-chart-legend {

@@ -1,10 +1,5 @@
-import { CalendarDays, Filter, Layers3, Star } from "lucide-react";
-import {
-  AvailableCountry,
-  CountryCode,
-  DashboardCoverage,
-  DashboardSelection,
-} from "../types";
+import { CalendarDays, Star } from "lucide-react";
+import { AvailableCountry, CountryCode, DashboardCoverage } from "../types";
 import { CountrySelector } from "./CountrySelector";
 
 export type DatePreset = "today" | "yesterday" | "last_7_days" | "custom";
@@ -18,36 +13,27 @@ export type DateRange = {
 type Props = {
   country: CountryCode;
   countries: AvailableCountry[];
-  appliedDimension?: DashboardSelection | null;
-  appliedSegment?: DashboardSelection | null;
   dateRange: DateRange;
   coverage?: DashboardCoverage | null;
   missingIngestionPending: boolean;
   onCountryChange: (country: CountryCode) => void;
   onDateRangeChange: (range: DateRange) => void;
-  onOpenDimensions: () => void;
-  onOpenSegments: () => void;
   onIngestMissingDays: () => void;
 };
 
 export function DashboardHeader({
   country,
   countries,
-  appliedDimension,
-  appliedSegment,
   dateRange,
   coverage,
   missingIngestionPending,
   onCountryChange,
   onDateRangeChange,
-  onOpenDimensions,
-  onOpenSegments,
   onIngestMissingDays,
 }: Props) {
-  const missingDays = coverage?.missing_days ?? [];
   const warningLevel = coverage?.warning_level ?? "none";
   const showCoverage = warningLevel !== "none";
-  const canIngestCoverage = missingDays.length > 0;
+  const canIngestCoverage = showCoverage && !missingIngestionPending;
   return (
     <header className="dashboard-header">
       <div className="dashboard-title-group">
@@ -57,10 +43,6 @@ export function DashboardHeader({
         <div>
           <h1>Dashboard General {country}</h1>
           <p>Este dashboard es un resumen de sesiones y errores.</p>
-          <div className="dashboard-applied">
-            <span>Dimension: {appliedDimension?.label ?? "sin dimension"}</span>
-            <span>Segmento: {appliedSegment?.label ?? "sin segmento"}</span>
-          </div>
           {showCoverage ? (
             <div className={`coverage-pill ${warningLevel}`} role="status">
               <span>{coverage?.message}</span>
@@ -68,7 +50,7 @@ export function DashboardHeader({
                 className="text-command"
                 type="button"
                 onClick={onIngestMissingDays}
-                disabled={missingIngestionPending || !canIngestCoverage}
+                disabled={!canIngestCoverage}
               >
                 {missingIngestionPending
                   ? "Ingestando"
@@ -135,14 +117,6 @@ export function DashboardHeader({
               {formatDateRange(dateRange)}
             </span>
           )}
-        </div>
-        <div className="command-group">
-          <button className="command-button" onClick={onOpenDimensions}>
-            <Layers3 size={16} /> Dimension
-          </button>
-          <button className="command-button" onClick={onOpenSegments}>
-            <Filter size={16} /> Segmento
-          </button>
         </div>
       </div>
     </header>

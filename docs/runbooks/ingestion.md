@@ -4,7 +4,7 @@
 
 1. Abrir Quantum.
 2. Seleccionar browser, sesion, pais activo y Base URL.
-3. Definir `Profundidad de datos a ingestar` si se necesita algo distinto a 365 dias.
+3. Definir `Profundidad por defecto` si se necesita algo distinto a 365 dias.
 4. Guardar.
 
 El descubrimiento de dashboard ocurre de forma automatica durante guardado o ingesta cuando hay metadata suficiente.
@@ -18,10 +18,10 @@ El descubrimiento de dashboard ocurre de forma automatica durante guardado o ing
 
 La UI muestra chunks planificados/completados, rango temporal activo, llamadas, filas RAW, cards obligatorias, derivados, regresion y porcentaje.
 
-Desde Iteracion 10, la ingesta iniciada desde Ingesta captura explicitamente `today` como
-contrato de rango. Los botones de Home para Today, Yesterday y Last 7 Days llaman
-`/api/ingestions/missing-days` con `range_key`, `start_date` y `end_date`; no se reutilizan
-datos de otro rango.
+Desde Iteracion 11, la ingesta iniciada desde Ingesta usa la profundidad por defecto configurada y
+se persiste con `range_key=default`. Los botones de Home para Today, Yesterday, Last 7 Days y
+Rango llaman `/api/ingestions/range` con `range_key`, `start_date`, `end_date` y `reason`; no se
+reutilizan datos de otro rango.
 
 ## Incremental
 
@@ -43,10 +43,12 @@ datos de otro rango.
 4. Si una grafica aparece como fallo contractual, regenerar derivados o repetir ingesta antes de aceptar el resultado.
 
 No hay reproduccion local de sesiones ni rutas de video.
-# Ingesta diaria y faltantes
+# Ingesta diaria y de periodo
 
 - La ingesta normal planifica chunks de un dia.
-- `/api/ingestions/missing-days` acepta dias locales explicitos.
+- `/api/ingestions/range` acepta el periodo local visible y preserva su `range_key`.
+- `/api/ingestions/missing-days` queda disponible solo para compatibilidad tecnica con dias
+  locales explicitos.
 - El boton de un pais queda deshabilitado si ese pais ya tiene ingesta activa.
 - La UI muestra una card solo para la ingesta activa y el historico en tabla.
 - Al finalizar se actualizan particiones diarias y `day_coverage.parquet`.

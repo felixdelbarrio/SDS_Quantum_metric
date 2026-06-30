@@ -11,7 +11,7 @@ from backend.app.config.settings import Settings
 from backend.app.main import app
 from backend.app.quantum.config_store import QuantumConfigStore
 from backend.app.quantum.schemas import Country, QuantumCountryConfig
-from backend.app.quantum_dashboard.builder import build_derived_datasets
+from backend.app.quantum_dashboard.builder import DATASET_WEB_SNAPSHOTS, build_derived_datasets
 from backend.app.quantum_dashboard.card_mapper import map_card_role
 from backend.app.quantum_dashboard.catalog import SUMMARY_DETAIL_TABLE
 from backend.app.quantum_dashboard.discovery import (
@@ -102,7 +102,8 @@ def test_builder_persists_contracts_snapshots_derived_and_no_cookies(tmp_path: P
     assert next(row for row in summary if row["id"] == "page_views")["chart_payload"]["series"]
     assert chart_payloads
     assert detail[0]["app_name"] == "portabilidad nomina"
-    assert any(row.get("parent_row_id") for row in detail)
+    assert all(not row.get("parent_row_id") for row in detail)
+    assert all(not row.get("is_expandable") for row in detail)
     all_payload = json.dumps(
         {
             "contracts": contracts,
@@ -187,6 +188,34 @@ def test_regression_allows_parent_only_summary_table_when_web_has_no_children(
     assert detail.status == "passed"
 
 
+def test_regression_fails_when_visible_table_rows_differ(tmp_path: Path) -> None:
+    store = _store_with_fixtures(tmp_path)
+    build_derived_datasets(store, "MX")
+    snapshots = []
+    for snapshot in store.read_country_dataset("MX", DATASET_WEB_SNAPSHOTS):
+        if snapshot.get("card_role") == "errors.error_session_percentage_by_app_name":
+            visible_rows = [dict(row) for row in snapshot.get("visible_table_rows", [])]
+            visible_rows[0]["name"] = "row from quantum web"
+            snapshot = {**snapshot, "visible_table_rows": visible_rows}
+        snapshots.append(snapshot)
+    store.write_country_dataset(
+        "MX",
+        DATASET_WEB_SNAPSHOTS,
+        snapshots,
+        file_name="web_snapshots.parquet",
+    )
+
+    report = run_regression(store, "MX")
+
+    card = next(
+        item
+        for item in report.cards
+        if item.card_role == "errors.error_session_percentage_by_app_name"
+    )
+    assert card.status == "failed_table_mismatch"
+    assert card.details == "First visible table rows differ in content or order."
+
+
 def test_regression_fails_when_mandatory_card_is_missing(tmp_path: Path) -> None:
     store = ParquetStore(Settings(qm_data_dir=tmp_path))
     rows = [row for row in _fixture_rows() if row["card_role"] != "errors.top_errors_by_error_name"]
@@ -223,9 +252,10 @@ def test_local_dashboard_apis_read_derived_data_offline(tmp_path: Path) -> None:
         "avg_session_duration",
     ]
     assert summary_table["rows"][0]["app_name"] == "portabilidad nomina"
-    segmented = service.summary_table("MX", segment="app_name:portabilidad nomina")
-    assert segmented["applied_segment"]["label"] == "App Name: portabilidad nomina"
-    assert {row["app_name"] for row in segmented["rows"]} == {"portabilidad nomina"}
+    assert "applied_dimension" not in summary
+    assert "applied_segment" not in summary
+    assert "applied_dimension" not in summary_table
+    assert "applied_segment" not in summary_table
     outside_range = service.summary("MX", start_date="2030-01-01", end_date="2030-01-01")
     assert outside_range["status"] == "empty"
     assert {widget["id"] for widget in errors["widgets"]} >= {
@@ -318,7 +348,7 @@ def test_regression_fails_when_chart_payload_is_missing(tmp_path: Path) -> None:
     assert any(card.status == "failed_chart_contract_incomplete" for card in report.cards)
 
 
-def test_summary_detail_parser_does_not_duplicate_parent_as_null_child() -> None:
+def test_summary_detail_parser_keeps_flat_rows_when_web_has_no_hierarchy() -> None:
     result = parse_card(
         {
             "response_json": json.dumps(
@@ -348,7 +378,9 @@ def test_summary_detail_parser_does_not_duplicate_parent_as_null_child() -> None
     rows = result.data["rows"]
 
     assert result.status == "ok"
-    assert [row["depth"] for row in rows] == [0, 1]
+    assert [row["depth"] for row in rows] == [0, 0]
+    assert [row["is_expandable"] for row in rows] == [False, False]
+    assert [row["children_count"] for row in rows] == [0, 0]
     assert rows[0]["name"] == "affiliation basica"
     assert rows[1]["operating_system"] == "Android"
 
@@ -390,6 +422,39 @@ def test_summary_detail_parser_preserves_web_hierarchy() -> None:
     assert len(rows) == 2
     assert rows[0]["row_id"] == "app:pagos"
     assert rows[1]["parent_row_id"] == "app:pagos"
+
+
+def test_summary_detail_parser_extracts_deltas_and_semantic_states() -> None:
+    result = parse_card(
+        {
+            "response_json": json.dumps(
+                {
+                    "rows": [
+                        {
+                            "App Name": "portabilidad nomina",
+                            "Page Views": 100,
+                            "Delta Page Views": 1.5,
+                            "Sessions": 20,
+                            "Delta Sessions": -2.5,
+                            "General - Conversiones": 3,
+                            "Delta Conversiones": 0,
+                        }
+                    ]
+                }
+            )
+        },
+        SUMMARY_DETAIL_TABLE,
+    )
+
+    row = result.data["rows"][0]
+
+    assert result.status == "ok"
+    assert row["page_views_delta_percent"] == 1.5
+    assert row["page_views_semantic_state"] == "positive"
+    assert row["sessions_delta_percent"] == -2.5
+    assert row["sessions_semantic_state"] == "negative"
+    assert row["conversions_delta_percent"] == 0
+    assert row["conversions_semantic_state"] == "positive"
 
 
 def test_local_dashboard_endpoints_do_not_call_quantum(

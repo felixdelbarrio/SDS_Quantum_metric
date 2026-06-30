@@ -89,6 +89,33 @@ describe("DatasetsPage export", () => {
       ).toBeInTheDocument();
     });
   });
+
+  it("muestra carga inicial antes de declarar datasets vacios", async () => {
+    let resolveDatasets: (response: Response) => void = () => undefined;
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = String(input);
+      if (url.endsWith("/api/datasets")) {
+        return new Promise<Response>((resolve) => {
+          resolveDatasets = resolve;
+        });
+      }
+      return json({});
+    });
+
+    renderDatasets();
+
+    expect(screen.getByRole("status")).toHaveTextContent("Cargando datasets");
+    expect(screen.queryByText("Sin datos ingestados")).not.toBeInTheDocument();
+
+    resolveDatasets(
+      new Response(JSON.stringify({ data_dir: "/tmp/data", datasets: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    expect(await screen.findByText("Sin datos ingestados")).toBeInTheDocument();
+  });
 });
 
 function renderDatasets() {
