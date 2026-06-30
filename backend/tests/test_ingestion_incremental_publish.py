@@ -13,7 +13,12 @@ from backend.app.ingestion.planner import IngestionChunk
 from backend.app.ingestion.policy import IngestionRange
 from backend.app.ingestion.service import IngestionService, _filter_enabled_rows
 from backend.app.quantum.config_store import QuantumConfigStore
-from backend.app.quantum.schemas import Country, QuantumConfig
+from backend.app.quantum.schemas import (
+    Country,
+    QuantumConfig,
+    QuantumCountryConfig,
+    QuantumDashboardConfig,
+)
 from backend.app.quantum_dashboard.models import DashboardDiscoveryResult
 from backend.app.storage.parquet_store import ParquetStore, RawCallMergeResult
 
@@ -202,7 +207,32 @@ def test_filter_enabled_rows_materializes_resolved_card_role() -> None:
 
 class _ConfigStore(QuantumConfigStore):
     def read(self) -> QuantumConfig:
-        return self.default()
+        return self.default().model_copy(
+            update={
+                "country": Country.MX,
+                "countries": [
+                    QuantumCountryConfig(
+                        country=Country.MX,
+                        base_url="https://bbvamx.quantummetric.com",
+                        dashboard_id="dash",
+                        team_id="team",
+                        tab=0,
+                        dashboards=[
+                            QuantumDashboardConfig(
+                                dashboard_id="dash",
+                                name="Dashboard MX",
+                                team_id="team",
+                                summary_tab=0,
+                                errors_tab=1,
+                                is_default=True,
+                                validated=True,
+                                validation_status="ok",
+                            )
+                        ],
+                    )
+                ],
+            }
+        )
 
 
 class _CookieProvider:
