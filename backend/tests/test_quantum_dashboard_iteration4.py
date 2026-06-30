@@ -62,7 +62,13 @@ def test_discovery_uses_env_defaults_as_fallback(tmp_path: Path) -> None:
 
 
 def test_config_api_exposes_auditable_dashboard_widget_metadata(tmp_path: Path) -> None:
-    settings = Settings(qm_data_dir=tmp_path)
+    settings = Settings(
+        qm_data_dir=tmp_path,
+        qm_dashboard_id="dash-default",
+        qm_team_id="team-default",
+        qm_country_configs="",
+        qm_default_dashboard_url="",
+    )
     app.dependency_overrides[settings_dep] = lambda: settings
     app.dependency_overrides[config_store_dep] = lambda: QuantumConfigStore(settings)
     app.dependency_overrides[parquet_store_dep] = lambda: ParquetStore(settings)
@@ -74,8 +80,8 @@ def test_config_api_exposes_auditable_dashboard_widget_metadata(tmp_path: Path) 
 
     assert payload["countries"][0]["dashboard_resolved"] is True
     dashboard = payload["countries"][0]["dashboards"][0]
-    assert dashboard["dashboard_id"]
-    assert dashboard["team_id"]
+    assert dashboard["dashboard_id"] == "dash-default"
+    assert dashboard["team_id"] == "team-default"
     assert dashboard["widgets"][0]["role"] == "summary.page_views"
     assert dashboard["widgets"][0]["widget_type"] == "CHART"
 

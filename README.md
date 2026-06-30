@@ -73,9 +73,9 @@ accionable. La UI no rellena datos falsos ni oculta discrepancias.
 ## Datasets
 
 Datasets permite ver entidades Parquet por pais: RAW calls, contratos visuales, snapshots,
-derivados, chart payloads y regresion. Las entidades se agrupan por categoria, dashboard ID y
-widget role, se leen paginadas, tienen cabeceras fijas y CSV por entidad. El ZIP de export/import
-incluye datos y `config/quantum_config.json` sin secretos. La exportacion se escribe en la ruta
+derivados, chart payloads y regresion. Las entidades se agrupan por categoria, dashboard y
+widget, se leen paginadas, tienen cabeceras fijas y CSV por entidad. El ZIP de export/import
+incluye datos, `config/quantum_config.json` y `config/dashboards.json` sin secretos. La exportacion se escribe en la ruta
 configurada por el usuario, por defecto `~/Downloads`, y la UI muestra la ruta exacta creada por
 backend.
 El borrado exige confirmacion exacta del pais.
@@ -113,6 +113,11 @@ recarga Home: el dashboard debe seguir funcionando sobre Parquet local.
 - Reglas de agregacion por rango en `docs/to-be/quantum-range-aggregation-rules.md`.
 - Hardening Chrome en `docs/to-be/chrome-session-hardening.md`.
 - Export a Downloads en `docs/to-be/export-downloads-contract.md`.
+- Descubrimiento de dashboards en `docs/to-be/iteration-12-dashboard-discovery.md`.
+- Contrato de dashboards en `docs/to-be/dashboard-discovery-contract.md`.
+- Contrato de tabs/widgets en `docs/to-be/dashboard-structure-contract.md`.
+- Default por dashboard en `docs/to-be/config-dashboard-default.md`.
+- Datasets multi-dashboard en `docs/to-be/multi-dashboard-datasets.md`.
 - Iteracion 9 storage audit en `docs/as-is/iteration-9-storage-audit.md`.
 - Iteracion 9 RCA de ingesta en `docs/as-is/iteration-9-ingestion-failure-rca.md`.
 - Evidencia Web/Local en `docs/to-be/web-local-evidence-chain.md`.

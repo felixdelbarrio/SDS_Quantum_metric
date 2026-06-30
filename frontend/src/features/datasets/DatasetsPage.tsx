@@ -44,6 +44,8 @@ type DatasetEntity = {
   label: string;
   category?: string | null;
   dashboard_id?: string | null;
+  dashboard_name?: string | null;
+  widget_id?: string | null;
   widget_role?: string | null;
   rows: number;
   files: number;
@@ -108,7 +110,9 @@ export function DatasetsPage() {
     const grouped = new Map<string, DatasetEntity[]>();
     for (const entity of entities.data?.entities ?? []) {
       const key = entity.category ?? "Entidad";
-      grouped.set(key, [...(grouped.get(key) ?? []), entity]);
+      const dashboardLabel = entity.dashboard_name ?? entity.dashboard_id;
+      const groupKey = dashboardLabel ? `${dashboardLabel} · ${key}` : key;
+      grouped.set(groupKey, [...(grouped.get(groupKey) ?? []), entity]);
     }
     return Array.from(grouped.entries());
   }, [entities.data?.entities]);
@@ -341,8 +345,7 @@ export function DatasetsPage() {
                         >
                           <span>{entity.id}</span>
                           <small>
-                            {entity.dashboard_id ?? "dashboard local"} ·{" "}
-                            {entity.widget_role ?? "config"}
+                            {entity.widget_id ?? entity.widget_role ?? "config"}
                           </small>
                         </button>
                       ))}

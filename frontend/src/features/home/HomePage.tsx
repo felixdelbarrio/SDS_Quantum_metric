@@ -51,6 +51,9 @@ export function HomePage() {
     );
     return defaultCountry?.code ?? countries.data.countries[0].code;
   }, [countries.data, country]);
+  const selectedCountryMeta = countries.data?.countries.find(
+    (item) => item.code === selectedCountry,
+  );
   useEffect(() => {
     if (!countries.data?.countries.length) return;
     if (
@@ -172,6 +175,9 @@ export function HomePage() {
         countries={countries.data.countries}
         dateRange={dateRange}
         coverage={coverage.data}
+        dashboardName={
+          summary.data?.dashboard_name ?? selectedCountryMeta?.dashboard_name
+        }
         missingIngestionPending={rangeIngestionMutation.isPending}
         onCountryChange={setActiveCountry}
         onDateRangeChange={setDateRange}

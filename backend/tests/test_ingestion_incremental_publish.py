@@ -57,8 +57,13 @@ async def test_ingestion_publishes_dashboard_after_each_completed_chunk(
         rows: list[dict[str, Any]],
         ingestion_id: str,
         enabled_roles: set[str],
+        dashboard_id: str | None = None,
+        dashboard_name: str | None = None,
+        range_key: str | None = None,
     ) -> tuple[RawCallMergeResult, _Build, _Report]:
+        _ = parquet_store, country, ingestion_id, dashboard_name, range_key
         assert "summary.page_views" in enabled_roles
+        assert dashboard_id == "dash"
         published_chunks.append(rows)
         return (
             RawCallMergeResult(

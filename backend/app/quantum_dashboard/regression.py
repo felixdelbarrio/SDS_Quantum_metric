@@ -38,6 +38,7 @@ def run_regression(
     ingestion_id: str | None = None,
     tolerance_percent: float | None = None,
     enabled_roles: set[str] | list[str] | None = None,
+    dashboard_id: str | None = None,
     range_key: str = "today",
 ) -> RegressionReport:
     tolerance = (
@@ -45,8 +46,14 @@ def run_regression(
         if tolerance_percent is None
         else tolerance_percent
     )
-    contracts = _read_dataset(store, country, DATASET_VISUAL_CONTRACTS, range_key)
-    snapshots = _read_dataset(store, country, DATASET_WEB_SNAPSHOTS, range_key)
+    contracts = _filter_dashboard_rows(
+        _read_dataset(store, country, DATASET_VISUAL_CONTRACTS, range_key),
+        dashboard_id,
+    )
+    snapshots = _filter_dashboard_rows(
+        _read_dataset(store, country, DATASET_WEB_SNAPSHOTS, range_key),
+        dashboard_id,
+    )
     contract_roles = {str(row.get("visual_role")) for row in contracts}
     snapshot_by_role = {str(row.get("card_role")): row for row in snapshots}
     cards: list[RegressionCardResult] = []
@@ -69,7 +76,7 @@ def run_regression(
                 )
             )
             continue
-        local = _local_payload(store, country, spec.role, range_key)
+        local = _local_payload(store, country, spec.role, range_key, dashboard_id)
         if not local:
             cards.append(
                 _card_result(
@@ -112,6 +119,7 @@ def run_regression(
         country=country,
         range_key=range_key,
         dashboard_id=_text(first_contract.get("dashboard_id")),
+        dashboard_name=_text(first_contract.get("dashboard_name")),
         team_id=_text(first_contract.get("team_id")),
         tabs=["summary", "errors"],
         cards=cards,
@@ -133,6 +141,7 @@ def _compare_card(
     range_key: str,
 ) -> RegressionCardResult:
     spec = ROLE_SPECS[role]
+    widget_id = _text(local.get("widget_id") or snapshot.get("widget_id"))
     if spec.card_type == "TABLE":
         web_rows = _list(snapshot.get("visible_table_rows"))
         local_rows = _list(local.get("rows"))
@@ -152,6 +161,7 @@ def _compare_card(
                 web_value=len(web_rows),
                 local_value=len(local_rows),
                 details="Local table does not include expandable child rows.",
+                widget_id=widget_id,
             )
         if len(web_rows[:10]) != len(local_rows[:10]):
             return _card_result(
@@ -163,6 +173,7 @@ def _compare_card(
                 web_value=len(web_rows),
                 local_value=len(local_rows),
                 details="Visible row counts differ.",
+                widget_id=widget_id,
             )
         web_sample = [_table_row_signature(role, row) for row in web_rows[:10]]
         local_sample = [_table_row_signature(role, row) for row in local_rows[: len(web_sample)]]
@@ -176,6 +187,7 @@ def _compare_card(
                 web_value=len(web_rows),
                 local_value=len(local_rows),
                 details="First visible table rows differ in content or order.",
+                widget_id=widget_id,
             )
         return _card_result(
             spec.tab,
@@ -185,11 +197,12 @@ def _compare_card(
             range_key=range_key,
             web_value=len(web_rows),
             local_value=len(local_rows),
+            widget_id=widget_id,
         )
 
     chart_result = _compare_chart_contract(role, snapshot, local, range_key)
     if chart_result is not None:
-        return chart_result
+        return chart_result.model_copy(update={"widget_id": widget_id})
 
     web_value = _number(snapshot.get("visible_value"))
     local_value = _number(local.get("value"))
@@ -208,6 +221,7 @@ def _compare_card(
             web_value=snapshot.get("visible_value"),
             local_value=local.get("value"),
             details="Could not compare numeric or chart values.",
+            widget_id=widget_id,
         )
     difference = round(float(local_value) - float(web_value), 6)
     allowed = abs(float(web_value)) * (tolerance / 100)
@@ -226,6 +240,7 @@ def _compare_card(
         web_value=web_value,
         local_value=local_value,
         difference=difference,
+        widget_id=widget_id,
     )
 
 
@@ -234,24 +249,40 @@ def _local_payload(
     country: str,
     role: VisualRole,
     range_key: str,
+    dashboard_id: str | None,
 ) -> dict[str, Any] | None:
     if role.startswith("summary.") and role != "summary.detail_by_app_name_os":
-        rows = _read_dataset(store, country, DATASET_SUMMARY_WIDGETS, range_key)
+        rows = _filter_dashboard_rows(
+            _read_dataset(store, country, DATASET_SUMMARY_WIDGETS, range_key),
+            dashboard_id,
+        )
         return _first_role(rows, role)
     if role == "summary.detail_by_app_name_os":
-        rows = _read_dataset(store, country, DATASET_SUMMARY_TABLE, range_key)
+        rows = _filter_dashboard_rows(
+            _read_dataset(store, country, DATASET_SUMMARY_TABLE, range_key),
+            dashboard_id,
+        )
         return {"rows": [row for row in rows if row.get("card_role") == role]}
     if role in {
         "errors.error_sessions_percentage_evolution",
         "errors.error_sessions_by_app_name_comparison",
     }:
-        rows = _read_dataset(store, country, DATASET_ERRORS_WIDGETS, range_key)
+        rows = _filter_dashboard_rows(
+            _read_dataset(store, country, DATASET_ERRORS_WIDGETS, range_key),
+            dashboard_id,
+        )
         return _first_role(rows, role)
     if role == "errors.top_errors_by_error_name":
-        rows = _read_dataset(store, country, DATASET_ERRORS_TOP_ERRORS, range_key)
+        rows = _filter_dashboard_rows(
+            _read_dataset(store, country, DATASET_ERRORS_TOP_ERRORS, range_key),
+            dashboard_id,
+        )
         return {"rows": [row for row in rows if row.get("card_role") == role]}
     if role == "errors.error_session_percentage_by_app_name":
-        rows = _read_dataset(store, country, DATASET_ERRORS_APP_NAME, range_key)
+        rows = _filter_dashboard_rows(
+            _read_dataset(store, country, DATASET_ERRORS_APP_NAME, range_key),
+            dashboard_id,
+        )
         return {"rows": [row for row in rows if row.get("card_role") == role]}
     return None
 
@@ -396,6 +427,8 @@ def _persist_report(store: ParquetStore, report: RegressionReport) -> None:
                 **card.model_dump(mode="json"),
                 "country": report.country,
                 "range_key": report.range_key,
+                "dashboard_id": report.dashboard_id,
+                "dashboard_name": report.dashboard_name,
                 "ingestion_id": report.ingestion_id,
                 "generated_at": report.generated_at,
                 "verdict": report.verdict,
@@ -485,6 +518,7 @@ def _markdown(report: RegressionReport) -> str:
             "## Dashboard Resolved",
             "",
             f"- Dashboard ID: {report.dashboard_id or '-'}",
+            f"- Dashboard name: {report.dashboard_name or '-'}",
             f"- Team ID: {report.team_id or '-'}",
             "",
             "## Captured APIs",
@@ -587,10 +621,12 @@ def _card_result(
     local_value: float | str | None = None,
     difference: float | None = None,
     details: str | None = None,
+    widget_id: str | None = None,
 ) -> RegressionCardResult:
     return RegressionCardResult(
         tab=tab,
         card_role=role,
+        widget_id=widget_id,
         card_title=title,
         range_key=range_key,
         web_value=web_value,
@@ -637,6 +673,16 @@ def _read_dataset(
             return legacy_rows
     rows = store.read_country_dataset(country, range_dataset_path(dataset_path, range_key))
     return rows
+
+
+def _filter_dashboard_rows(
+    rows: list[dict[str, Any]],
+    dashboard_id: str | None,
+) -> list[dict[str, Any]]:
+    if not dashboard_id:
+        return rows
+    filtered = [row for row in rows if _text(row.get("dashboard_id")) == dashboard_id]
+    return filtered if filtered else [row for row in rows if _text(row.get("dashboard_id")) is None]
 
 
 def _format_cell(value: object) -> str:
