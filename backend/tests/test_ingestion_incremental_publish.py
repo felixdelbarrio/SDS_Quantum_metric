@@ -18,6 +18,7 @@ from backend.app.quantum.schemas import (
     QuantumConfig,
     QuantumCountryConfig,
     QuantumDashboardConfig,
+    QuantumWidgetConfig,
 )
 from backend.app.quantum_dashboard.models import DashboardDiscoveryResult
 from backend.app.storage.parquet_store import ParquetStore, RawCallMergeResult
@@ -227,6 +228,22 @@ class _ConfigStore(QuantumConfigStore):
                                 is_default=True,
                                 validated=True,
                                 validation_status="ok",
+                                widgets=[
+                                    QuantumWidgetConfig(
+                                        role="summary.page_views",
+                                        title="Paginas vistas",
+                                        widget_id="card-page-views",
+                                        card_id="card-page-views",
+                                        widget_type="CHART",
+                                        tab="summary",
+                                        tab_name="Resumen",
+                                        tab_index=0,
+                                        enabled=True,
+                                        required=True,
+                                        supported=True,
+                                        source="quantum_web",
+                                    )
+                                ],
                             )
                         ],
                     )

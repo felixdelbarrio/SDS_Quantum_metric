@@ -15,15 +15,29 @@ def discover_dashboard_from_config(
     url: str | None = None,
 ) -> DashboardDiscoveryResult:
     base_url = country_config.base_url or settings.quantum_default_base_url
-    configured_dashboard_id = country_config.dashboard_id or settings.quantum_default_dashboard_id
-    configured_team_id = country_config.team_id or settings.quantum_default_team_id
-    configured_summary_tab = country_config.tab or settings.quantum_default_summary_tab
+    dashboard = country_config.default_dashboard()
+    configured_dashboard_id = (
+        (dashboard.dashboard_id if dashboard else "")
+        or country_config.dashboard_id
+        or settings.quantum_default_dashboard_id
+    )
+    configured_team_id = (
+        (dashboard.team_id if dashboard else "")
+        or country_config.team_id
+        or settings.quantum_default_team_id
+    )
+    configured_summary_tab = (
+        dashboard.summary_tab if dashboard else country_config.tab
+    ) or settings.quantum_default_summary_tab
+    configured_errors_tab = (
+        dashboard.errors_tab if dashboard else settings.quantum_default_errors_tab
+    )
     parsed = parse_dashboard_url(url or "")
 
     dashboard_id = configured_dashboard_id or parsed.dashboard_id
     team_id = configured_team_id or parsed.team_id
     summary_tab = parsed.tab if parsed.tab is not None else configured_summary_tab
-    errors_tab = settings.quantum_default_errors_tab
+    errors_tab = configured_errors_tab
 
     if dashboard_id:
         source: Literal["env", "url", "metadata", "default", "unresolved"] = (
