@@ -85,6 +85,7 @@ class QuantumWidgetConfig(BaseModel):
     widget_id: str = ""
     card_id: str | None = None
     widget_type: WidgetType = "UNKNOWN"
+    tab_id: str | None = None
     tab: str = "summary"
     tab_name: str = "Resumen"
     tab_index: int = Field(default=0, ge=0)
@@ -100,6 +101,7 @@ class QuantumWidgetConfig(BaseModel):
         "widget_id",
         "card_id",
         "widget_type",
+        "tab_id",
         "tab",
         "tab_name",
         "source",
@@ -136,9 +138,7 @@ class QuantumDashboardConfig(BaseModel):
     def _seed_widgets(self) -> QuantumDashboardConfig:
         if _is_legacy_generated_dashboard_name(self.name) and self.dashboard_id:
             self.name = self.dashboard_id
-        if not self.widgets:
-            self.widgets = default_widget_configs()
-        if not self.tabs:
+        if not self.tabs and self.widgets:
             self.tabs = _tabs_from_widgets(self.widgets)
         return self
 
@@ -215,7 +215,7 @@ class QuantumCountryConfig(BaseModel):
     def enabled_widget_roles(self) -> list[str]:
         dashboard = self.default_dashboard()
         if dashboard is None:
-            return [widget.role for widget in default_widget_configs()]
+            return []
         return dashboard.enabled_widget_roles()
 
     def dashboard_url(self) -> str:
@@ -419,101 +419,6 @@ def merge_public_quantum_update(
         export_path=update.export_path,
         manual_cookie=update.manual_cookie,
     )
-
-
-def default_widget_configs() -> list[QuantumWidgetConfig]:
-    return [
-        QuantumWidgetConfig(
-            role="summary.page_views",
-            widget_id="role:summary.page_views",
-            title="Paginas vistas",
-            widget_type="CHART",
-            tab="summary",
-            tab_name="Resumen",
-            tab_index=0,
-            required=True,
-        ),
-        QuantumWidgetConfig(
-            role="summary.sessions",
-            widget_id="role:summary.sessions",
-            title="Sesiones",
-            widget_type="CHART",
-            tab="summary",
-            tab_name="Resumen",
-            tab_index=0,
-            required=True,
-        ),
-        QuantumWidgetConfig(
-            role="summary.converted_sessions",
-            widget_id="role:summary.converted_sessions",
-            title="Sesiones con conversion",
-            widget_type="CHART",
-            tab="summary",
-            tab_name="Resumen",
-            tab_index=0,
-            required=True,
-        ),
-        QuantumWidgetConfig(
-            role="summary.avg_session_duration",
-            widget_id="role:summary.avg_session_duration",
-            title="Tiempo medio de sesion",
-            widget_type="CHART",
-            tab="summary",
-            tab_name="Resumen",
-            tab_index=0,
-            required=True,
-        ),
-        QuantumWidgetConfig(
-            role="summary.detail_by_app_name_os",
-            widget_id="role:summary.detail_by_app_name_os",
-            title="Detalle App Name / SO",
-            widget_type="TABLE",
-            tab="summary",
-            tab_name="Resumen",
-            tab_index=0,
-            required=True,
-        ),
-        QuantumWidgetConfig(
-            role="errors.error_sessions_percentage_evolution",
-            widget_id="role:errors.error_sessions_percentage_evolution",
-            title="Evolutivo - % Sesiones con Error",
-            widget_type="CHART",
-            tab="errors",
-            tab_name="Errores",
-            tab_index=1,
-            required=True,
-        ),
-        QuantumWidgetConfig(
-            role="errors.top_errors_by_error_name",
-            widget_id="role:errors.top_errors_by_error_name",
-            title="Top errores",
-            widget_type="TABLE",
-            tab="errors",
-            tab_name="Errores",
-            tab_index=1,
-            required=True,
-        ),
-        QuantumWidgetConfig(
-            role="errors.error_sessions_by_app_name_comparison",
-            widget_id="role:errors.error_sessions_by_app_name_comparison",
-            title="Comparativa App Name",
-            widget_type="DONUT",
-            tab="errors",
-            tab_name="Errores",
-            tab_index=1,
-            required=True,
-        ),
-        QuantumWidgetConfig(
-            role="errors.error_session_percentage_by_app_name",
-            widget_id="role:errors.error_session_percentage_by_app_name",
-            title="% error por App Name",
-            widget_type="TABLE",
-            tab="errors",
-            tab_name="Errores",
-            tab_index=1,
-            required=True,
-        ),
-    ]
 
 
 def _normalized_dashboards(

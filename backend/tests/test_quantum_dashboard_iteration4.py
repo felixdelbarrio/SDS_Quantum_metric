@@ -82,8 +82,7 @@ def test_config_api_exposes_auditable_dashboard_widget_metadata(tmp_path: Path) 
     dashboard = payload["countries"][0]["dashboards"][0]
     assert dashboard["dashboard_id"] == "dash-default"
     assert dashboard["team_id"] == "team-default"
-    assert dashboard["widgets"][0]["role"] == "summary.page_views"
-    assert dashboard["widgets"][0]["widget_type"] == "CHART"
+    assert dashboard["widgets"] == []
 
 
 def test_builder_persists_contracts_snapshots_derived_and_no_cookies(tmp_path: Path) -> None:
