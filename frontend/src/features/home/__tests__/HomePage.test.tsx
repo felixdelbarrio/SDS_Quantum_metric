@@ -111,6 +111,11 @@ describe("HomePage local dashboard", () => {
         0,
       );
     });
+    expect(await screen.findByText("+1.5%")).toHaveClass("semantic-positive");
+    expect(await screen.findByText("-2.5%")).toHaveClass("semantic-negative");
+    expect(
+      screen.queryByRole("button", { name: /Expandir fila/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("no muestra KPIs tecnicos ni boton Actualizar en Dashboard", async () => {
@@ -127,7 +132,7 @@ describe("HomePage local dashboard", () => {
     expect(screen.queryByText(/passed/i)).not.toBeInTheDocument();
   });
 
-  it("muestra coverage incompleta y lanza ingesta de dias faltantes", async () => {
+  it("muestra coverage incompleta y lanza ingesta del periodo seleccionado", async () => {
     mockFetch({ missingDays: ["2026-06-17"] });
     renderHome();
 
@@ -141,15 +146,38 @@ describe("HomePage local dashboard", () => {
 
     await waitFor(() => {
       expect(
-        requests.some(
-          (request) => request === "POST /api/ingestions/missing-days",
-        ),
+        requests.some((request) => request === "POST /api/ingestions/range"),
       ).toBe(true);
     });
     expect(postBodies[0]).toMatchObject({
       range_key: "last_7_days",
       start_date: addDays(todayInMexico(), -6),
       end_date: todayInMexico(),
+      reason: "missing_days",
+    });
+  });
+
+  it("today sin datos permite actualizar el periodo", async () => {
+    mockFetch({ missingDays: [todayInMexico()] });
+    renderHome();
+    const selector = await screen.findByLabelText("Fecha");
+
+    fireEvent.change(selector, { target: { value: "today" } });
+
+    const updateButton = await screen.findByRole("button", {
+      name: "Actualizar hoy",
+    });
+    expect(updateButton).toBeEnabled();
+    fireEvent.click(updateButton);
+
+    await waitFor(() => {
+      expect(requests).toContain("POST /api/ingestions/range");
+    });
+    expect(postBodies[0]).toMatchObject({
+      range_key: "today",
+      start_date: todayInMexico(),
+      end_date: todayInMexico(),
+      reason: "missing_days",
     });
   });
 
@@ -201,7 +229,7 @@ describe("HomePage local dashboard", () => {
     mockFetch();
     renderHome();
     const sortButton = await screen.findByRole("button", {
-      name: /Page Views/i,
+      name: /^Page Views$/i,
     });
 
     fireEvent.click(sortButton);
@@ -237,56 +265,21 @@ describe("HomePage local dashboard", () => {
     ).toBeInTheDocument();
   });
 
-  it("Dimension abre, aplica y limpia dimension", async () => {
+  it("no muestra controles decorativos de Dimension ni Segmento", async () => {
     mockFetch();
     renderHome();
 
-    fireEvent.click(await screen.findByRole("button", { name: /Dimension/i }));
-    fireEvent.click(await screen.findByRole("button", { name: "Browser" }));
-
-    await waitFor(() => {
-      expect(screen.getByText("Dimension: Browser")).toBeInTheDocument();
-      expect(
-        requests.some((request) => request.includes("dimension=browser")),
-      ).toBe(true);
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: /Dimension/i }));
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Quitar dimension" }),
-    );
-
+    expect(await screen.findByText("Dashboard General MX")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Dimension/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Segmento/i })).toBeNull();
+    expect(screen.queryByText(/Dimension:/i)).toBeNull();
+    expect(screen.queryByText(/Segmento:/i)).toBeNull();
     expect(
-      await screen.findByText("Dimension: sin dimension"),
-    ).toBeInTheDocument();
-  });
-
-  it("Segmento abre, aplica y limpia segmento", async () => {
-    mockFetch();
-    renderHome();
-
-    fireEvent.click(await screen.findByRole("button", { name: /Segmento/i }));
-    fireEvent.click(
-      await screen.findByRole("button", { name: /App Name: pagos/i }),
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText("Segmento: App Name: pagos")).toBeInTheDocument();
-      expect(
-        requests.some((request) =>
-          request.includes("segment=app_name%3Apagos"),
-        ),
-      ).toBe(true);
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: /Segmento/i }));
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Limpiar segmento" }),
-    );
-
+      requests.some((request) => request.includes("/analytics/dimensions")),
+    ).toBe(false);
     expect(
-      await screen.findByText("Segmento: sin segmento"),
-    ).toBeInTheDocument();
+      requests.some((request) => request.includes("/analytics/segments")),
+    ).toBe(false);
   });
 
   it("no renderiza la Home antigua ni datos mock", async () => {
@@ -375,35 +368,6 @@ function responseFor(url: URL, options: MockOptions) {
       ],
     };
   }
-  if (url.pathname.endsWith("/analytics/dimensions")) {
-    return {
-      country,
-      groups: [
-        {
-          label: "Page",
-          items: [{ id: "app_name", label: "App Name", status: "available" }],
-        },
-        {
-          label: "Device",
-          items: [{ id: "browser", label: "Browser", status: "available" }],
-        },
-      ],
-    };
-  }
-  if (url.pathname.endsWith("/analytics/segments")) {
-    return {
-      country,
-      segments: [
-        {
-          id: "app_name:pagos",
-          label: "App Name: pagos",
-          field: "app_name",
-          value: "pagos",
-          count: 1,
-        },
-      ],
-    };
-  }
   if (url.pathname.endsWith("/local-dashboard/coverage")) {
     const missingDays = options.missingDays ?? [];
     return {
@@ -420,8 +384,8 @@ function responseFor(url: URL, options: MockOptions) {
         : "Periodo completo en Parquet.",
     };
   }
-  if (url.pathname.endsWith("/api/ingestions/missing-days")) {
-    return { ingestion_id: "missing-days", status: "pending" };
+  if (url.pathname.endsWith("/api/ingestions/range")) {
+    return { ingestion_id: "range-ingestion", status: "pending" };
   }
   if (options.empty) return emptyPayload(country);
   if (url.pathname.endsWith("/local-dashboard/summary/table")) {
@@ -434,7 +398,17 @@ function responseFor(url: URL, options: MockOptions) {
         { key: "app_name", label: "App Name", sortable: true },
         { key: "operating_system", label: "Sistema operativo", sortable: true },
         { key: "page_views", label: "Page Views", sortable: true },
+        {
+          key: "page_views_delta_percent",
+          label: "Delta Page Views",
+          sortable: true,
+        },
         { key: "sessions", label: "Sessions", sortable: true },
+        {
+          key: "sessions_delta_percent",
+          label: "Delta Sessions",
+          sortable: true,
+        },
         { key: "conversions", label: "General - Conversiones", sortable: true },
       ],
       rows: [
@@ -443,7 +417,11 @@ function responseFor(url: URL, options: MockOptions) {
           app_name: "portabilidad nomina",
           operating_system: "iOS",
           page_views: 100,
+          page_views_delta_percent: 1.5,
+          page_views_semantic_state: "positive",
           sessions: 20,
+          sessions_delta_percent: -2.5,
+          sessions_semantic_state: "negative",
           conversions: 3,
         },
       ],
@@ -551,12 +529,6 @@ function responseFor(url: URL, options: MockOptions) {
     status: "ok",
     country,
     source: "parquet",
-    applied_dimension: url.searchParams.get("dimension")
-      ? { id: url.searchParams.get("dimension"), label: "Browser" }
-      : null,
-    applied_segment: url.searchParams.get("segment")
-      ? { id: url.searchParams.get("segment"), label: "App Name: pagos" }
-      : null,
     widgets: [
       {
         id: "page_views",

@@ -17,21 +17,12 @@ import { KpiWidget } from "./KpiWidget";
 
 type Props = {
   country: CountryCode;
-  dimension?: string | null;
-  segment?: string | null;
   dateRange: DateRange;
   response?: ErrorsDashboardResponse;
   isLoading: boolean;
 };
 
-export function ErrorsTab({
-  country,
-  dimension,
-  segment,
-  dateRange,
-  response,
-  isLoading,
-}: Props) {
+export function ErrorsTab({ country, dateRange, response, isLoading }: Props) {
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState("row_index");
   const [direction, setDirection] = useState<SortDirection>("asc");
@@ -44,8 +35,6 @@ export function ErrorsTab({
       "dashboard",
       "errors-top-table",
       country,
-      dimension,
-      segment,
       dateRange.startDate,
       dateRange.endDate,
       dateRange.preset,
@@ -56,8 +45,6 @@ export function ErrorsTab({
     queryFn: () =>
       getTopErrorsTable({
         country,
-        dimension,
-        segment,
         startDate: dateRange.startDate,
         endDate: dateRange.endDate,
         rangeKey: dateRange.preset,
@@ -72,8 +59,6 @@ export function ErrorsTab({
       "dashboard",
       "errors-app-table",
       country,
-      dimension,
-      segment,
       dateRange.startDate,
       dateRange.endDate,
       dateRange.preset,
@@ -84,8 +69,6 @@ export function ErrorsTab({
     queryFn: () =>
       getErrorsAppNameTable({
         country,
-        dimension,
-        segment,
         startDate: dateRange.startDate,
         endDate: dateRange.endDate,
         rangeKey: dateRange.preset,

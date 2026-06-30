@@ -14,7 +14,11 @@ from backend.app.analytics.service import AnalyticsService
 from backend.app.auth.browser_cookies import BrowserCookieProvider
 from backend.app.auth.session_store import secret_store
 from backend.app.config.settings import Settings, get_settings
-from backend.app.ingestion.models import IngestionCreate, MissingDaysIngestionCreate
+from backend.app.ingestion.models import (
+    IngestionCreate,
+    MissingDaysIngestionCreate,
+    RangeIngestionCreate,
+)
 from backend.app.ingestion.service import IngestionService
 from backend.app.quantum.client import QuantumClient
 from backend.app.quantum.config_store import QuantumConfigStore
@@ -334,6 +338,24 @@ async def create_missing_days_ingestion(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return job.model_dump(mode="json")
+
+
+@router.post("/ingestions/range")
+async def create_range_ingestion(
+    request: RangeIngestionCreate,
+    service: Annotated[IngestionService, Depends(ingestion_service_dep)],
+) -> dict[str, object]:
+    job = service.start(
+        IngestionCreate(
+            country=request.country,
+            range_key=request.range_key,
+            start_date=request.start_date,
+            end_date=request.end_date,
+        )
+    )
+    payload = job.model_dump(mode="json")
+    payload["reason"] = request.reason
+    return payload
 
 
 @router.get("/ingestions")
@@ -677,16 +699,12 @@ def local_dashboard_summary(
     store: Annotated[ParquetStore, Depends(parquet_store_dep)],
     config_store: Annotated[QuantumConfigStore, Depends(config_store_dep)],
     country: str = "MX",
-    dimension: str | None = None,
-    segment: str | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
     range_key: str = "last_7_days",
 ) -> dict[str, object]:
     return LocalDashboardService(store, config_store).summary(
         country,
-        dimension=dimension,
-        segment=segment,
         start_date=start_date,
         end_date=end_date,
         range_key=range_key,
@@ -701,8 +719,6 @@ def local_dashboard_summary_table(
     search: str | None = None,
     sort: str = "page_views",
     direction: SortDirection = "desc",
-    dimension: str | None = None,
-    segment: str | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
     range_key: str = "last_7_days",
@@ -712,8 +728,6 @@ def local_dashboard_summary_table(
         search=search,
         sort=sort,
         direction=direction,
-        dimension=dimension,
-        segment=segment,
         start_date=start_date,
         end_date=end_date,
         range_key=range_key,
@@ -725,16 +739,12 @@ def local_dashboard_errors(
     store: Annotated[ParquetStore, Depends(parquet_store_dep)],
     config_store: Annotated[QuantumConfigStore, Depends(config_store_dep)],
     country: str = "MX",
-    dimension: str | None = None,
-    segment: str | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
     range_key: str = "last_7_days",
 ) -> dict[str, object]:
     return LocalDashboardService(store, config_store).errors(
         country,
-        dimension=dimension,
-        segment=segment,
         start_date=start_date,
         end_date=end_date,
         range_key=range_key,
@@ -749,8 +759,6 @@ def local_dashboard_top_errors(
     search: str | None = None,
     sort: str = "error_sessions",
     direction: SortDirection = "desc",
-    dimension: str | None = None,
-    segment: str | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
     range_key: str = "last_7_days",
@@ -760,8 +768,6 @@ def local_dashboard_top_errors(
         search=search,
         sort=sort,
         direction=direction,
-        dimension=dimension,
-        segment=segment,
         start_date=start_date,
         end_date=end_date,
         range_key=range_key,
@@ -776,8 +782,6 @@ def local_dashboard_error_app_name(
     search: str | None = None,
     sort: str = "row_index",
     direction: SortDirection = "asc",
-    dimension: str | None = None,
-    segment: str | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
     range_key: str = "last_7_days",
@@ -787,8 +791,6 @@ def local_dashboard_error_app_name(
         search=search,
         sort=sort,
         direction=direction,
-        dimension=dimension,
-        segment=segment,
         start_date=start_date,
         end_date=end_date,
         range_key=range_key,
@@ -834,22 +836,6 @@ def local_dashboard_card_points(
     return LocalDashboardService(store, config_store).card_points(
         country, card_role, range_key=range_key
     )
-
-
-@router.get("/analytics/dimensions")
-def analytics_dimensions(
-    store: Annotated[ParquetStore, Depends(parquet_store_dep)],
-    country: str = "MX",
-) -> dict[str, object]:
-    return AnalyticsService(store).dimensions(country)
-
-
-@router.get("/analytics/segments")
-def analytics_segments(
-    store: Annotated[ParquetStore, Depends(parquet_store_dep)],
-    country: str = "MX",
-) -> dict[str, object]:
-    return AnalyticsService(store).segments(country)
 
 
 @router.get("/analytics/timeseries")

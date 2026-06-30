@@ -9,21 +9,12 @@ import { SummaryDetailTable } from "./SummaryDetailTable";
 
 type Props = {
   country: CountryCode;
-  dimension?: string | null;
-  segment?: string | null;
   dateRange: DateRange;
   response?: SummaryDashboardResponse;
   isLoading: boolean;
 };
 
-export function SummaryTab({
-  country,
-  dimension,
-  segment,
-  dateRange,
-  response,
-  isLoading,
-}: Props) {
+export function SummaryTab({ country, dateRange, response, isLoading }: Props) {
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState("page_views");
   const [direction, setDirection] = useState<SortDirection>("desc");
@@ -33,8 +24,6 @@ export function SummaryTab({
       "dashboard",
       "summary-table",
       country,
-      dimension,
-      segment,
       dateRange.startDate,
       dateRange.endDate,
       dateRange.preset,
@@ -45,8 +34,6 @@ export function SummaryTab({
     queryFn: () =>
       getSummaryTable({
         country,
-        dimension,
-        segment,
         startDate: dateRange.startDate,
         endDate: dateRange.endDate,
         rangeKey: dateRange.preset,

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { QuantumChart } from "./QuantumChart";
 import { ChartPayload } from "../../types";
@@ -29,6 +29,38 @@ describe("QuantumChart", () => {
     expect(
       container.querySelector("path.quantum-chart-series")?.getAttribute("d"),
     ).toContain("C");
+  });
+
+  it("renderiza barras reales cuando el modo visual es bar", () => {
+    const { container } = render(
+      <QuantumChart
+        payload={chartPayload()}
+        displayMode="bar"
+        title="Paginas vistas"
+      />,
+    );
+
+    expect(container.querySelectorAll("rect.quantum-chart-bar")).toHaveLength(
+      2,
+    );
+    expect(container.querySelector("path.quantum-chart-series")).toBeNull();
+  });
+
+  it("mantiene tooltip accesible en barras", () => {
+    const { container } = render(
+      <QuantumChart
+        payload={chartPayload()}
+        displayMode="bar"
+        title="Paginas vistas"
+      />,
+    );
+
+    const bar = container.querySelector("rect.quantum-chart-bar");
+    expect(bar).not.toBeNull();
+    fireEvent.focus(bar as Element);
+
+    expect(screen.getByRole("status")).toHaveTextContent("Mobile");
+    expect(screen.getByRole("status")).toHaveTextContent("00:00");
   });
 
   it("muestra valores y porcentajes en el donut", () => {

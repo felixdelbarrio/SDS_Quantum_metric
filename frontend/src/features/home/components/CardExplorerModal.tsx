@@ -102,6 +102,7 @@ export function CardExplorerModal({ widget, open, onClose }: Props) {
           <QuantumChart
             payload={widget.chart_payload}
             mode="expanded"
+            displayMode={view}
             title={widget.title}
           />
         )}

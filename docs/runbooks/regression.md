@@ -40,6 +40,9 @@ La regresion falla si:
 - faltan ejes, leyenda, series o puntos;
 - una tabla pierde hijos expandibles;
 - valores principales difieren por encima de tolerancia.
+- una tabla Web contiene deltas y el derivado local los pierde;
+- `% Sesiones con Error por App Name` cambia orden, filas, porcentajes o decimales;
+- un chart en modo bar se representa como linea en el contrato visual local.
 
 Los estados especificos ayudan a localizar el contrato roto: `failed_missing_chart_payload`, `failed_period_label_mismatch`, `failed_time_range_mismatch`, `failed_widget_value_mismatch`, `failed_percentage_mismatch`, `failed_axis_mismatch`, `failed_legend_mismatch`, `failed_series_shape_mismatch`, `failed_expandable_rows_mismatch` y equivalentes.
 # Rangos obligatorios
@@ -51,6 +54,9 @@ Validar y conservar reportes para:
 - `docs/regression/last-7-days-web-vs-local.md`
 
 Cada reporte debe terminar en `PASSED`.
+
+Antes de marcar un reporte como `PASSED`, verificar que la fecha absoluta, `range_key`, timezone,
+dashboard ID y team ID coinciden entre Web y Local.
 
 # Evidencia
 

@@ -4,18 +4,14 @@ import {
   CountryCode,
   DashboardCoverage,
   DetailTableResponse,
-  DimensionsResponse,
   ErrorTableResponse,
   ErrorsDashboardResponse,
-  SegmentsResponse,
   SortDirection,
   SummaryDashboardResponse,
 } from "./types";
 
 type DashboardParams = {
   country: CountryCode;
-  dimension?: string | null;
-  segment?: string | null;
   startDate?: string | null;
   endDate?: string | null;
   rangeKey?: string | null;
@@ -37,17 +33,18 @@ export function getCoverage(params: DashboardParams) {
   );
 }
 
-export function ingestMissingDays(
+export function ingestRange(
   country: CountryCode,
-  days: string[],
-  range: Pick<DashboardParams, "rangeKey" | "startDate" | "endDate">,
+  range: Pick<DashboardParams, "rangeKey" | "startDate" | "endDate"> & {
+    reason?: string | null;
+  },
 ) {
-  return apiPost("/ingestions/missing-days", {
+  return apiPost("/ingestions/range", {
     country,
-    days,
     range_key: range.rangeKey,
     start_date: range.startDate,
     end_date: range.endDate,
+    reason: range.reason ?? "user_requested",
   });
 }
 
@@ -78,18 +75,6 @@ export function getTopErrorsTable(params: TableParams) {
 export function getErrorsAppNameTable(params: TableParams) {
   return apiGet<ErrorTableResponse>(
     `/local-dashboard/errors/app-name?${toQuery(params)}`,
-  );
-}
-
-export function getDimensions(country: CountryCode) {
-  return apiGet<DimensionsResponse>(
-    `/analytics/dimensions?${toQuery({ country })}`,
-  );
-}
-
-export function getSegments(country: CountryCode) {
-  return apiGet<SegmentsResponse>(
-    `/analytics/segments?${toQuery({ country })}`,
   );
 }
 
