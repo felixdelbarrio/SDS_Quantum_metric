@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -8,7 +9,12 @@ import pytest
 from backend.app.api import routes
 from backend.app.config.settings import Settings
 from backend.app.main import app
-from backend.app.quantum.schemas import Country, QuantumCountryConfig, QuantumDashboardConfig
+from backend.app.quantum.schemas import (
+    Country,
+    QuantumCountryConfig,
+    QuantumDashboardConfig,
+    QuantumWidgetConfig,
+)
 from backend.app.quantum_dashboard.builder import DATASET_SUMMARY_WIDGETS, range_dataset_path
 from backend.app.quantum_dashboard.dashboard_discovery import (
     dashboards_from_config_cache,
@@ -27,25 +33,40 @@ from backend.app.storage.parquet_store import ParquetStore
 def test_dashboard_discovery_parses_real_names_types_team_and_dedupes() -> None:
     payload = {
         "data": {
-            "dashboards": [
+            "resources": {
+                "totalCount": 4,
+                "resources": [
+                    {
+                        "id": "dash-general-mx",
+                        "name": "Dashboard General MX",
+                        "type": "DASHBOARD",
+                        "starred": True,
+                    },
+                    {
+                        "id": "metric-user",
+                        "name": "User metric",
+                        "type": "USER_METRIC",
+                    },
+                    {
+                        "id": "dash-errors",
+                        "name": "Errores mobile",
+                        "type": "DASHBOARD",
+                    },
+                    {
+                        "id": "dash-general-mx",
+                        "name": "Dashboard General MX",
+                        "type": "DASHBOARD",
+                    },
+                ],
+            },
+            "dashboards_legacy": [
                 {
                     "dashboardId": "dash-general-mx",
-                    "dashboardName": "Dashboard General MX",
+                    "dashboardName": "Dashboard General MX legacy",
                     "dashboardType": "DASHBOARD",
                     "teamID": "team-mx",
                 },
-                {
-                    "id": "dash-general-mx",
-                    "name": "Dashboard General MX",
-                    "type": "DASHBOARD",
-                    "teamId": "team-mx",
-                },
-                {
-                    "id": "dash-errors",
-                    "name": "Errores mobile",
-                    "type": "DASHBOARD",
-                },
-            ]
+            ],
         }
     }
 
@@ -63,6 +84,8 @@ def test_dashboard_discovery_parses_real_names_types_team_and_dedupes() -> None:
     assert dashboards[0].name == "Dashboard General MX"
     assert dashboards[0].type == "DASHBOARD"
     assert dashboards[0].team_id == "team-mx"
+    assert dashboards[0].order == 0
+    assert dashboards[0].is_default_candidate is True
     assert all(dashboard.source == "quantum_web" for dashboard in dashboards)
 
 
@@ -95,36 +118,95 @@ async def test_dashboard_discovery_falls_back_to_config_cache() -> None:
 
 
 def test_dashboard_structure_discovers_tabs_widgets_types_and_unknown() -> None:
+    tabs = [
+        {
+            "id": "tab-summary",
+            "name": "📑 Resumen",
+            "layout": [
+                {"i": "summary-page-views", "x": 0, "y": 0},
+                {"i": "summary-detail", "x": 0, "y": 1},
+            ],
+            "layoutCardsMap": {
+                "summary-detail": {
+                    "id": "summary-detail",
+                    "component": "Table",
+                    "adHocData": {
+                        "card": {
+                            "id": "card-detail",
+                            "title": "Detalle por APP Name y Sistema operativo",
+                            "type": "TABLE",
+                            "visualization": "table",
+                        }
+                    },
+                },
+                "summary-page-views": {
+                    "id": "summary-page-views",
+                    "component": "Chart",
+                    "adHocData": {
+                        "card": {
+                            "id": "card-page-views",
+                            "title": "Paginas vistas",
+                            "type": "CHART",
+                            "visualization": "line",
+                        }
+                    },
+                },
+            },
+        },
+        {
+            "id": "tab-errors",
+            "name": "⚠️ Errores",
+            "layout": [
+                {"i": "errors-title", "x": 0, "y": 0},
+                {"i": "errors-donut", "x": 0, "y": 1},
+                {"i": "errors-table", "x": 1, "y": 1},
+            ],
+            "layoutCardsMap": {
+                "errors-title": {
+                    "id": "errors-title",
+                    "component": "Text",
+                    "title": "Web Publica y OpenMarket",
+                },
+                "errors-table": {
+                    "id": "errors-table",
+                    "component": "Table",
+                    "adHocData": {
+                        "card": {
+                            "id": "card-error-app-name",
+                            "title": "% Sesiones con Error por App Name",
+                            "type": "TABLE",
+                            "visualization": "table",
+                        }
+                    },
+                },
+                "errors-donut": {
+                    "id": "errors-donut",
+                    "component": "Chart",
+                    "visualization": "line",
+                    "adHocData": {
+                        "card": {
+                            "id": "card-app-error",
+                            "title": "Comparativa de sesiones con error por App Name",
+                            "type": "CHART",
+                            "visualization": "donut",
+                        }
+                    },
+                },
+            },
+        },
+    ]
     payload = {
-        "tabs": [
-            {
-                "tabIndex": 0,
-                "name": "Resumen",
-                "cards": [
-                    {
-                        "cardId": "card-page-views",
-                        "title": "Paginas vistas",
-                        "cardType": "CHART",
-                    }
-                ],
-            },
-            {
-                "tabIndex": 1,
-                "name": "Errores",
-                "cards": [
-                    {
-                        "cardId": "card-app-error",
-                        "title": "Comparativa de sesiones con error por App Name",
-                        "cardType": "DONUT",
-                    },
-                    {
-                        "cardId": "card-unknown",
-                        "title": "Widget sin parser",
-                        "cardType": "CHART",
-                    },
-                ],
-            },
-        ]
+        "data": {
+            "resource": {
+                "id": "dash-general-mx",
+                "entity": {
+                    "id": "dash-general-mx",
+                    "title": "Dashboard General MX",
+                    "tabs": json.dumps(tabs),
+                    "cards": [],
+                },
+            }
+        }
     }
 
     structure = structure_from_payloads(
@@ -136,20 +218,49 @@ def test_dashboard_structure_discovers_tabs_widgets_types_and_unknown() -> None:
     )
     configs = widget_configs_from_structure(structure)
 
-    assert [tab.name for tab in structure.tabs] == ["Resumen", "Errores"]
+    assert [tab.normalized_role for tab in structure.tabs] == ["summary", "errors"]
+    assert [tab.tab_id for tab in structure.tabs] == ["tab-summary", "tab-errors"]
     assert [(widget.title, widget.widget_type) for widget in structure.widgets] == [
         ("Paginas vistas", "chart"),
+        ("Detalle por APP Name y Sistema operativo", "table"),
         ("Comparativa de sesiones con error por App Name", "donut"),
-        ("Widget sin parser", "chart"),
+        ("% Sesiones con Error por App Name", "table"),
     ]
+    assert structure.dashboard_name == "Dashboard General MX"
     assert configs[0].role == "summary.page_views"
-    assert configs[1].role == "errors.error_sessions_by_app_name_comparison"
-    assert configs[2].role == ""
-    assert configs[2].supported is False
-    assert configs[2].enabled is False
+    assert configs[1].role == "summary.detail_by_app_name_os"
+    assert configs[2].role == "errors.error_sessions_by_app_name_comparison"
+    assert configs[2].widget_type == "DONUT"
+    assert configs[3].role == "errors.error_session_percentage_by_app_name"
 
 
 def test_structure_from_config_cache_keeps_widget_metadata() -> None:
+    dashboard = QuantumDashboardConfig(
+        dashboard_id="dash",
+        name="Dashboard General MX",
+        widgets=[
+            QuantumWidgetConfig(
+                role="summary.page_views",
+                widget_id="card-page-views",
+                title="Paginas vistas",
+                widget_type="CHART",
+                tab="summary",
+                tab_name="Resumen",
+                tab_index=0,
+            )
+        ],
+        is_default=True,
+        validated=True,
+    )
+
+    structure = structure_from_dashboard_config(Country.MX, dashboard)
+
+    assert structure.source == "config_cache"
+    assert structure.widgets[0].widget_id == "card-page-views"
+    assert structure.widgets[0].visual_role == "summary.page_views"
+
+
+def test_structure_from_config_cache_does_not_seed_fake_widgets() -> None:
     dashboard = QuantumDashboardConfig(
         dashboard_id="dash",
         name="Dashboard General MX",
@@ -160,9 +271,8 @@ def test_structure_from_config_cache_keeps_widget_metadata() -> None:
 
     structure = structure_from_dashboard_config(Country.MX, dashboard)
 
-    assert structure.source == "config_cache"
-    assert structure.widgets
-    assert structure.widgets[0].widget_id.startswith("role:")
+    assert structure.widgets == []
+    assert structure.tabs == []
 
 
 def test_dataset_entities_filter_by_dashboard_id(tmp_path: Path) -> None:
@@ -224,6 +334,9 @@ def test_manual_dashboard_routes_are_not_exposed() -> None:
 
     assert "/api/quantum/discover-dashboard" not in paths
     assert "/api/quantum/test-dashboard" not in paths
+    assert "/api/quantum/dashboards" not in paths
+    assert "/api/quantum/dashboards/refresh" not in paths
+    assert "/api/quantum/dashboards/structure" not in paths
 
 
 def test_dataset_regression_route_forwards_dashboard_scope(

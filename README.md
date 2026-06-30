@@ -22,12 +22,13 @@ make kill
 ## Configuracion Quantum
 
 La app configura Quantum por pais con una pantalla funcional: browser, modo de sesion,
-Base URL, pais por defecto, test por pais, dashboards por pais, dashboard manual,
+Base URL, pais por defecto, descubrimiento real por pais, dashboards por pais,
 widgets con ID/tipo/enabled, apariencia, profundidad de ingesta y accion de guardar.
 
 Dashboard ID, Team ID, tabs, widget IDs y tipos se muestran cuando forman parte de la
-configuracion auditable. El dashboard default descubierto no edita su ID; los dashboards
-manuales permiten editarlo hasta validarlo.
+configuracion auditable. La lista de dashboards sale de Quantum Web mediante GraphQL
+`resourcesList` y los tabs/widgets del dashboard seleccionado salen de `LoadDashboard`.
+La app no crea widgets por defecto ni permite guardar un pais activo sin dashboard default.
 
 `.env.example` incluye Mexico. Para Espana, Colombia, Argentina o Peru se anade una fila en
 Quantum y, al guardar, la configuracion principal queda en `config/quantum_config.json`.
@@ -114,6 +115,9 @@ recarga Home: el dashboard debe seguir funcionando sobre Parquet local.
 - Hardening Chrome en `docs/to-be/chrome-session-hardening.md`.
 - Export a Downloads en `docs/to-be/export-downloads-contract.md`.
 - Descubrimiento de dashboards en `docs/to-be/iteration-12-dashboard-discovery.md`.
+- Fix de descubrimiento real en `docs/to-be/iteration-13-dashboard-discovery-fix.md`.
+- API de dashboards por pais en `docs/to-be/dashboard-list-api-contract.md`.
+- Tabs/widgets reales en `docs/to-be/dashboard-tabs-widgets-contract.md`.
 - Contrato de dashboards en `docs/to-be/dashboard-discovery-contract.md`.
 - Contrato de tabs/widgets en `docs/to-be/dashboard-structure-contract.md`.
 - Default por dashboard en `docs/to-be/config-dashboard-default.md`.

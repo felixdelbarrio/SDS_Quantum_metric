@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import shutil
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Annotated
 
@@ -39,6 +40,7 @@ from backend.app.quantum_dashboard.dashboard_discovery import (
     discover_dashboards_via_browser,
 )
 from backend.app.quantum_dashboard.dashboard_structure import (
+    discover_dashboard_structure_via_browser,
     structure_from_dashboard_config,
     tab_configs_from_structure,
     widget_configs_from_structure,
@@ -242,11 +244,15 @@ def _merge_discovered_dashboards(
     dashboards = list(country_config.dashboards)
     for summary in summaries:
         existing = existing_by_id.get(summary.dashboard_id)
+        fallback_team_id = (existing.team_id if existing else "") or country_config.team_id
+        is_default = summary.dashboard_id == default_id or (
+            default_id is None and summary.is_default_candidate
+        )
         dashboards = _upsert_dashboard(
             dashboards,
             _dashboard_from_summary(
-                summary,
-                is_default=summary.dashboard_id == default_id,
+                summary.model_copy(update={"team_id": summary.team_id or fallback_team_id}),
+                is_default=is_default,
             ).model_copy(
                 update={
                     "widgets": existing.widgets if existing else [],
@@ -271,6 +277,19 @@ def _dashboard_by_id(
         ),
         None,
     )
+
+
+def _structure_tab_index(
+    structure_role: str,
+    fallback: int,
+    tabs: Sequence[object],
+) -> int:
+    for tab in tabs:
+        normalized_role = getattr(tab, "normalized_role", None)
+        tab_index = getattr(tab, "tab_index", fallback)
+        if normalized_role == structure_role:
+            return int(tab_index)
+    return fallback
 
 
 @router.get("/health")
@@ -302,10 +321,10 @@ def put_quantum_config(
     return public_quantum_config(store.write(merged))
 
 
-@router.get("/quantum/dashboards")
-def list_quantum_dashboards(
+@router.get("/quantum/countries/{country}/dashboards")
+def list_country_quantum_dashboards(
+    country: str,
     store: Annotated[QuantumConfigStore, Depends(config_store_dep)],
-    country: str | None = None,
 ) -> dict[str, object]:
     config = store.read()
     country_config = config.required_country_config(country)
@@ -317,12 +336,12 @@ def list_quantum_dashboards(
     }
 
 
-@router.post("/quantum/dashboards/refresh")
-def refresh_quantum_dashboards(
+@router.post("/quantum/countries/{country}/dashboards/discover")
+def discover_country_quantum_dashboards(
+    country: str,
     store: Annotated[QuantumConfigStore, Depends(config_store_dep)],
     settings: Annotated[Settings, Depends(settings_dep)],
     cookie_provider: Annotated[BrowserCookieProvider, Depends(cookie_provider_dep)],
-    country: str | None = None,
 ) -> dict[str, object]:
     config = store.read()
     country_config = config.required_country_config(country)
@@ -358,27 +377,61 @@ def refresh_quantum_dashboards(
         "country": country_config.country.value,
         "dashboards": [summary.model_dump(mode="json") for summary in summaries],
         "source": summaries[0].source if summaries else "config_cache",
-        "warning": error if discovered else None,
+        "warning": error
+        if discovered
+        else (error or "No se pudo descubrir dashboards en Quantum Web; se conserva cache local."),
     }
 
 
-@router.post("/quantum/dashboards/structure")
-def refresh_quantum_dashboard_structure(
-    store: Annotated[QuantumConfigStore, Depends(config_store_dep)],
+@router.post("/quantum/countries/{country}/dashboards/{dashboard_id}/structure/discover")
+def discover_quantum_dashboard_structure(
     country: str,
     dashboard_id: str,
+    store: Annotated[QuantumConfigStore, Depends(config_store_dep)],
+    settings: Annotated[Settings, Depends(settings_dep)],
+    cookie_provider: Annotated[BrowserCookieProvider, Depends(cookie_provider_dep)],
 ) -> dict[str, object]:
     config = store.read()
     country_config = config.required_country_config(country)
     dashboard = _dashboard_by_id(country_config, dashboard_id)
     if dashboard is None:
         raise HTTPException(status_code=404, detail="Dashboard is not configured for this country.")
-    structure = structure_from_dashboard_config(country_config.country, dashboard)
+    cookies = _cookies_for_quantum(config, country_config, cookie_provider)
+    structure, error = discover_dashboard_structure_via_browser(
+        settings=settings,
+        cookies=cookies,
+        country=country_config.country,
+        base_url=country_config.base_url or settings.quantum_default_base_url,
+        dashboard_id=dashboard.dashboard_id,
+        team_id=dashboard.team_id or country_config.team_id or None,
+        wait_seconds=settings.quantum_capture_timeout_seconds,
+        session_mode=config.session_mode.value,
+    )
+    if not structure.tabs and not structure.widgets:
+        cached = structure_from_dashboard_config(country_config.country, dashboard)
+        if not cached.tabs and not cached.widgets:
+            detail = error or "No se pudo leer la estructura real del dashboard en Quantum Web."
+            raise HTTPException(status_code=400, detail=detail)
+        payload = cached.model_dump(mode="json")
+        payload["warning"] = error or "Se conserva la ultima estructura real guardada."
+        return payload
     dashboard_with_structure = dashboard.model_copy(
         update={
+            "name": structure.dashboard_name or dashboard.name or dashboard.dashboard_id,
+            "summary_tab": _structure_tab_index(
+                "summary",
+                dashboard.summary_tab,
+                structure.tabs,
+            ),
+            "errors_tab": _structure_tab_index(
+                "errors",
+                dashboard.errors_tab,
+                structure.tabs,
+            ),
             "tabs": tab_configs_from_structure(structure),
             "widgets": widget_configs_from_structure(structure, dashboard.widgets),
             "last_structure_at": structure.discovered_at,
+            "source": structure.source,
         }
     )
     updated_countries = [
@@ -390,7 +443,9 @@ def refresh_quantum_dashboard_structure(
         for item in config.countries
     ]
     _write_config(store, config, updated_countries)
-    return structure.model_dump(mode="json")
+    payload = structure.model_dump(mode="json")
+    payload["warning"] = error
+    return payload
 
 
 @router.post("/quantum/test-connection")

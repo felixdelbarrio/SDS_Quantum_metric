@@ -63,6 +63,7 @@ type QuantumWidgetConfig = {
   widget_id: string;
   card_id?: string | null;
   widget_type: "CHART" | "TABLE" | "DONUT" | "KPI" | "UNKNOWN";
+  tab_id?: string | null;
   tab: string;
   tab_name: string;
   tab_index: number;
@@ -137,7 +138,7 @@ export function QuantumPage() {
 
   const testCountry = useMutation({
     mutationFn: (country: CountryCode) =>
-      apiPost(`/quantum/dashboards/refresh?country=${country}`),
+      apiPost(`/quantum/countries/${country}/dashboards/discover`),
     onSuccess: async () => {
       const result = await config.refetch();
       if (result.data) setForm(result.data);
@@ -154,9 +155,9 @@ export function QuantumPage() {
       dashboardId: string;
     }) =>
       apiPost<DashboardStructureResponse>(
-        `/quantum/dashboards/structure?country=${country}&dashboard_id=${encodeURIComponent(
+        `/quantum/countries/${country}/dashboards/${encodeURIComponent(
           dashboardId,
-        )}`,
+        )}/structure/discover`,
       ),
     onSuccess: async () => {
       const result = await config.refetch();
@@ -554,9 +555,9 @@ export function QuantumPage() {
           </div>
           <div className="dashboard-config-list">
             {countryRows.map((row, countryIndex) => {
-              const selectedDashboard =
-                row.dashboards.find((dashboard) => dashboard.is_default) ??
-                row.dashboards[0];
+              const selectedDashboard = row.dashboards.find(
+                (dashboard) => dashboard.is_default,
+              );
               const selectedDashboardIndex = selectedDashboard
                 ? row.dashboards.findIndex(
                     (dashboard) =>
@@ -749,6 +750,9 @@ function WidgetGroups({
   ) => void;
 }) {
   const groups = dashboardWidgetGroups(dashboard);
+  if (!groups.length) {
+    return <div className="empty compact">Sin widgets descubiertos</div>;
+  }
   return (
     <div className="widget-config-section-grid">
       {groups.map((group) => (
@@ -852,84 +856,6 @@ function emptyCountryConfig(
   };
 }
 
-function defaultWidgetConfig(): QuantumWidgetConfig[] {
-  return [
-    widget("summary.page_views", "Paginas vistas", "CHART", "summary", 0),
-    widget("summary.sessions", "Sesiones", "CHART", "summary", 0),
-    widget(
-      "summary.converted_sessions",
-      "Sesiones con conversion",
-      "CHART",
-      "summary",
-      0,
-    ),
-    widget(
-      "summary.avg_session_duration",
-      "Tiempo medio de sesion",
-      "CHART",
-      "summary",
-      0,
-    ),
-    widget(
-      "summary.detail_by_app_name_os",
-      "Detalle App Name / SO",
-      "TABLE",
-      "summary",
-      0,
-    ),
-    widget(
-      "errors.error_sessions_percentage_evolution",
-      "% sesiones con error",
-      "CHART",
-      "errors",
-      1,
-    ),
-    widget(
-      "errors.top_errors_by_error_name",
-      "Top errores",
-      "TABLE",
-      "errors",
-      1,
-    ),
-    widget(
-      "errors.error_sessions_by_app_name_comparison",
-      "Comparativa App Name",
-      "DONUT",
-      "errors",
-      1,
-    ),
-    widget(
-      "errors.error_session_percentage_by_app_name",
-      "% error por App Name",
-      "TABLE",
-      "errors",
-      1,
-    ),
-  ];
-}
-
-function widget(
-  role: string,
-  title: string,
-  widgetType: QuantumWidgetConfig["widget_type"],
-  tab: string,
-  tabIndex: number,
-): QuantumWidgetConfig {
-  return {
-    role,
-    title,
-    widget_id: `role:${role}`,
-    widget_type: widgetType,
-    tab,
-    tab_name: tab === "summary" ? "Resumen" : "Errores",
-    tab_index: tabIndex,
-    enabled: true,
-    required: true,
-    supported: true,
-    source: "config_cache",
-  };
-}
-
 function normalizeDashboards(
   dashboards: QuantumDashboardConfig[] = [],
 ): QuantumDashboardConfig[] {
@@ -938,9 +864,7 @@ function normalizeDashboards(
   return dashboards.map((dashboard) => {
     const isDefault = dashboard.is_default && !defaultSeen;
     if (isDefault) defaultSeen = true;
-    const widgets = dashboard.widgets?.length
-      ? dashboard.widgets
-      : defaultWidgetConfig();
+    const widgets = dashboard.widgets ?? [];
     return {
       ...dashboard,
       name: isLegacyGeneratedName(dashboard)
@@ -1019,7 +943,7 @@ function legacyDashboardConfig(
       validation_status: "ok",
       source: "config_cache",
       tabs: [],
-      widgets: defaultWidgetConfig(),
+      widgets: [],
     },
   ];
 }
