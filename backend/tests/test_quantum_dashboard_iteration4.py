@@ -11,7 +11,7 @@ from backend.app.config.settings import Settings
 from backend.app.main import app
 from backend.app.quantum.config_store import QuantumConfigStore
 from backend.app.quantum.schemas import Country, QuantumCountryConfig
-from backend.app.quantum_dashboard.builder import build_derived_datasets
+from backend.app.quantum_dashboard.builder import DATASET_WEB_SNAPSHOTS, build_derived_datasets
 from backend.app.quantum_dashboard.card_mapper import map_card_role
 from backend.app.quantum_dashboard.catalog import SUMMARY_DETAIL_TABLE
 from backend.app.quantum_dashboard.discovery import (
@@ -185,6 +185,34 @@ def test_regression_allows_parent_only_summary_table_when_web_has_no_children(
         card for card in report.cards if card.card_role == "summary.detail_by_app_name_os"
     )
     assert detail.status == "passed"
+
+
+def test_regression_fails_when_visible_table_rows_differ(tmp_path: Path) -> None:
+    store = _store_with_fixtures(tmp_path)
+    build_derived_datasets(store, "MX")
+    snapshots = []
+    for snapshot in store.read_country_dataset("MX", DATASET_WEB_SNAPSHOTS):
+        if snapshot.get("card_role") == "errors.error_session_percentage_by_app_name":
+            visible_rows = [dict(row) for row in snapshot.get("visible_table_rows", [])]
+            visible_rows[0]["name"] = "row from quantum web"
+            snapshot = {**snapshot, "visible_table_rows": visible_rows}
+        snapshots.append(snapshot)
+    store.write_country_dataset(
+        "MX",
+        DATASET_WEB_SNAPSHOTS,
+        snapshots,
+        file_name="web_snapshots.parquet",
+    )
+
+    report = run_regression(store, "MX")
+
+    card = next(
+        item
+        for item in report.cards
+        if item.card_role == "errors.error_session_percentage_by_app_name"
+    )
+    assert card.status == "failed_table_mismatch"
+    assert card.details == "First visible table rows differ in content or order."
 
 
 def test_regression_fails_when_mandatory_card_is_missing(tmp_path: Path) -> None:

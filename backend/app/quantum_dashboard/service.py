@@ -329,8 +329,8 @@ class LocalDashboardService:
         country: str,
         *,
         search: str | None = None,
-        sort: str = "error_session_percent",
-        direction: Literal["asc", "desc"] = "desc",
+        sort: str = "row_index",
+        direction: Literal["asc", "desc"] = "asc",
         dimension: str | None = None,
         segment: str | None = None,
         start_date: str | None = None,
@@ -345,7 +345,7 @@ class LocalDashboardService:
             search=search,
             sort=sort,
             direction=direction,
-            default_sort="error_session_percent",
+            default_sort="row_index",
             dimension=dimension,
             segment=segment,
             start_date=start_date,
@@ -601,7 +601,7 @@ class LocalDashboardService:
             DATASET_ERRORS_WIDGETS,
             DATASET_CHART_PAYLOADS,
         ):
-            period = _first_period(self._read_dataset(country, dataset, range_key))
+            period = _first_period(self._read_dataset(country, dataset, range_key), range_key)
             if period["start"] or period["end"]:
                 return period
         return _period_response(None, None, None)
@@ -684,7 +684,12 @@ def _widget_from_row(row: dict[str, Any]) -> dict[str, Any]:
         "end": _text(row.get("period_end")),
         "timezone": _text(row.get("period_timezone")) or "CST",
     }
-    period["label"] = _period_label(period["start"], period["end"], period["timezone"])
+    period["label"] = _period_label(
+        period["start"],
+        period["end"],
+        period["timezone"],
+        _period_preset(_text(row.get("range_key"))),
+    )
     if row.get("chart_type") == "donut":
         series = _list(row.get("series"))
         return {
@@ -911,22 +916,23 @@ def _number(value: Any) -> float:
     return 0.0
 
 
-def _first_period(rows: list[dict[str, Any]]) -> dict[str, str | None]:
+def _first_period(rows: list[dict[str, Any]], preset: str | None = None) -> dict[str, str | None]:
     for row in rows:
+        row_preset = _period_preset(_text(row.get("range_key")) or preset)
         period = row.get("period")
         if isinstance(period, dict):
             start = _text(period.get("start"))
             end = _text(period.get("end"))
             timezone = _text(period.get("timezone"))
             if start or end:
-                return _period_response(start, end, timezone)
+                return _period_response(start, end, timezone, row_preset)
         start = _text(row.get("range_start") or row.get("period_start") or row.get("start"))
         end = _text(row.get("range_end") or row.get("period_end") or row.get("end"))
         timezone = _text(
             row.get("range_timezone") or row.get("period_timezone") or row.get("timezone")
         )
         if start or end:
-            return _period_response(start, end, timezone)
+            return _period_response(start, end, timezone, row_preset)
     return _period_response(None, None, None)
 
 
@@ -934,13 +940,14 @@ def _period_response(
     start: str | None,
     end: str | None,
     timezone: str | None,
+    preset: str | None = None,
 ) -> dict[str, str | None]:
     zone = timezone or "CST"
     return {
         "start": start,
         "end": end,
         "timezone": timezone,
-        "label": _period_label(start, end, zone),
+        "label": _period_label(start, end, zone, preset),
     }
 
 
@@ -984,7 +991,12 @@ def _parse_date(value: str | None) -> date | None:
         return None
 
 
-def _period_label(start: Any, end: Any, timezone: str | None) -> str | None:
+def _period_label(
+    start: Any,
+    end: Any,
+    timezone: str | None,
+    preset: str | None = None,
+) -> str | None:
     zone_label = timezone or "CST"
     start_dt = parse_datetime(start, zone_label)
     end_dt = parse_datetime(end, zone_label)
@@ -994,7 +1006,12 @@ def _period_label(start: Any, end: Any, timezone: str | None) -> str | None:
     end_dt = end_dt or start_dt
     if start_dt is None or end_dt is None:
         return None
-    return format_period_label(start_dt, end_dt, zone_label)
+    return format_period_label(start_dt, end_dt, zone_label, preset)
+
+
+def _period_preset(range_key: str | None) -> str | None:
+    preset = _safe_range_key(range_key)
+    return preset if preset in {"today", "yesterday", "last_7_days", "custom"} else None
 
 
 def _zone(timezone: str) -> ZoneInfo:

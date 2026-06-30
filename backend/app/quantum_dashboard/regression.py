@@ -164,6 +164,19 @@ def _compare_card(
                 local_value=len(local_rows),
                 details="Visible row counts differ.",
             )
+        web_sample = [_table_row_signature(role, row) for row in web_rows[:10]]
+        local_sample = [_table_row_signature(role, row) for row in local_rows[: len(web_sample)]]
+        if web_sample and web_sample != local_sample:
+            return _card_result(
+                spec.tab,
+                role,
+                spec.title,
+                "failed_table_mismatch",
+                range_key=range_key,
+                web_value=len(web_rows),
+                local_value=len(local_rows),
+                details="First visible table rows differ in content or order.",
+            )
         return _card_result(
             spec.tab,
             role,
@@ -335,6 +348,30 @@ def _compare_chart_contract(
             details="Local chart has fewer visible points than web snapshot.",
         )
     return None
+
+
+def _table_row_signature(role: VisualRole, row: Any) -> tuple[Any, ...]:
+    if not isinstance(row, dict):
+        return (row,)
+    keys: tuple[str, ...]
+    if role == "summary.detail_by_app_name_os":
+        keys = ("name", "app_name", "operating_system", "page_views", "sessions", "conversions")
+    elif role == "errors.top_errors_by_error_name":
+        keys = ("name", "error_name", "error_sessions", "error_session_percent")
+    elif role == "errors.error_session_percentage_by_app_name":
+        keys = ("name", "app_name", "sessions", "sessions_with_error", "error_session_percent")
+    else:
+        keys = ("name",)
+    return tuple(_signature_value(row.get(key)) for key in keys)
+
+
+def _signature_value(value: Any) -> Any:
+    numeric = _number(value)
+    if numeric is not None:
+        return round(numeric, 6)
+    if value is None:
+        return None
+    return str(value).strip().casefold()
 
 
 def _first_role(rows: list[dict[str, Any]], role: VisualRole) -> dict[str, Any] | None:
