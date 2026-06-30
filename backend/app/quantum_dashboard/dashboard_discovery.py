@@ -573,8 +573,9 @@ def _parse_request_json(request: Any) -> dict[str, Any]:
 
 def _is_quantum_graphql_url(url: str) -> bool:
     parsed = urlparse(str(url))
-    hostname = parsed.hostname or ""
-    return hostname.endswith("quantummetric.com") and parsed.path.rstrip("/") == "/query"
+    hostname = (parsed.hostname or "").casefold()
+    allowed_host = hostname == "quantummetric.com" or hostname.endswith(".quantummetric.com")
+    return allowed_host and parsed.path.rstrip("/") == "/query"
 
 
 def _json_objects_from_scripts(scripts: list[Any]) -> list[Any]:
