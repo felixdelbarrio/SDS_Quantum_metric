@@ -27,8 +27,8 @@ class Settings(BaseSettings):
     qm_dashboard_tab: int = 0
     qm_country_configs: str = ""
     quantum_default_base_url: str = "https://bbvamx.quantummetric.com"
-    quantum_default_dashboard_id: str = "8e53eb82-587c-4b92-a0fa-0f6283677e28"
-    quantum_default_team_id: str = "1da677de-9313-4b49-9110-81a6b756ca7e"
+    quantum_default_dashboard_id: str = ""
+    quantum_default_team_id: str = ""
     quantum_default_summary_tab: int = 0
     quantum_default_errors_tab: int = 1
     quantum_capture_timeout_seconds: int = 120
@@ -37,11 +37,7 @@ class Settings(BaseSettings):
     quantum_incremental_reprocess_days: int = 1
     quantum_ingestion_chunk_days: int = 1
     quantum_theme_preference: str = "system"
-    qm_default_dashboard_url: str = (
-        "https://bbvamx.quantummetric.com/#/dashboard/"
-        "8e53eb82-587c-4b92-a0fa-0f6283677e28"
-        "?tab=0&teamID=1da677de-9313-4b49-9110-81a6b756ca7e"
-    )
+    qm_default_dashboard_url: str = ""
     backend_host: str = "127.0.0.1"
     backend_port: int = 8765
     frontend_host: str = "127.0.0.1"
