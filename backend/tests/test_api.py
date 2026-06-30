@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any
 
 from fastapi.testclient import TestClient
 
@@ -93,8 +94,44 @@ def test_missing_days_endpoint_starts_async_job(tmp_path: Path) -> None:
     app.dependency_overrides.clear()
 
 
+def test_range_ingestion_endpoint_starts_async_job(tmp_path: Path) -> None:
+    settings = Settings(qm_data_dir=tmp_path)
+    fake_service = _FakeIngestionService()
+    app.dependency_overrides[settings_dep] = lambda: settings
+    app.dependency_overrides[ingestion_service_dep] = lambda: fake_service
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/ingestions/range",
+        json={
+            "country": "MX",
+            "range_key": "last_7_days",
+            "start_date": "2026-06-24",
+            "end_date": "2026-06-30",
+            "reason": "missing_days",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "pending"
+    assert body["reason"] == "missing_days"
+    assert fake_service.last_request.range_key == "last_7_days"
+    assert fake_service.last_request.start_date == "2026-06-24"
+    assert fake_service.last_request.end_date == "2026-06-30"
+
+    app.dependency_overrides.clear()
+
+
 class _FakeIngestionService:
+    last_request: Any
+
+    def start(self, request: object) -> "_FakeJob":
+        self.last_request = request
+        return _FakeJob(request)
+
     def start_missing_days(self, request: object) -> "_FakeJob":
+        self.last_request = request
         return _FakeJob(request)
 
 

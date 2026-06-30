@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -36,7 +36,8 @@ def create_app() -> FastAPI:
 
         @app.get("/{full_path:path}", include_in_schema=False)
         def spa(full_path: str = "") -> FileResponse:
-            _ = full_path
+            if full_path.startswith("api/"):
+                raise HTTPException(status_code=404, detail="API route not found")
             return FileResponse(dist / "index.html")
     except FileNotFoundError:
         LOGGER.exception("Static frontend not available.")

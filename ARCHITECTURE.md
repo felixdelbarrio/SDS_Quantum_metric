@@ -51,7 +51,7 @@ Playwright ni clientes HTTP externos.
 8. Se ejecuta regresion Web vs Local solo para widgets habilitados.
 9. La ingesta solo termina `completed` si la regresion pasa.
 
-La politica de rango usa `QUANTUM_INGESTION_DEPTH_DAYS`, `QUANTUM_INCREMENTAL_REPROCESS_DAYS` y `QUANTUM_INGESTION_CHUNK_DAYS`. El planner divide ventanas largas en chunks y el rewriter aplica el rango activo a payloads Quantum antes de persistir.
+La politica de rango usa `QUANTUM_INGESTION_DEPTH_DAYS` como Profundidad por defecto del boton `Ingestar`, mas `QUANTUM_INCREMENTAL_REPROCESS_DAYS` y `QUANTUM_INGESTION_CHUNK_DAYS`. El planner divide ventanas largas en chunks y el rewriter aplica el rango activo a payloads Quantum antes de persistir.
 Cuando la UI solicita Today, Yesterday o Last 7 Days, la ingesta crea un contrato explicito con
 `range_key`, `range_start`, `range_end`, `range_timezone` y `capture_mode=range_contract`.
 Cada response se valida tras la reescritura temporal; si el rango extraido no coincide, no se
@@ -64,10 +64,11 @@ publica como dato local valido.
 3. Summary y Errors se sirven desde `derived/*`.
 4. Search y sort operan sobre Parquet derivado local.
 5. Si falta una card obligatoria, falla regresion o faltan dias, se devuelve error accionable.
+6. El contrato local no expone Dimension/Segment: no hay botones, endpoints publicos de seleccion ni campos `applied_*` en `/api/local-dashboard/*`.
 
 ## Contrato grafico
 
-Las cards graficas no se renderizan desde agregados. Backend persiste `ChartPayload` con ejes, ticks, series, leyenda, bandas y periodo. Frontend pinta ese payload con SVG. Si falta el contrato, se muestra fallo contractual y regresion falla con estados especificos.
+Las cards graficas no se renderizan desde agregados. Backend persiste `ChartPayload` con ejes, ticks, series, leyenda, bandas y periodo. Frontend pinta ese payload con SVG; el modo Linea usa `path` suavizado y el modo Barras usa `rect` reales sobre los mismos puntos. Si falta el contrato, se muestra fallo contractual y regresion falla con estados especificos.
 
 ## Datasets Auditables
 

@@ -8,8 +8,6 @@ from zoneinfo import ZoneInfo
 import polars as pl
 
 from backend.app.analytics.models import TableColumn
-from backend.app.analytics.normalizer import humanize_key
-from backend.app.analytics.segments import parse_segment
 from backend.app.observability.sanitizer import sanitize_error
 from backend.app.quantum.config_store import QuantumConfigStore
 from backend.app.quantum.schemas import COUNTRY_LABELS, COUNTRY_ORDER, Country
@@ -159,8 +157,6 @@ class LocalDashboardService:
         self,
         country: str,
         *,
-        dimension: str | None = None,
-        segment: str | None = None,
         start_date: str | None = None,
         end_date: str | None = None,
         range_key: str = "today",
@@ -180,12 +176,6 @@ class LocalDashboardService:
             for row in self._read_dataset(country, DATASET_SUMMARY_WIDGETS, range_key)
             if str(row.get("card_role")) in self._enabled_roles(country)
         ]
-        if segment:
-            widgets = _summary_widgets_for_segment(
-                widgets,
-                self._read_dataset(country, DATASET_SUMMARY_TABLE, range_key),
-                segment,
-            )
         order = {card.local_id: index for index, card in enumerate(MANDATORY_CARDS)}
         widgets.sort(key=lambda item: order.get(str(item["id"]), 99))
         return {
@@ -196,8 +186,6 @@ class LocalDashboardService:
             "last_ingestion_at": status["last_ingestion_at"],
             "dashboard_title": f"Dashboard General {country}",
             "description": "Este dashboard es un resumen de sesiones y errores.",
-            "applied_dimension": _selection(dimension),
-            "applied_segment": _segment_selection(segment),
             "widgets": widgets,
             "period": period,
             "regression": self._regression_metadata(status),
@@ -211,8 +199,6 @@ class LocalDashboardService:
         search: str | None = None,
         sort: str = "page_views",
         direction: Literal["asc", "desc"] = "desc",
-        dimension: str | None = None,
-        segment: str | None = None,
         start_date: str | None = None,
         end_date: str | None = None,
         range_key: str = "today",
@@ -232,7 +218,7 @@ class LocalDashboardService:
             )
         rows = self._read_dataset(country, DATASET_SUMMARY_TABLE, range_key)
         rows = [row for row in rows if str(row.get("card_role")) in self._enabled_roles(country)]
-        rows = _apply_segment(rows, segment)
+        rows = _normalize_table_hierarchy(rows)
         rows = _filter_rows(rows, search, ("name", "app_name", "operating_system"))
         rows = _sort_rows(
             rows, sort, direction, {column.key for column in SUMMARY_COLUMNS}, "page_views"
@@ -243,8 +229,6 @@ class LocalDashboardService:
             "columns": [column.model_dump(mode="json") for column in SUMMARY_COLUMNS],
             "rows": rows,
             "source": "parquet",
-            "applied_dimension": _selection(dimension),
-            "applied_segment": _segment_selection(segment),
             "reason": None if rows else "No local summary rows match the selected filters.",
             "available_datasets": self._available_dataset_names(country),
             "period": period,
@@ -254,8 +238,6 @@ class LocalDashboardService:
         self,
         country: str,
         *,
-        dimension: str | None = None,
-        segment: str | None = None,
         start_date: str | None = None,
         end_date: str | None = None,
         range_key: str = "today",
@@ -275,20 +257,12 @@ class LocalDashboardService:
             for row in self._read_dataset(country, DATASET_ERRORS_WIDGETS, range_key)
             if str(row.get("card_role")) in self._enabled_roles(country)
         ]
-        if segment:
-            widgets = _error_widgets_for_segment(
-                widgets,
-                self._read_dataset(country, DATASET_ERRORS_APP_NAME, range_key),
-                segment,
-            )
         return {
             "status": "ok",
             "country": country,
             "range_key": range_key,
             "source": "parquet",
             "last_ingestion_at": status["last_ingestion_at"],
-            "applied_dimension": _selection(dimension),
-            "applied_segment": _segment_selection(segment),
             "widgets": widgets,
             "period": period,
             "regression": self._regression_metadata(status),
@@ -302,8 +276,6 @@ class LocalDashboardService:
         search: str | None = None,
         sort: str = "error_sessions",
         direction: Literal["asc", "desc"] = "desc",
-        dimension: str | None = None,
-        segment: str | None = None,
         start_date: str | None = None,
         end_date: str | None = None,
         range_key: str = "today",
@@ -317,8 +289,6 @@ class LocalDashboardService:
             sort=sort,
             direction=direction,
             default_sort="error_sessions",
-            dimension=dimension,
-            segment=segment,
             start_date=start_date,
             end_date=end_date,
             range_key=range_key,
@@ -331,8 +301,6 @@ class LocalDashboardService:
         search: str | None = None,
         sort: str = "row_index",
         direction: Literal["asc", "desc"] = "asc",
-        dimension: str | None = None,
-        segment: str | None = None,
         start_date: str | None = None,
         end_date: str | None = None,
         range_key: str = "today",
@@ -346,8 +314,6 @@ class LocalDashboardService:
             sort=sort,
             direction=direction,
             default_sort="row_index",
-            dimension=dimension,
-            segment=segment,
             start_date=start_date,
             end_date=end_date,
             range_key=range_key,
@@ -364,8 +330,6 @@ class LocalDashboardService:
         sort: str,
         direction: Literal["asc", "desc"],
         default_sort: str,
-        dimension: str | None,
-        segment: str | None,
         start_date: str | None,
         end_date: str | None,
         range_key: str,
@@ -383,7 +347,6 @@ class LocalDashboardService:
             )
         rows = self._read_dataset(country, dataset, range_key)
         rows = [row for row in rows if str(row.get("card_role")) in self._enabled_roles(country)]
-        rows = _apply_segment(rows, segment)
         rows = _filter_rows(rows, search, ("name", "error_name", "app_name"))
         rows = _sort_rows(rows, sort, direction, {column.key for column in columns}, default_sort)
         return {
@@ -392,8 +355,6 @@ class LocalDashboardService:
             "columns": [column.model_dump(mode="json") for column in columns],
             "rows": rows,
             "source": "parquet",
-            "applied_dimension": _selection(dimension),
-            "applied_segment": _segment_selection(segment),
             "reason": None if rows else "No local error rows match the selected filters.",
             "available_datasets": self._available_dataset_names(country),
             "period": period,
@@ -789,6 +750,23 @@ def _filter_rows(
     ]
 
 
+def _normalize_table_hierarchy(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    normalized = [{**row} for row in rows]
+    children_by_parent: dict[str, int] = {}
+    for row in normalized:
+        parent = row.get("parent_row_id")
+        if parent not in (None, ""):
+            children_by_parent[str(parent)] = children_by_parent.get(str(parent), 0) + 1
+    for row in normalized:
+        row_id = row.get("row_id")
+        children_count = children_by_parent.get(str(row_id), 0) if row_id not in (None, "") else 0
+        row["children_count"] = children_count
+        row["is_expandable"] = bool(row.get("is_expandable")) and children_count > 0
+        if not row["is_expandable"]:
+            row["is_expanded_default"] = False
+    return normalized
+
+
 def _sort_rows(
     rows: list[dict[str, Any]],
     sort: str,
@@ -814,100 +792,6 @@ def _sort_value(value: Any) -> tuple[int, Any]:
 
 def _list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
-
-
-def _apply_segment(rows: list[dict[str, Any]], segment: str | None) -> list[dict[str, Any]]:
-    parsed = parse_segment(segment)
-    if not parsed:
-        return rows
-    field, value = parsed
-    if field == "error_state":
-        return [
-            row
-            for row in rows
-            if _metric_state(row.get("sessions_with_error") or row.get("error_sessions")) == value
-        ]
-    if field == "conversion_state":
-        return [
-            row
-            for row in rows
-            if ("converted" if _number(row.get("conversions")) > 0 else "not_converted") == value
-        ]
-    return [row for row in rows if str(row.get(field) or row.get("name") or "") == value]
-
-
-def _metric_state(value: Any) -> str:
-    parsed = value if isinstance(value, (int, float)) else None
-    return "with_error" if parsed and parsed > 0 else "without_error"
-
-
-def _selection(value: str | None) -> dict[str, str] | None:
-    if not value:
-        return None
-    return {"id": value, "label": humanize_key(value)}
-
-
-def _segment_selection(segment: str | None) -> dict[str, str] | None:
-    parsed = parse_segment(segment)
-    if not parsed:
-        return None
-    field, value = parsed
-    return {"id": segment or "", "label": f"{humanize_key(field)}: {value}"}
-
-
-def _summary_widgets_for_segment(
-    widgets: list[dict[str, Any]],
-    rows: list[dict[str, Any]],
-    segment: str,
-) -> list[dict[str, Any]]:
-    filtered = _apply_segment(rows, segment)
-    totals = {
-        "page_views": sum(_number(row.get("page_views")) for row in filtered),
-        "sessions": sum(_number(row.get("sessions")) for row in filtered),
-        "converted_sessions": sum(_number(row.get("conversions")) for row in filtered),
-    }
-    next_widgets = []
-    for widget in widgets:
-        next_widget = {**widget}
-        if next_widget.get("id") in totals:
-            next_widget["value"] = round(totals[str(next_widget["id"])], 2)
-            next_widget["breakdown"] = []
-            next_widget["timeseries"] = []
-            next_widget["chart_payload"] = None
-        next_widgets.append(next_widget)
-    return next_widgets
-
-
-def _error_widgets_for_segment(
-    widgets: list[dict[str, Any]],
-    rows: list[dict[str, Any]],
-    segment: str,
-) -> list[dict[str, Any]]:
-    filtered = _apply_segment(rows, segment)
-    total_error_sessions = sum(_number(row.get("sessions_with_error")) for row in filtered)
-    total_sessions = sum(_number(row.get("sessions")) for row in filtered)
-    percent = round((total_error_sessions / total_sessions) * 100, 2) if total_sessions else 0.0
-    next_widgets = []
-    for widget in widgets:
-        next_widget = {**widget}
-        if next_widget.get("id") == "error_sessions_percentage_evolution":
-            next_widget["value"] = percent
-            next_widget["breakdown"] = []
-            next_widget["timeseries"] = []
-            next_widget["chart_payload"] = None
-        elif next_widget.get("id") == "error_sessions_by_app_name":
-            series: list[dict[str, str | float]] = [
-                {
-                    "name": str(row.get("name") or row.get("app_name") or "Null"),
-                    "value": _number(row.get("sessions_with_error")),
-                    "percent": _number(row.get("error_session_percent")),
-                }
-                for row in filtered
-            ]
-            next_widget["total"] = round(total_error_sessions, 2)
-            next_widget["series"] = [item for item in series if float(item["value"]) > 0]
-        next_widgets.append(next_widget)
-    return next_widgets
 
 
 def _number(value: Any) -> float:

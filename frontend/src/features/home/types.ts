@@ -41,40 +41,6 @@ export type DashboardCoverage = {
   message: string;
 };
 
-export type DashboardSelection = {
-  id: string;
-  label: string;
-};
-
-export type DashboardDimension = {
-  id: string;
-  label: string;
-  status: "available" | "insufficient_data";
-};
-
-export type DashboardDimensionGroup = {
-  label: string;
-  items: DashboardDimension[];
-};
-
-export type DimensionsResponse = {
-  country: CountryCode;
-  groups: DashboardDimensionGroup[];
-};
-
-export type DashboardSegment = {
-  id: string;
-  label: string;
-  field: string;
-  value: string;
-  count: number;
-};
-
-export type SegmentsResponse = {
-  country: CountryCode;
-  segments: DashboardSegment[];
-};
-
 export type KpiBreakdownItem = {
   label: string;
   value: number;
@@ -176,8 +142,6 @@ export type SummaryDashboardResponse = {
   country: CountryCode;
   source: "parquet";
   last_ingestion_at?: string | null;
-  applied_dimension?: DashboardSelection | null;
-  applied_segment?: DashboardSelection | null;
   widgets: KpiWidget[];
   reason?: string | null;
   required_dataset?: string | null;
@@ -210,6 +174,7 @@ export type DetailTableRow = {
   depth?: number | null;
   is_expandable?: boolean | null;
   is_expanded_default?: boolean | null;
+  children_count?: number | null;
 };
 
 export type DetailTableResponse = {
@@ -218,8 +183,6 @@ export type DetailTableResponse = {
   columns: TableColumn[];
   rows: DetailTableRow[];
   source: "parquet";
-  applied_dimension?: DashboardSelection | null;
-  applied_segment?: DashboardSelection | null;
   reason?: string | null;
   required_dataset?: string | null;
   available_datasets: string[];
@@ -272,8 +235,6 @@ export type ErrorsDashboardResponse = {
   country: CountryCode;
   source: "parquet";
   last_ingestion_at?: string | null;
-  applied_dimension?: DashboardSelection | null;
-  applied_segment?: DashboardSelection | null;
   widgets: ErrorWidget[];
   reason?: string | null;
   required_dataset?: string | null;
@@ -288,8 +249,6 @@ export type ErrorTableResponse = {
   columns: TableColumn[];
   rows: ErrorPercentRow[];
   source: "parquet";
-  applied_dimension?: DashboardSelection | null;
-  applied_segment?: DashboardSelection | null;
   reason?: string | null;
   required_dataset?: string | null;
   available_datasets: string[];

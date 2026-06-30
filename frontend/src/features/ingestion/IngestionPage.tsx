@@ -101,16 +101,10 @@ export function IngestionPage() {
   );
 
   const create = useMutation({
-    mutationFn: () => {
-      const today = todayInMexico();
-      const start = addDays(today, -6);
-      return apiPost<IngestionJob>("/ingestions", {
+    mutationFn: () =>
+      apiPost<IngestionJob>("/ingestions", {
         country: activeCountry,
-        range_key: "last_7_days",
-        start_date: start,
-        end_date: today,
-      });
-    },
+      }),
     onSuccess: () => void ingestions.refetch(),
   });
 
@@ -359,25 +353,6 @@ function ingestionResult(job: IngestionJob) {
   const failure = String(job.details?.failure ?? job.errors[0] ?? "");
   if (!failure) return "-";
   return failure.length > 120 ? `${failure.slice(0, 117)}...` : failure;
-}
-
-function todayInMexico() {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/Mexico_City",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(new Date());
-  const value = Object.fromEntries(
-    parts.map((part) => [part.type, part.value]),
-  );
-  return `${value.year}-${value.month}-${value.day}`;
-}
-
-function addDays(value: string, days: number) {
-  const date = new Date(`${value}T00:00:00Z`);
-  date.setUTCDate(date.getUTCDate() + days);
-  return date.toISOString().slice(0, 10);
 }
 
 function formatDate(value?: string | null) {

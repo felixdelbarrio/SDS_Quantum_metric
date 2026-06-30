@@ -376,7 +376,7 @@ export function QuantumPage() {
             </label>
             <label className="field config-field-card">
               <Database size={18} aria-hidden="true" />
-              <span>Profundidad de ingesta</span>
+              <span>Profundidad por defecto</span>
               <input
                 type="number"
                 min={1}

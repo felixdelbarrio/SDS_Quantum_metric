@@ -115,7 +115,7 @@ class IngestionService:
                         end=legacy_range.end,
                         latest_source_end=legacy_range.latest_source_end,
                         lookback_days=legacy_range.lookback_days,
-                        range_key=request.range_key or "custom",
+                        range_key=request.range_key or "default",
                         capture_mode="daily",
                     )
             country_config = config.required_country_config(request.country)
@@ -465,13 +465,15 @@ def _explicit_range_from_request(request: IngestionCreate) -> IngestionRange | N
         end=end,
         latest_source_end=None,
         lookback_days=(end_day - start_day).days + 1,
-        range_key=request.range_key or "custom",
+        range_key=request.range_key or "default",
         capture_mode="range_contract",
     )
 
 
 def _preset_range(range_key: str | None, *, now: datetime | None = None) -> IngestionRange | None:
-    key = (range_key or "last_7_days").strip().lower()
+    if not range_key:
+        return None
+    key = range_key.strip().lower()
     zone = zoneinfo_for("CST")
     today = (now.astimezone(zone) if now else datetime.now(zone)).date()
     if key == "today":

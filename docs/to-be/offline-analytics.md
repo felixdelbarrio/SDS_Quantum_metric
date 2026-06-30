@@ -10,8 +10,10 @@ Las APIs locales leen Parquet:
 - `GET /api/analytics/dashboard/summary/table`
 - `GET /api/analytics/dashboard/errors`
 - `GET /api/analytics/dashboard/errors/table`
-- `GET /api/analytics/dimensions`
-- `GET /api/analytics/segments`
+
+Dimension y Segment no se exponen como endpoints de producto. La inferencia interna puede
+permanecer en el motor analitico, pero no alimenta controles visibles hasta que exista paridad
+end-to-end con Quantum Web.
 
 El frontend no llama dominios Quantum en Home, Dashboards, Datasets o Analytics.
 
@@ -63,7 +65,10 @@ El porcentaje se calcula como `sessions_with_error / sessions * 100` cuando amba
 existen. Si no hay sesiones pero si hay `error_session_percent`, se usa ese valor fuente. Si no
 hay ninguna metrica de error, la respuesta es `status: "empty"`.
 
-## Dimensiones y segmentos
+## Dimensiones y segmentos internos
+
+La version local no muestra selectores de Dimension/Segment en Dashboard. Si se reintroducen,
+deben salir de un contrato validado contra Quantum Web y no de inferencia decorativa.
 
 Las dimensiones se infieren desde:
 
@@ -82,7 +87,8 @@ Los segmentos se infieren desde valores reales de:
 - filas con/sin error;
 - filas con/sin conversion.
 
-Aplicar una dimension o segmento altera las queries locales de widgets y tablas. No es solo UI.
+Esta inferencia queda como capacidad interna/no expuesta. No debe modificar Home ni las APIs
+`/api/local-dashboard/*`.
 
 ## Estados vacios
 
@@ -96,5 +102,5 @@ muestra ese estado y no renderiza datos de ejemplo.
 2. Confirmar que existen archivos en `data/parquet/country=<pais>/raw_api_calls/`.
 3. Desconectar internet o bloquear el dominio Quantum.
 4. Recargar Home.
-5. Verificar que `Dashboard General {pais}` sigue cargando desde `/api/analytics/*`.
+5. Verificar que `Dashboard General {pais}` sigue cargando desde `/api/local-dashboard/*`.
 6. Mover temporalmente `data/parquet` y recargar: debe aparecer estado vacio honesto.

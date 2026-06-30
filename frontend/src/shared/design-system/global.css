@@ -840,6 +840,27 @@ textarea:focus-visible {
   vector-effect: non-scaling-stroke;
 }
 
+.quantum-chart-bar {
+  cursor: pointer;
+  opacity: 0.88;
+  stroke: color-mix(
+    in srgb,
+    var(--surface-dashboard-elevated) 72%,
+    transparent
+  );
+  stroke-width: 1;
+  transition:
+    opacity var(--motion-duration-fast) var(--motion-ease-standard),
+    filter var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.quantum-chart-bar:hover,
+.quantum-chart-bar:focus-visible,
+.quantum-chart-bar[data-active="true"] {
+  filter: brightness(1.08);
+  opacity: 1;
+}
+
 .quantum-chart-series-0,
 .chart-swatch-0 {
   stroke: var(--chart-mobile);
@@ -868,6 +889,26 @@ textarea:focus-visible {
 .chart-swatch-4 {
   stroke: var(--chart-donut-5);
   background: var(--chart-donut-5);
+}
+
+.quantum-chart-bar.quantum-chart-series-0 {
+  fill: var(--chart-mobile);
+}
+
+.quantum-chart-bar.quantum-chart-series-1 {
+  fill: var(--chart-desktop);
+}
+
+.quantum-chart-bar.quantum-chart-series-2 {
+  fill: var(--chart-donut-3);
+}
+
+.quantum-chart-bar.quantum-chart-series-3 {
+  fill: var(--chart-donut-4);
+}
+
+.quantum-chart-bar.quantum-chart-series-4 {
+  fill: var(--chart-donut-5);
 }
 
 .quantum-chart-point {

@@ -3,26 +3,17 @@ import { useEffect, useMemo, useState } from "react";
 import {
   getCountries,
   getCoverage,
-  getDimensions,
   getErrors,
-  getSegments,
   getSummary,
-  ingestMissingDays,
+  ingestRange,
 } from "./api";
 import { DashboardHeader } from "./components/DashboardHeader";
 import { DateRange } from "./components/DashboardHeader";
 import { DashboardTabs } from "./components/DashboardTabs";
-import { DimensionPicker } from "./components/DimensionPicker";
 import { EmptyAnalyticsState } from "./components/EmptyAnalyticsState";
 import { ErrorsTab } from "./components/ErrorsTab";
-import { SegmentPicker } from "./components/SegmentPicker";
 import { SummaryTab } from "./components/SummaryTab";
-import {
-  CountryCode,
-  DashboardDimensionGroup,
-  DashboardSelection,
-  DashboardSegment,
-} from "./types";
+import { CountryCode, DashboardCoverage } from "./types";
 import { COUNTRY_OPTIONS } from "../../shared/countries";
 import { useAppStore } from "../../shared/state/appStore";
 
@@ -36,8 +27,6 @@ export function HomePage() {
     useAppStore();
   const country = asCountryCode(activeCountry);
   const [activeTab, setActiveTab] = useState<DashboardTab>("summary");
-  const [dimension, setDimension] = useState<string | null>(null);
-  const [segment, setSegment] = useState<string | null>(null);
   const [dateRange, setDateRange] = useState<DateRange>(() => {
     const today = todayInMexico();
     return {
@@ -46,9 +35,6 @@ export function HomePage() {
       endDate: today,
     };
   });
-  const [dimensionPanelOpen, setDimensionPanelOpen] = useState(false);
-  const [segmentPanelOpen, setSegmentPanelOpen] = useState(false);
-
   const countries = useQuery({
     queryKey: ["dashboard", "countries"],
     queryFn: getCountries,
@@ -81,25 +67,18 @@ export function HomePage() {
     setActiveCountry,
   ]);
 
-  useEffect(() => {
-    setSegment(null);
-  }, [selectedCountry]);
-
   const summary = useQuery({
     queryKey: [
       "dashboard",
       "summary",
       selectedCountry,
-      dimension,
-      segment,
       dateRange.startDate,
       dateRange.endDate,
+      dateRange.preset,
     ],
     queryFn: () =>
       getSummary({
         country: selectedCountry,
-        dimension,
-        segment,
         startDate: dateRange.startDate,
         endDate: dateRange.endDate,
         rangeKey: dateRange.preset,
@@ -114,6 +93,7 @@ export function HomePage() {
       selectedCountry,
       dateRange.startDate,
       dateRange.endDate,
+      dateRange.preset,
     ],
     queryFn: () =>
       getCoverage({
@@ -130,16 +110,13 @@ export function HomePage() {
       "dashboard",
       "errors",
       selectedCountry,
-      dimension,
-      segment,
       dateRange.startDate,
       dateRange.endDate,
+      dateRange.preset,
     ],
     queryFn: () =>
       getErrors({
         country: selectedCountry,
-        dimension,
-        segment,
         startDate: dateRange.startDate,
         endDate: dateRange.endDate,
         rangeKey: dateRange.preset,
@@ -147,63 +124,19 @@ export function HomePage() {
     enabled: activeTab === "errors" && hasDashboardData,
   });
 
-  const dimensions = useQuery({
-    queryKey: ["dashboard", "dimensions", selectedCountry],
-    queryFn: () => getDimensions(selectedCountry),
-    enabled: hasDashboardData,
-  });
-
-  const segments = useQuery({
-    queryKey: ["dashboard", "segments", selectedCountry],
-    queryFn: () => getSegments(selectedCountry),
-    enabled: hasDashboardData,
-  });
-
-  const missingDaysMutation = useMutation({
+  const rangeIngestionMutation = useMutation({
     mutationFn: () =>
-      ingestMissingDays(selectedCountry, coverage.data?.missing_days ?? [], {
+      ingestRange(selectedCountry, {
         rangeKey: dateRange.preset,
         startDate: dateRange.startDate,
         endDate: dateRange.endDate,
+        reason: coverageIngestionReason(coverage.data),
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       void queryClient.invalidateQueries({ queryKey: ["ingestions"] });
     },
   });
-
-  const appliedDimension = useMemo(
-    () =>
-      summary.data?.applied_dimension ??
-      findDimensionSelection(dimensions.data?.groups ?? [], dimension),
-    [dimension, dimensions.data?.groups, summary.data?.applied_dimension],
-  );
-  const appliedSegment = useMemo(
-    () =>
-      summary.data?.applied_segment ??
-      findSegmentSelection(segments.data?.segments ?? [], segment),
-    [segment, segments.data?.segments, summary.data?.applied_segment],
-  );
-
-  function applyDimension(nextDimension: string) {
-    setDimension(nextDimension);
-    setDimensionPanelOpen(false);
-  }
-
-  function clearDimension() {
-    setDimension(null);
-    setDimensionPanelOpen(false);
-  }
-
-  function applySegment(nextSegment: string) {
-    setSegment(nextSegment);
-    setSegmentPanelOpen(false);
-  }
-
-  function clearSegment() {
-    setSegment(null);
-    setSegmentPanelOpen(false);
-  }
 
   if (countries.isLoading) {
     return <div className="analytics-loading">Cargando paises</div>;
@@ -237,16 +170,12 @@ export function HomePage() {
       <DashboardHeader
         country={selectedCountry}
         countries={countries.data.countries}
-        appliedDimension={appliedDimension}
-        appliedSegment={appliedSegment}
         dateRange={dateRange}
         coverage={coverage.data}
-        missingIngestionPending={missingDaysMutation.isPending}
+        missingIngestionPending={rangeIngestionMutation.isPending}
         onCountryChange={setActiveCountry}
         onDateRangeChange={setDateRange}
-        onOpenDimensions={() => setDimensionPanelOpen(true)}
-        onOpenSegments={() => setSegmentPanelOpen(true)}
-        onIngestMissingDays={() => missingDaysMutation.mutate()}
+        onIngestMissingDays={() => rangeIngestionMutation.mutate()}
       />
 
       <DashboardTabs active={activeTab} onChange={setActiveTab} />
@@ -254,8 +183,6 @@ export function HomePage() {
       {activeTab === "summary" ? (
         <SummaryTab
           country={selectedCountry}
-          dimension={dimension}
-          segment={segment}
           dateRange={dateRange}
           response={summary.data}
           isLoading={summary.isLoading}
@@ -263,33 +190,11 @@ export function HomePage() {
       ) : (
         <ErrorsTab
           country={selectedCountry}
-          dimension={dimension}
-          segment={segment}
           dateRange={dateRange}
           response={errors.data}
           isLoading={errors.isLoading}
         />
       )}
-
-      <DimensionPicker
-        open={dimensionPanelOpen}
-        response={dimensions.data}
-        selected={appliedDimension}
-        isLoading={dimensions.isLoading}
-        onApply={applyDimension}
-        onClear={clearDimension}
-        onClose={() => setDimensionPanelOpen(false)}
-      />
-
-      <SegmentPicker
-        open={segmentPanelOpen}
-        response={segments.data}
-        selected={appliedSegment}
-        isLoading={segments.isLoading}
-        onApply={applySegment}
-        onClear={clearSegment}
-        onClose={() => setSegmentPanelOpen(false)}
-      />
     </div>
   );
 }
@@ -319,25 +224,8 @@ function asCountryCode(value: string): CountryCode {
     : "MX";
 }
 
-function findDimensionSelection(
-  groups: DashboardDimensionGroup[],
-  selectedId: string | null,
-): DashboardSelection | null {
-  if (!selectedId) return null;
-  for (const group of groups) {
-    const item = group.items.find((dimension) => dimension.id === selectedId);
-    if (item) return { id: item.id, label: item.label };
-  }
-  return { id: selectedId, label: selectedId };
-}
-
-function findSegmentSelection(
-  segments: DashboardSegment[],
-  selectedId: string | null,
-): DashboardSelection | null {
-  if (!selectedId) return null;
-  const item = segments.find((segment) => segment.id === selectedId);
-  return item
-    ? { id: item.id, label: item.label }
-    : { id: selectedId, label: selectedId };
+function coverageIngestionReason(coverage?: DashboardCoverage) {
+  if (coverage?.data_quality) return coverage.data_quality;
+  if (coverage?.missing_days?.length) return "missing_days";
+  return "user_requested";
 }

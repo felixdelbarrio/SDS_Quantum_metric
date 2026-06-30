@@ -24,17 +24,20 @@ const EXPANDED_SIZE = {
 export function QuantumChart({
   payload,
   mode = "compact",
+  displayMode,
   title,
 }: QuantumChartProps) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const [activePoint, setActivePoint] = useState<RenderedPoint | null>(null);
   const size = mode === "expanded" ? EXPANDED_SIZE : COMPACT_SIZE;
+  const chartMode =
+    displayMode ?? (payload?.chart_type === "bar" ? "bar" : "line");
   const renderModel = useMemo(
     () =>
       payload && payload.chart_type !== "donut"
-        ? buildLineRenderModel(payload, size)
-        : { paths: [], points: [] },
-    [payload, size],
+        ? buildChartRenderModel(payload, size, chartMode)
+        : { paths: [], bars: [], points: [] },
+    [payload, size, chartMode],
   );
 
   if (!payload) {
@@ -52,11 +55,13 @@ export function QuantumChart({
   }
 
   const ariaLabel = title
-    ? `${title}. Grafica ${payload.chart_type}`
-    : `Grafica ${payload.chart_type}`;
+    ? `${title}. Grafica ${chartMode}`
+    : `Grafica ${chartMode}`;
 
   return (
-    <figure className={`quantum-chart quantum-chart-${mode}`}>
+    <figure
+      className={`quantum-chart quantum-chart-${mode} quantum-chart-display-${chartMode}`}
+    >
       <div className="quantum-chart-stage">
         <svg
           ref={svgRef}
@@ -85,6 +90,29 @@ export function QuantumChart({
             height={size.height}
             padding={size.padding}
           />
+          {renderModel.bars.map((bar) => {
+            const isActive =
+              activePoint?.seriesId === bar.seriesId &&
+              activePoint.index === bar.index;
+            return (
+              <rect
+                key={`${bar.seriesId}-${bar.index}`}
+                className={`quantum-chart-bar quantum-chart-series-${bar.seriesIndex % 5}`}
+                data-active={isActive ? "true" : "false"}
+                x={bar.barX}
+                y={bar.barY}
+                width={bar.barWidth}
+                height={bar.barHeight}
+                rx="1.5"
+                tabIndex={0}
+                role="button"
+                aria-label={`${bar.seriesLabel} ${bar.label}: ${formatNumber(bar.value)}`}
+                onMouseEnter={() => setActivePoint(bar)}
+                onFocus={() => setActivePoint(bar)}
+                onBlur={() => setActivePoint(null)}
+              />
+            );
+          })}
           {renderModel.paths.map((path, index) => (
             <path
               key={path.id}
@@ -92,29 +120,31 @@ export function QuantumChart({
               d={path.d}
             />
           ))}
-          <g className="quantum-chart-points">
-            {renderModel.points.map((point) => {
-              const isActive =
-                activePoint?.seriesId === point.seriesId &&
-                activePoint.index === point.index;
-              return (
-                <circle
-                  key={`${point.seriesId}-${point.index}`}
-                  className={`quantum-chart-point quantum-chart-series-${point.seriesIndex % 5}`}
-                  data-active={isActive ? "true" : "false"}
-                  cx={point.x}
-                  cy={point.y}
-                  r="3"
-                  tabIndex={0}
-                  role="button"
-                  aria-label={`${point.seriesLabel} ${point.label}: ${formatNumber(point.value)}`}
-                  onMouseEnter={() => setActivePoint(point)}
-                  onFocus={() => setActivePoint(point)}
-                  onBlur={() => setActivePoint(null)}
-                />
-              );
-            })}
-          </g>
+          {chartMode === "line" ? (
+            <g className="quantum-chart-points">
+              {renderModel.points.map((point) => {
+                const isActive =
+                  activePoint?.seriesId === point.seriesId &&
+                  activePoint.index === point.index;
+                return (
+                  <circle
+                    key={`${point.seriesId}-${point.index}`}
+                    className={`quantum-chart-point quantum-chart-series-${point.seriesIndex % 5}`}
+                    data-active={isActive ? "true" : "false"}
+                    cx={point.x}
+                    cy={point.y}
+                    r="3"
+                    tabIndex={0}
+                    role="button"
+                    aria-label={`${point.seriesLabel} ${point.label}: ${formatNumber(point.value)}`}
+                    onMouseEnter={() => setActivePoint(point)}
+                    onFocus={() => setActivePoint(point)}
+                    onBlur={() => setActivePoint(null)}
+                  />
+                );
+              })}
+            </g>
+          ) : null}
         </svg>
         {activePoint ? <ChartTooltip point={activePoint} /> : null}
       </div>
@@ -166,48 +196,88 @@ type RenderedPoint = {
   value?: number | null;
   x: number;
   y: number;
+  barX?: number;
+  barY?: number;
+  barWidth?: number;
+  barHeight?: number;
 };
 
-function buildLineRenderModel(
+function buildChartRenderModel(
   payload: ChartPayload,
   size: typeof COMPACT_SIZE,
-): { paths: Array<{ id: string; d: string }>; points: RenderedPoint[] } {
+  displayMode: "line" | "bar",
+): {
+  paths: Array<{ id: string; d: string }>;
+  bars: RenderedPoint[];
+  points: RenderedPoint[];
+} {
   const min = payload.y_axis.min ?? minValue(payload);
   const max = payload.y_axis.max ?? maxValue(payload);
   const range = max - min || 1;
   const plotWidth = size.width - size.padding.left - size.padding.right;
   const plotHeight = size.height - size.padding.top - size.padding.bottom;
   const paths: Array<{ id: string; d: string }> = [];
+  const bars: RenderedPoint[] = [];
   const points: RenderedPoint[] = [];
-  payload.series
-    .filter((series) => series.visible !== false && series.points.length)
-    .forEach((series, seriesIndex) => {
-      const denominator = Math.max(1, series.points.length - 1);
-      const seriesPoints: RenderedPoint[] = [];
-      series.points.forEach((point, index) => {
-        const x =
-          size.padding.left + (point.x ?? index / denominator) * plotWidth;
-        const y =
-          size.padding.top +
-          (1 - ((point.value ?? 0) - min) / range) * plotHeight;
-        seriesPoints.push({
-          seriesId: series.id,
-          seriesLabel: series.label,
-          seriesIndex,
-          index,
-          label: formatPointLabel(
-            point.label ?? point.ts ?? `Punto ${index + 1}`,
-          ),
-          ts: point.ts,
-          value: point.value,
-          x,
-          y,
-        });
-      });
-      points.push(...seriesPoints);
-      paths.push({ id: series.id, d: smoothPath(seriesPoints) });
+  const visibleSeries = payload.series.filter(
+    (series) => series.visible !== false && series.points.length,
+  );
+  const maxPointCount = Math.max(
+    1,
+    ...visibleSeries.map((series) => series.points.length),
+  );
+  const valueToY = (value: number) =>
+    size.padding.top + (1 - (value - min) / range) * plotHeight;
+  const baseline =
+    min < 0 && max > 0 ? valueToY(0) : size.padding.top + plotHeight;
+  const groupWidth = Math.min(
+    42,
+    (plotWidth / Math.max(1, maxPointCount)) * 0.7,
+  );
+  const barWidth = Math.max(
+    2,
+    (groupWidth / Math.max(1, visibleSeries.length)) * 0.78,
+  );
+  visibleSeries.forEach((series, seriesIndex) => {
+    const denominator = Math.max(1, series.points.length - 1);
+    const seriesPoints: RenderedPoint[] = [];
+    series.points.forEach((point, index) => {
+      const x =
+        size.padding.left + (point.x ?? index / denominator) * plotWidth;
+      const value = point.value ?? 0;
+      const y = valueToY(value);
+      const barX =
+        x -
+        groupWidth / 2 +
+        seriesIndex * (groupWidth / Math.max(1, visibleSeries.length)) +
+        (groupWidth / Math.max(1, visibleSeries.length) - barWidth) / 2;
+      const renderedPoint = {
+        seriesId: series.id,
+        seriesLabel: series.label,
+        seriesIndex,
+        index,
+        label: formatPointLabel(
+          point.label ?? point.ts ?? `Punto ${index + 1}`,
+        ),
+        ts: point.ts,
+        value: point.value,
+        x,
+        y,
+        barX,
+        barY: Math.min(y, baseline),
+        barWidth,
+        barHeight: Math.max(1, Math.abs(baseline - y)),
+      };
+      seriesPoints.push(renderedPoint);
     });
-  return { paths, points };
+    points.push(...seriesPoints);
+    if (displayMode === "bar") {
+      bars.push(...seriesPoints);
+    } else {
+      paths.push({ id: series.id, d: smoothPath(seriesPoints) });
+    }
+  });
+  return { paths, bars, points };
 }
 
 function smoothPath(points: Array<Pick<RenderedPoint, "x" | "y">>) {

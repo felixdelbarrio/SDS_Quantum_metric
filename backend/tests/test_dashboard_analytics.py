@@ -183,8 +183,6 @@ def test_analytics_endpoints_do_not_call_quantum_or_leak_secrets(
         "/api/analytics/dashboard/summary/table?country=MX",
         "/api/analytics/dashboard/errors?country=MX",
         "/api/analytics/dashboard/errors/table?country=MX",
-        "/api/analytics/dimensions?country=MX",
-        "/api/analytics/segments?country=MX",
     ]:
         response = client.get(path)
         assert response.status_code == 200
@@ -192,6 +190,11 @@ def test_analytics_endpoints_do_not_call_quantum_or_leak_secrets(
         assert "Authorization" not in body
         assert "Cookie" not in body
         assert "session=" not in body
+
+
+def test_decorative_dimension_segment_endpoints_are_not_exposed(client: TestClient) -> None:
+    assert client.get("/api/analytics/dimensions?country=MX").status_code == 404
+    assert client.get("/api/analytics/segments?country=MX").status_code == 404
 
 
 def test_legacy_array_rows_remain_readable(tmp_path: Path) -> None:

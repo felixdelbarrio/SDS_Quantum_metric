@@ -82,6 +82,7 @@ export function DatasetsPage() {
     queryFn: () => apiGet<DatasetsResponse>("/datasets"),
   });
   const rows = datasets.data?.datasets ?? [];
+  const datasetsInitialLoading = datasets.isLoading && !datasets.data;
   const activeCountry = selectedCountry ?? rows[0]?.country ?? "";
   const entities = useQuery({
     queryKey: ["datasets", activeCountry, "entities"],
@@ -181,7 +182,13 @@ export function DatasetsPage() {
         </div>
       </header>
 
-      {rows.length ? (
+      {datasetsInitialLoading ? (
+        <div className="analytics-loading" role="status">
+          Cargando datasets
+        </div>
+      ) : datasets.isError ? (
+        <EmptyState title="No se pudieron cargar los datasets" />
+      ) : rows.length ? (
         <section className="dataset-grid">
           {rows.map((dataset) => (
             <article className="dataset-card" key={dataset.country}>
@@ -308,7 +315,13 @@ export function DatasetsPage() {
               <Download size={16} /> CSV
             </button>
           </div>
-          {entities.data?.entities.length ? (
+          {entities.isLoading && !entities.data ? (
+            <div className="analytics-loading" role="status">
+              Cargando entidades
+            </div>
+          ) : entities.isError ? (
+            <EmptyState title="No se pudieron cargar las entidades" />
+          ) : entities.data?.entities.length ? (
             <>
               <div className="dataset-entity-groups">
                 {entityGroups.map(([category, items]) => (
@@ -346,10 +359,16 @@ export function DatasetsPage() {
                 active={activeEntity}
                 onChange={setSelectedEntity}
               />
-              <DataGrid
-                columns={entityRows.data?.columns ?? []}
-                rows={entityRows.data?.rows ?? []}
-              />
+              {entityRows.isLoading && !entityRows.data ? (
+                <div className="analytics-loading" role="status">
+                  Cargando filas
+                </div>
+              ) : (
+                <DataGrid
+                  columns={entityRows.data?.columns ?? []}
+                  rows={entityRows.data?.rows ?? []}
+                />
+              )}
             </>
           ) : (
             <EmptyState title="Sin entidades Parquet" />
