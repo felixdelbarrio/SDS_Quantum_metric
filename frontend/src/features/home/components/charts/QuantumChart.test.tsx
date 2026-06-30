@@ -21,6 +21,23 @@ describe("QuantumChart", () => {
     expect(screen.getByText("Jun 16, 2026 (CST)")).toBeInTheDocument();
   });
 
+  it("suaviza las series con suficientes puntos", () => {
+    const { container } = render(
+      <QuantumChart payload={curvedPayload()} title="Paginas vistas" />,
+    );
+
+    expect(
+      container.querySelector("path.quantum-chart-series")?.getAttribute("d"),
+    ).toContain("C");
+  });
+
+  it("muestra valores y porcentajes en el donut", () => {
+    render(<QuantumChart payload={donutPayload()} title="Comparativa" />);
+
+    expect(screen.getByText("portabilidad nomina")).toBeInTheDocument();
+    expect(screen.getByText("4 - 80%")).toBeInTheDocument();
+  });
+
   it("normaliza etiquetas antiguas con epoch antes de mostrarlas", () => {
     render(<QuantumChart payload={rawEpochPayload()} title="Paginas vistas" />);
 
@@ -95,5 +112,50 @@ function rawEpochPayload(): ChartPayload {
       },
     ],
     period_label: "1781676000 - 1781686680 CST",
+  };
+}
+
+function curvedPayload(): ChartPayload {
+  return {
+    ...chartPayload(),
+    series: [
+      {
+        id: "mobile",
+        label: "Mobile",
+        kind: "line",
+        device: "mobile",
+        visible: true,
+        points: [
+          { ts: "2026-06-16T00:00:00Z", label: "00:00", value: 10 },
+          { ts: "2026-06-16T01:00:00Z", label: "01:00", value: 80 },
+          { ts: "2026-06-16T02:00:00Z", label: "02:00", value: 20 },
+        ],
+      },
+    ],
+  };
+}
+
+function donutPayload(): ChartPayload {
+  return {
+    chart_type: "donut",
+    x_axis: { ticks: [] },
+    y_axis: { ticks: [], min: 0, max: 5, unit: "count" },
+    series: [
+      {
+        id: "segments",
+        label: "Comparativa",
+        kind: "bar",
+        device: "unknown",
+        visible: true,
+        points: [
+          { label: "portabilidad nomina", value: 4, raw_value: 80 },
+          { label: "Other", value: 1, raw_value: 20 },
+        ],
+      },
+    ],
+    bands: [],
+    legends: [{ id: "portabilidad nomina", label: "portabilidad nomina" }],
+    period_label: "Jun 16, 2026 (CST)",
+    timezone: "CST",
   };
 }

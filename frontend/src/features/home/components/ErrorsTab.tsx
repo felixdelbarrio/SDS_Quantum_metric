@@ -33,8 +33,8 @@ export function ErrorsTab({
   isLoading,
 }: Props) {
   const [search, setSearch] = useState("");
-  const [sort, setSort] = useState("error_session_percent");
-  const [direction, setDirection] = useState<SortDirection>("desc");
+  const [sort, setSort] = useState("row_index");
+  const [direction, setDirection] = useState<SortDirection>("asc");
   const [topSearch, setTopSearch] = useState("");
   const [topSort, setTopSort] = useState("error_sessions");
   const [topDirection, setTopDirection] = useState<SortDirection>("desc");
