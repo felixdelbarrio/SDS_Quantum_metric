@@ -14,6 +14,8 @@ export type AvailableCountry = {
   cards?: number;
   regression_status?: string | null;
   last_ingestion_at?: string | null;
+  dashboard_id?: string | null;
+  dashboard_name?: string | null;
 };
 
 export type CountriesResponse = {
@@ -142,6 +144,9 @@ export type SummaryDashboardResponse = {
   country: CountryCode;
   source: "parquet";
   last_ingestion_at?: string | null;
+  dashboard_id?: string | null;
+  dashboard_name?: string | null;
+  dashboard_title?: string | null;
   widgets: KpiWidget[];
   reason?: string | null;
   required_dataset?: string | null;
@@ -235,6 +240,8 @@ export type ErrorsDashboardResponse = {
   country: CountryCode;
   source: "parquet";
   last_ingestion_at?: string | null;
+  dashboard_id?: string | null;
+  dashboard_name?: string | null;
   widgets: ErrorWidget[];
   reason?: string | null;
   required_dataset?: string | null;

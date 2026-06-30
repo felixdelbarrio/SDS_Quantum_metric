@@ -138,7 +138,9 @@ class ParquetStore:
         frame = self._read_parquet_files(files)
         return [_parquet_rich_row(row) for row in frame.to_dicts()]
 
-    def list_country_entities(self, country: str) -> list[dict[str, Any]]:
+    def list_country_entities(
+        self, country: str, dashboard_id: str | None = None
+    ) -> list[dict[str, Any]]:
         root = self.settings.parquet_dir / f"country={country}"
         entities: list[dict[str, Any]] = []
         if not root.exists():
@@ -148,7 +150,14 @@ class ParquetStore:
             if not files:
                 continue
             scan = pl.scan_parquet([str(file) for file in files])
+            if dashboard_id:
+                scoped_scan = _dashboard_scoped_scan(scan, dashboard_id)
+                if scoped_scan is None:
+                    continue
+                scan = scoped_scan
             rows = int(scan.select(pl.len()).collect().item())
+            if rows == 0:
+                continue
             relative = str(dataset_dir.relative_to(root))
             sample = _sample_row(scan)
             entities.append(
@@ -157,6 +166,8 @@ class ParquetStore:
                     "label": relative.replace("_", " "),
                     "category": _entity_category(relative),
                     "dashboard_id": _text_or_none(sample.get("dashboard_id")),
+                    "dashboard_name": _text_or_none(sample.get("dashboard_name")),
+                    "widget_id": _text_or_none(sample.get("widget_id")),
                     "widget_role": _text_or_none(
                         sample.get("card_role") or sample.get("visual_role")
                     ),
@@ -323,6 +334,10 @@ class ParquetStore:
                     "config/quantum_config.json",
                     json.dumps(_safe_json_file(quantum_config), indent=2),
                 )
+                archive.writestr(
+                    "config/dashboards.json",
+                    json.dumps(_dashboards_manifest(_safe_json_file(quantum_config)), indent=2),
+                )
             for country in countries:
                 root = self.settings.parquet_dir / f"country={country}"
                 if not root.exists():
@@ -372,6 +387,9 @@ class ParquetStore:
                     relative = PurePosixPath(name)
                     if ".." in relative.parts or relative.is_absolute():
                         raise ValueError(f"Unsafe ZIP path: {name}")
+                    if name == "config/dashboards.json":
+                        _reject_secret_config(json.loads(archive.read(name)))
+                        continue
                     if name not in {"config/quantum.json", "config/quantum_config.json"}:
                         raise ValueError(f"Unexpected config path: {name}")
                     config_payload = json.loads(archive.read(name))
@@ -723,6 +741,23 @@ def _reject_secret_config(payload: Any) -> None:
         raise ValueError("Config import/export payload contains secret-looking fields.")
 
 
+def _dashboards_manifest(config: dict[str, Any]) -> dict[str, Any]:
+    countries = config.get("countries")
+    return {
+        "schema_version": "1.4",
+        "countries": [
+            {
+                "country": country.get("country"),
+                "dashboards": country.get("dashboards") or [],
+            }
+            for country in countries
+            if isinstance(country, dict)
+        ]
+        if isinstance(countries, list)
+        else [],
+    }
+
+
 def _source_bounds(rows: list[dict[str, Any]]) -> tuple[datetime, datetime] | None:
     starts = [_row_range_start(row) for row in rows]
     ends = [_row_range_end(row) for row in rows]
@@ -807,6 +842,22 @@ def _coverage_message(missing_days: list[date]) -> str:
     if len(missing_days) == 1:
         return f"Falta 1 dia para completar el periodo: {missing_days[0].isoformat()}."
     return f"Faltan {len(missing_days)} dias para completar el periodo."
+
+
+def _dashboard_scoped_scan(
+    scan: pl.LazyFrame,
+    dashboard_id: str,
+) -> pl.LazyFrame | None:
+    try:
+        columns = set(scan.collect_schema().names())
+    except Exception:
+        return None
+    if "dashboard_id" not in columns:
+        return None
+    dashboard_col = pl.col("dashboard_id").cast(pl.Utf8)
+    scoped = scan.filter(dashboard_col == dashboard_id)
+    matching_rows = int(scoped.select(pl.len()).collect().item())
+    return scoped if matching_rows else None
 
 
 def _sample_row(scan: pl.LazyFrame) -> dict[str, Any]:

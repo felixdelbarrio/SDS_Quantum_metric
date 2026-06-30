@@ -1,11 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  within,
-} from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QuantumPage } from "./QuantumPage";
 import { useAppStore } from "../../shared/state/appStore";
@@ -23,7 +17,7 @@ describe("QuantumPage configuration", () => {
     vi.restoreAllMocks();
   });
 
-  it("muestra dashboards y widgets editables sin chip Dashboard en pais", async () => {
+  it("muestra selector de dashboards reales y widgets dinamicos", async () => {
     mockFetch();
     renderConfig();
 
@@ -34,7 +28,7 @@ describe("QuantumPage configuration", () => {
     expect(
       within(countryLabel!.closest("article")!).queryByText("Dashboard"),
     ).toBeNull();
-    expect(await screen.findByText("Dashboard default")).toBeInTheDocument();
+    expect(await screen.findAllByText("Dashboard General MX")).toHaveLength(2);
     expect(await screen.findByDisplayValue("dash-default")).toBeInTheDocument();
     expect(await screen.findByDisplayValue("~/Downloads")).toBeInTheDocument();
     expect(
@@ -42,13 +36,7 @@ describe("QuantumPage configuration", () => {
     ).toBeInTheDocument();
     expect(await screen.findByText("CHART")).toBeInTheDocument();
     expect(await screen.findByText("id: card-page-views")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: /Dashboard manual/i }));
-
-    expect(
-      await screen.findByDisplayValue("Dashboard manual"),
-    ).toBeInTheDocument();
-    expect(screen.getAllByText("Default del pais")).toHaveLength(2);
+    expect(screen.queryByText(/Dashboard manual/i)).toBeNull();
   });
 
   it("renderiza configuracion legacy sin dashboards sin pantalla en blanco", async () => {
@@ -73,8 +61,31 @@ describe("QuantumPage configuration", () => {
     expect(await screen.findByText("Quantum")).toBeInTheDocument();
     expect((await screen.findAllByText("Mexico")).length).toBeGreaterThan(0);
     expect(
-      await screen.findByText(/Ejecuta Test pais o anade un dashboard manual/i),
+      await screen.findByText(/Actualiza dashboards para seleccionar/i),
     ).toBeInTheDocument();
+  });
+
+  it("no permite guardar un pais activo sin dashboard default", async () => {
+    mockFetch({
+      ...defaultQuantumConfig(),
+      countries: [
+        {
+          ...defaultQuantumConfig().countries[0],
+          dashboards: [
+            {
+              ...defaultQuantumConfig().countries[0].dashboards[0],
+              is_default: false,
+            },
+          ],
+        },
+      ],
+    });
+    renderConfig();
+
+    expect(
+      await screen.findByText(/Selecciona un dashboard default/i),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Guardar/i })).toBeDisabled();
   });
 });
 
@@ -114,7 +125,7 @@ function defaultQuantumConfig() {
         dashboards: [
           {
             dashboard_id: "dash-default",
-            name: "Dashboard default",
+            name: "Dashboard General MX",
             dashboard_type: "Quantum dashboard",
             team_id: "team",
             summary_tab: 0,
@@ -123,6 +134,14 @@ function defaultQuantumConfig() {
             is_manual: false,
             validated: true,
             validation_status: "ok",
+            source: "quantum_web",
+            tabs: [
+              {
+                tab_index: 0,
+                name: "Resumen",
+                normalized_role: "summary",
+              },
+            ],
             widgets: [
               {
                 role: "summary.page_views",
@@ -130,7 +149,11 @@ function defaultQuantumConfig() {
                 widget_id: "card-page-views",
                 widget_type: "CHART",
                 tab: "summary",
+                tab_name: "Resumen",
+                tab_index: 0,
                 enabled: true,
+                required: true,
+                supported: true,
               },
             ],
           },

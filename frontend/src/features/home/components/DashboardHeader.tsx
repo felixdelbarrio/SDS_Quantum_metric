@@ -15,6 +15,7 @@ type Props = {
   countries: AvailableCountry[];
   dateRange: DateRange;
   coverage?: DashboardCoverage | null;
+  dashboardName?: string | null;
   missingIngestionPending: boolean;
   onCountryChange: (country: CountryCode) => void;
   onDateRangeChange: (range: DateRange) => void;
@@ -26,6 +27,7 @@ export function DashboardHeader({
   countries,
   dateRange,
   coverage,
+  dashboardName,
   missingIngestionPending,
   onCountryChange,
   onDateRangeChange,
@@ -43,6 +45,11 @@ export function DashboardHeader({
         <div>
           <h1>Dashboard General {country}</h1>
           <p>Este dashboard es un resumen de sesiones y errores.</p>
+          {dashboardName ? (
+            <span className="dashboard-context">
+              Dashboard: {dashboardName}
+            </span>
+          ) : null}
           {showCoverage ? (
             <div className={`coverage-pill ${warningLevel}`} role="status">
               <span>{coverage?.message}</span>

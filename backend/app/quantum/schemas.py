@@ -63,20 +63,48 @@ def country_label(country: str | Country) -> str:
     return COUNTRY_LABELS.get(code, code)
 
 
-type WidgetTab = Literal["summary", "errors"]
+type WidgetSource = Literal["quantum_api", "quantum_web", "config_cache"]
 type WidgetType = Literal["CHART", "TABLE", "DONUT", "KPI", "UNKNOWN"]
 
 
+class QuantumDashboardTabConfig(BaseModel):
+    tab_id: str | None = None
+    tab_index: int = Field(default=0, ge=0)
+    name: str
+    normalized_role: str | None = None
+
+    @field_validator("tab_id", "name", "normalized_role", mode="before")
+    @classmethod
+    def _strip_tab_text(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
+
+
 class QuantumWidgetConfig(BaseModel):
-    role: str
+    role: str = ""
     title: str = ""
     widget_id: str = ""
+    card_id: str | None = None
     widget_type: WidgetType = "UNKNOWN"
-    tab: WidgetTab = "summary"
+    tab: str = "summary"
+    tab_name: str = "Resumen"
+    tab_index: int = Field(default=0, ge=0)
     enabled: bool = True
+    required: bool = False
+    supported: bool = True
+    source: WidgetSource = "config_cache"
     discovered_at: datetime | None = None
 
-    @field_validator("role", "title", "widget_id", "widget_type", mode="before")
+    @field_validator(
+        "role",
+        "title",
+        "widget_id",
+        "card_id",
+        "widget_type",
+        "tab",
+        "tab_name",
+        "source",
+        mode="before",
+    )
     @classmethod
     def _strip_widget_text(cls, value: object) -> object:
         return value.strip() if isinstance(value, str) else value
@@ -93,22 +121,33 @@ class QuantumDashboardConfig(BaseModel):
     is_manual: bool = False
     validated: bool = False
     validation_status: Literal["not_tested", "ok", "ko"] = "not_tested"
+    source: Literal["quantum_api", "quantum_web", "config_cache", "manual"] = "config_cache"
     discovered_at: datetime | None = None
+    last_structure_at: datetime | None = None
+    tabs: list[QuantumDashboardTabConfig] = Field(default_factory=list)
     widgets: list[QuantumWidgetConfig] = Field(default_factory=list)
 
-    @field_validator("dashboard_id", "name", "dashboard_type", "team_id", mode="before")
+    @field_validator("dashboard_id", "name", "dashboard_type", "team_id", "source", mode="before")
     @classmethod
     def _strip_dashboard_text(cls, value: object) -> object:
         return value.strip() if isinstance(value, str) else value
 
     @model_validator(mode="after")
     def _seed_widgets(self) -> QuantumDashboardConfig:
+        if _is_legacy_generated_dashboard_name(self.name) and self.dashboard_id:
+            self.name = self.dashboard_id
         if not self.widgets:
             self.widgets = default_widget_configs()
+        if not self.tabs:
+            self.tabs = _tabs_from_widgets(self.widgets)
         return self
 
     def enabled_widget_roles(self) -> list[str]:
-        return [widget.role for widget in self.widgets if widget.enabled]
+        return [
+            widget.role
+            for widget in self.widgets
+            if widget.enabled and widget.supported and widget.role
+        ]
 
 
 class QuantumCountryConfig(BaseModel):
@@ -131,7 +170,7 @@ class QuantumCountryConfig(BaseModel):
             self.dashboards = [
                 QuantumDashboardConfig(
                     dashboard_id=self.dashboard_id,
-                    name="Dashboard default",
+                    name=self.dashboard_id,
                     team_id=self.team_id,
                     summary_tab=self.tab,
                     errors_tab=1,
@@ -140,8 +179,18 @@ class QuantumCountryConfig(BaseModel):
                     validation_status="ok",
                 )
             ]
-        if self.dashboards and not any(item.is_default for item in self.dashboards):
-            self.dashboards[0].is_default = True
+        default_seen = False
+        normalized: list[QuantumDashboardConfig] = []
+        for dashboard in self.dashboards:
+            next_dashboard = dashboard
+            if _is_legacy_generated_dashboard_name(dashboard.name) and dashboard.dashboard_id:
+                next_dashboard = next_dashboard.model_copy(update={"name": dashboard.dashboard_id})
+            if next_dashboard.is_default:
+                if default_seen:
+                    next_dashboard = next_dashboard.model_copy(update={"is_default": False})
+                default_seen = True
+            normalized.append(next_dashboard)
+        self.dashboards = normalized
         for dashboard in self.dashboards:
             if dashboard.is_default:
                 self.dashboard_id = dashboard.dashboard_id
@@ -231,9 +280,6 @@ class QuantumConfig(BaseModel):
                 QuantumCountryConfig(
                     country=Country.MX,
                     base_url="https://bbvamx.quantummetric.com",
-                    dashboard_id="8e53eb82-587c-4b92-a0fa-0f6283677e28",
-                    team_id="1da677de-9313-4b49-9110-81a6b756ca7e",
-                    tab=0,
                 )
             ]
         if not any(item.country == self.country for item in self.countries):
@@ -379,57 +425,93 @@ def default_widget_configs() -> list[QuantumWidgetConfig]:
     return [
         QuantumWidgetConfig(
             role="summary.page_views",
+            widget_id="role:summary.page_views",
             title="Paginas vistas",
             widget_type="CHART",
             tab="summary",
+            tab_name="Resumen",
+            tab_index=0,
+            required=True,
         ),
         QuantumWidgetConfig(
             role="summary.sessions",
+            widget_id="role:summary.sessions",
             title="Sesiones",
             widget_type="CHART",
             tab="summary",
+            tab_name="Resumen",
+            tab_index=0,
+            required=True,
         ),
         QuantumWidgetConfig(
             role="summary.converted_sessions",
+            widget_id="role:summary.converted_sessions",
             title="Sesiones con conversion",
             widget_type="CHART",
             tab="summary",
+            tab_name="Resumen",
+            tab_index=0,
+            required=True,
         ),
         QuantumWidgetConfig(
             role="summary.avg_session_duration",
+            widget_id="role:summary.avg_session_duration",
             title="Tiempo medio de sesion",
             widget_type="CHART",
             tab="summary",
+            tab_name="Resumen",
+            tab_index=0,
+            required=True,
         ),
         QuantumWidgetConfig(
             role="summary.detail_by_app_name_os",
+            widget_id="role:summary.detail_by_app_name_os",
             title="Detalle App Name / SO",
             widget_type="TABLE",
             tab="summary",
+            tab_name="Resumen",
+            tab_index=0,
+            required=True,
         ),
         QuantumWidgetConfig(
             role="errors.error_sessions_percentage_evolution",
+            widget_id="role:errors.error_sessions_percentage_evolution",
             title="Evolutivo - % Sesiones con Error",
             widget_type="CHART",
             tab="errors",
+            tab_name="Errores",
+            tab_index=1,
+            required=True,
         ),
         QuantumWidgetConfig(
             role="errors.top_errors_by_error_name",
+            widget_id="role:errors.top_errors_by_error_name",
             title="Top errores",
             widget_type="TABLE",
             tab="errors",
+            tab_name="Errores",
+            tab_index=1,
+            required=True,
         ),
         QuantumWidgetConfig(
             role="errors.error_sessions_by_app_name_comparison",
+            widget_id="role:errors.error_sessions_by_app_name_comparison",
             title="Comparativa App Name",
             widget_type="DONUT",
             tab="errors",
+            tab_name="Errores",
+            tab_index=1,
+            required=True,
         ),
         QuantumWidgetConfig(
             role="errors.error_session_percentage_by_app_name",
+            widget_id="role:errors.error_session_percentage_by_app_name",
             title="% error por App Name",
             widget_type="TABLE",
             tab="errors",
+            tab_name="Errores",
+            tab_index=1,
+            required=True,
         ),
     ]
 
@@ -446,9 +528,38 @@ def _normalized_dashboards(
         if is_default:
             default_seen = True
         normalized.append(dashboard.model_copy(update={"is_default": is_default}))
-    if not default_seen and normalized:
-        normalized[0] = normalized[0].model_copy(update={"is_default": True})
     return normalized
+
+
+def _tabs_from_widgets(widgets: list[QuantumWidgetConfig]) -> list[QuantumDashboardTabConfig]:
+    seen: set[tuple[int, str]] = set()
+    tabs: list[QuantumDashboardTabConfig] = []
+    for widget in widgets:
+        name = widget.tab_name or _tab_label(widget.tab)
+        key = (widget.tab_index, name)
+        if key in seen:
+            continue
+        seen.add(key)
+        tabs.append(
+            QuantumDashboardTabConfig(
+                tab_index=widget.tab_index,
+                name=name,
+                normalized_role=widget.tab if widget.tab in {"summary", "errors"} else None,
+            )
+        )
+    return sorted(tabs, key=lambda tab: (tab.tab_index, tab.name.casefold()))
+
+
+def _tab_label(tab: str) -> str:
+    if tab == "summary":
+        return "Resumen"
+    if tab == "errors":
+        return "Errores"
+    return tab or "Tab"
+
+
+def _is_legacy_generated_dashboard_name(value: str) -> bool:
+    return value == " ".join(("Dashboard", "default"))
 
 
 def _first_text(values: list[str] | None, default: str) -> str:

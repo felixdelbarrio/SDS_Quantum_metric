@@ -130,6 +130,7 @@ class DashboardCardSpec(BaseModel):
 class CardContract(BaseModel):
     country: str
     dashboard_id: str | None = None
+    dashboard_name: str | None = None
     team_id: str | None = None
     range_key: str = "today"
     range_start: str | None = None
@@ -142,6 +143,8 @@ class CardContract(BaseModel):
     web_snapshot_hash: str | None = None
     tab: DashboardTab
     tab_name: str
+    tab_index: int | None = None
+    widget_id: str | None = None
     card_id: str
     card_title: str
     card_type: str
@@ -164,6 +167,7 @@ class WebSnapshot(BaseModel):
     ingestion_id: str
     country: str
     dashboard_id: str | None = None
+    dashboard_name: str | None = None
     team_id: str | None = None
     range_key: str = "today"
     range_start: str | None = None
@@ -174,7 +178,9 @@ class WebSnapshot(BaseModel):
     source_response_hash: str | None = None
     web_snapshot_hash: str | None = None
     tab: DashboardTab
+    tab_index: int | None = None
     card_role: VisualRole
+    widget_id: str | None = None
     card_title: str
     visible_value: float | str | None = None
     visible_breakdowns: list[dict[str, Any]] = Field(default_factory=list)
@@ -211,6 +217,7 @@ class DerivedBuildResult(BaseModel):
 class RegressionCardResult(BaseModel):
     tab: DashboardTab
     card_role: VisualRole
+    widget_id: str | None = None
     card_title: str
     range_key: str = "today"
     web_value: float | str | None = None
@@ -225,6 +232,7 @@ class RegressionReport(BaseModel):
     country: str
     range_key: str = "today"
     dashboard_id: str | None = None
+    dashboard_name: str | None = None
     team_id: str | None = None
     tabs: list[DashboardTab]
     cards: list[RegressionCardResult]

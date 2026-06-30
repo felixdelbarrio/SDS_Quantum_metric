@@ -120,10 +120,15 @@ class IngestionService:
                     )
             country_config = config.required_country_config(request.country)
             dashboard = country_config.default_dashboard()
-            if not dashboard or not dashboard.dashboard_id or not dashboard.validated:
+            if not dashboard or not dashboard.dashboard_id:
                 raise RuntimeError(
-                    f"No hay dashboard validado para {request.country.value}. "
-                    "Ve a Configuracion y ejecuta Test pais o Test dashboard."
+                    f"No hay dashboard default configurado para {request.country.value}. "
+                    "Ve a Configuracion y selecciona un dashboard default para el pais."
+                )
+            if not dashboard.validated:
+                raise RuntimeError(
+                    f"El dashboard default de {request.country.value} no esta validado. "
+                    "Ve a Configuracion y actualiza dashboards."
                 )
             enabled_roles = set(country_config.enabled_widget_roles())
             if not enabled_roles:
@@ -272,6 +277,14 @@ class IngestionService:
                     progress_callback=progress_callback,
                 )
                 captured = _filter_enabled_rows(captured, enabled_roles)
+                captured = [
+                    {
+                        **row,
+                        "dashboard_id": row.get("dashboard_id") or discovery.dashboard_id,
+                        "dashboard_name": dashboard.name,
+                    }
+                    for row in captured
+                ]
                 if not captured:
                     raise RuntimeError(
                         "No Quantum analytics responses were captured for "
@@ -286,6 +299,9 @@ class IngestionService:
                     captured,
                     job.ingestion_id,
                     enabled_roles,
+                    dashboard_id=discovery.dashboard_id,
+                    dashboard_name=dashboard.name,
+                    range_key=ingestion_range.range_key,
                 )
                 rows_replaced += merge.rows_replaced if merge else 0
                 rows_after_merge = merge.rows_after if merge else rows_after_merge
@@ -324,6 +340,8 @@ class IngestionService:
                     request.country.value,
                     ingestion_id=job.ingestion_id,
                     enabled_roles=enabled_roles,
+                    dashboard_id=discovery.dashboard_id,
+                    dashboard_name=dashboard.name,
                     range_key=ingestion_range.range_key,
                 )
                 update_progress(job, status="running_regression", message="Ejecutando regresion.")
@@ -332,6 +350,7 @@ class IngestionService:
                     request.country.value,
                     ingestion_id=job.ingestion_id,
                     enabled_roles=enabled_roles,
+                    dashboard_id=discovery.dashboard_id,
                     range_key=ingestion_range.range_key,
                 )
             elif build and report:
@@ -352,6 +371,8 @@ class IngestionService:
                     request.country.value,
                     ingestion_id=job.ingestion_id,
                     enabled_roles=enabled_roles,
+                    dashboard_id=discovery.dashboard_id,
+                    dashboard_name=dashboard.name,
                     range_key=ingestion_range.range_key,
                 )
             if report is None:
@@ -360,6 +381,7 @@ class IngestionService:
                     request.country.value,
                     ingestion_id=job.ingestion_id,
                     enabled_roles=enabled_roles,
+                    dashboard_id=discovery.dashboard_id,
                     range_key=ingestion_range.range_key,
                 )
             job.mandatory_cards_total = build.mandatory_cards
@@ -531,6 +553,8 @@ def _publish_completed_chunk(
     rows: list[dict[str, Any]],
     ingestion_id: str,
     enabled_roles: set[str],
+    dashboard_id: str | None = None,
+    dashboard_name: str | None = None,
     range_key: str | None = None,
 ) -> tuple[RawCallMergeResult | None, DerivedBuildResult, RegressionReport]:
     resolved_range_key = range_key or _range_key_from_rows(rows)
@@ -540,6 +564,8 @@ def _publish_completed_chunk(
         country,
         ingestion_id=ingestion_id,
         enabled_roles=enabled_roles,
+        dashboard_id=dashboard_id,
+        dashboard_name=dashboard_name,
         range_key=resolved_range_key,
     )
     report = run_regression(
@@ -547,6 +573,7 @@ def _publish_completed_chunk(
         country,
         ingestion_id=ingestion_id,
         enabled_roles=enabled_roles,
+        dashboard_id=dashboard_id,
         range_key=resolved_range_key,
     )
     return merge, build, report

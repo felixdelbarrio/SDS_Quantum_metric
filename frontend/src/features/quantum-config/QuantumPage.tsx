@@ -43,18 +43,39 @@ type QuantumDashboardConfig = {
   is_manual: boolean;
   validated: boolean;
   validation_status: "not_tested" | "ok" | "ko";
+  source?: "quantum_api" | "quantum_web" | "config_cache" | "manual";
   discovered_at?: string | null;
+  last_structure_at?: string | null;
+  tabs: QuantumDashboardTabConfig[];
   widgets: QuantumWidgetConfig[];
+};
+
+type QuantumDashboardTabConfig = {
+  tab_id?: string | null;
+  tab_index: number;
+  name: string;
+  normalized_role?: string | null;
 };
 
 type QuantumWidgetConfig = {
   role: string;
   title: string;
   widget_id: string;
+  card_id?: string | null;
   widget_type: "CHART" | "TABLE" | "DONUT" | "KPI" | "UNKNOWN";
-  tab: "summary" | "errors";
+  tab: string;
+  tab_name: string;
+  tab_index: number;
   enabled: boolean;
+  required?: boolean;
+  supported?: boolean;
+  source?: "quantum_api" | "quantum_web" | "config_cache";
   discovered_at?: string | null;
+};
+
+type DashboardStructureResponse = {
+  tabs: QuantumDashboardTabConfig[];
+  widgets: QuantumWidgetConfig[];
 };
 
 type QuantumConfig = {
@@ -90,6 +111,19 @@ export function QuantumPage() {
     !current ||
     !Number.isInteger(current.ingestion_depth_days) ||
     current.ingestion_depth_days < 1;
+  const countriesMissingDefault =
+    current?.countries.filter(
+      (row) =>
+        row.enabled &&
+        !row.dashboards.some(
+          (dashboard) => dashboard.is_default && dashboard.dashboard_id,
+        ),
+    ) ?? [];
+  const canSaveConfig =
+    Boolean(current) &&
+    countryRows.length > 0 &&
+    !depthDaysInvalid &&
+    countriesMissingDefault.length === 0;
 
   const save = useMutation({
     mutationFn: (payload: QuantumConfig & { manual_cookie?: string }) =>
@@ -103,7 +137,7 @@ export function QuantumPage() {
 
   const testCountry = useMutation({
     mutationFn: (country: CountryCode) =>
-      apiPost(`/quantum/discover-dashboard?country=${country}`),
+      apiPost(`/quantum/dashboards/refresh?country=${country}`),
     onSuccess: async () => {
       const result = await config.refetch();
       if (result.data) setForm(result.data);
@@ -111,7 +145,7 @@ export function QuantumPage() {
     },
   });
 
-  const testDashboard = useMutation({
+  const loadDashboardStructure = useMutation({
     mutationFn: ({
       country,
       dashboardId,
@@ -119,8 +153,8 @@ export function QuantumPage() {
       country: CountryCode;
       dashboardId: string;
     }) =>
-      apiPost(
-        `/quantum/test-dashboard?country=${country}&dashboard_id=${encodeURIComponent(
+      apiPost<DashboardStructureResponse>(
+        `/quantum/dashboards/structure?country=${country}&dashboard_id=${encodeURIComponent(
           dashboardId,
         )}`,
       ),
@@ -187,52 +221,30 @@ export function QuantumPage() {
     setForm({ ...current, country, countries });
   }
 
-  function updateDashboard(
+  function selectDashboard(countryIndex: number, dashboardId: string) {
+    if (!current) return;
+    const countries = current.countries.map((countryRow, rowIndex) => {
+      if (rowIndex !== countryIndex) return countryRow;
+      return {
+        ...countryRow,
+        dashboards: countryRow.dashboards.map((dashboard) => ({
+          ...dashboard,
+          is_default: dashboard.dashboard_id === dashboardId,
+        })),
+      };
+    });
+    setForm({ ...current, countries });
+    const row = current.countries[countryIndex];
+    if (row && dashboardId) {
+      loadDashboardStructure.mutate({ country: row.country, dashboardId });
+    }
+  }
+
+  function setDefaultDashboard(
     countryIndex: number,
     dashboardIndex: number,
-    patch: Partial<QuantumDashboardConfig>,
+    checked: boolean,
   ) {
-    if (!current) return;
-    const countries = current.countries.map((countryRow, rowIndex) => {
-      if (rowIndex !== countryIndex) return countryRow;
-      const dashboards = countryRow.dashboards.map((dashboard, itemIndex) =>
-        itemIndex === dashboardIndex ? { ...dashboard, ...patch } : dashboard,
-      );
-      return { ...countryRow, dashboards: normalizeDashboards(dashboards) };
-    });
-    setForm({ ...current, countries });
-  }
-
-  function addManualDashboard(countryIndex: number) {
-    if (!current) return;
-    const countries = current.countries.map((countryRow, rowIndex) => {
-      if (rowIndex !== countryIndex) return countryRow;
-      return {
-        ...countryRow,
-        dashboards: normalizeDashboards([
-          ...(countryRow.dashboards ?? []),
-          emptyDashboardConfig(),
-        ]),
-      };
-    });
-    setForm({ ...current, countries });
-  }
-
-  function removeDashboard(countryIndex: number, dashboardIndex: number) {
-    if (!current) return;
-    const countries = current.countries.map((countryRow, rowIndex) => {
-      if (rowIndex !== countryIndex) return countryRow;
-      return {
-        ...countryRow,
-        dashboards: normalizeDashboards(
-          countryRow.dashboards.filter((_, index) => index !== dashboardIndex),
-        ),
-      };
-    });
-    setForm({ ...current, countries });
-  }
-
-  function setDefaultDashboard(countryIndex: number, dashboardIndex: number) {
     if (!current) return;
     const countries = current.countries.map((countryRow, rowIndex) => {
       if (rowIndex !== countryIndex) return countryRow;
@@ -240,7 +252,7 @@ export function QuantumPage() {
         ...countryRow,
         dashboards: countryRow.dashboards.map((dashboard, index) => ({
           ...dashboard,
-          is_default: index === dashboardIndex,
+          is_default: checked ? index === dashboardIndex : false,
         })),
       };
     });
@@ -250,7 +262,7 @@ export function QuantumPage() {
   function updateWidget(
     countryIndex: number,
     dashboardIndex: number,
-    role: string,
+    widgetKey: string,
     enabled: boolean,
   ) {
     if (!current) return;
@@ -263,7 +275,9 @@ export function QuantumPage() {
             ? {
                 ...dashboard,
                 widgets: dashboard.widgets.map((widget) =>
-                  widget.role === role ? { ...widget, enabled } : widget,
+                  widgetKeyFor(widget) === widgetKey
+                    ? { ...widget, enabled }
+                    : widget,
                 ),
               }
             : dashboard,
@@ -275,7 +289,7 @@ export function QuantumPage() {
 
   function onSubmit(event: FormEvent) {
     event.preventDefault();
-    if (!current) return;
+    if (!current || !canSaveConfig) return;
     save.mutate({
       ...current,
       country: defaultCountryExists
@@ -539,186 +553,149 @@ export function QuantumPage() {
             </h2>
           </div>
           <div className="dashboard-config-list">
-            {countryRows.map((row, countryIndex) => (
-              <article className="dashboard-config-item" key={row.country}>
-                <header>
-                  <div>
-                    <span className="eyebrow">Pais</span>
-                    <strong>{countryLabel(row.country)}</strong>
-                  </div>
-                  <button
-                    className="command-button"
-                    type="button"
-                    onClick={() => addManualDashboard(countryIndex)}
-                  >
-                    <Plus size={16} /> Dashboard manual
-                  </button>
-                </header>
-                {row.dashboards.length ? (
-                  <div className="dashboard-card-stack">
-                    {row.dashboards.map((dashboard, dashboardIndex) => (
-                      <section
-                        className="dashboard-config-card"
-                        key={`${row.country}-${dashboard.dashboard_id || dashboardIndex}`}
-                      >
-                        <div className="dashboard-config-card-header">
-                          <div>
-                            <span className="eyebrow">
-                              {dashboard.is_manual ? "Manual" : "Default"}
-                            </span>
-                            <h3>
-                              {dashboard.name ||
-                                (dashboard.is_manual
-                                  ? "Dashboard manual"
-                                  : "Dashboard default")}
-                            </h3>
-                          </div>
-                          <span
-                            className={`status ${
-                              dashboard.validated ? "ok" : "ko"
-                            }`}
-                          >
-                            {dashboard.validated ? "Validado" : "Pendiente"}
+            {countryRows.map((row, countryIndex) => {
+              const selectedDashboard =
+                row.dashboards.find((dashboard) => dashboard.is_default) ??
+                row.dashboards[0];
+              const selectedDashboardIndex = selectedDashboard
+                ? row.dashboards.findIndex(
+                    (dashboard) =>
+                      dashboard.dashboard_id === selectedDashboard.dashboard_id,
+                  )
+                : -1;
+              return (
+                <article className="dashboard-config-item" key={row.country}>
+                  <header>
+                    <div>
+                      <span className="eyebrow">Pais</span>
+                      <strong>{countryLabel(row.country)}</strong>
+                    </div>
+                    <button
+                      className="command-button"
+                      type="button"
+                      disabled={!row.base_url || testCountry.isPending}
+                      onClick={() => testCountry.mutate(row.country)}
+                    >
+                      <RefreshCw size={16} /> Actualizar dashboards
+                    </button>
+                  </header>
+
+                  <label className="field">
+                    <span>Dashboard</span>
+                    <select
+                      value={selectedDashboard?.dashboard_id ?? ""}
+                      aria-label={`Dashboard ${row.country}`}
+                      onChange={(event) =>
+                        selectDashboard(countryIndex, event.target.value)
+                      }
+                    >
+                      <option value="" disabled>
+                        Selecciona un dashboard
+                      </option>
+                      {row.dashboards.map((dashboard) => (
+                        <option
+                          key={dashboard.dashboard_id}
+                          value={dashboard.dashboard_id}
+                        >
+                          {dashboard.name || dashboard.dashboard_id}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  {selectedDashboard ? (
+                    <section className="dashboard-config-card">
+                      <div className="dashboard-config-card-header">
+                        <div>
+                          <span className="eyebrow">
+                            {selectedDashboard.source ?? "config_cache"}
                           </span>
+                          <h3>
+                            {selectedDashboard.name ||
+                              selectedDashboard.dashboard_id}
+                          </h3>
                         </div>
-                        <div className="dashboard-fields-grid">
-                          <label className="field">
-                            <span>Dashboard ID</span>
-                            <input
-                              value={dashboard.dashboard_id}
-                              readOnly={
-                                !dashboard.is_manual || dashboard.validated
-                              }
-                              onChange={(event) =>
-                                updateDashboard(countryIndex, dashboardIndex, {
-                                  dashboard_id: event.target.value,
-                                  validated: false,
-                                  validation_status: "not_tested",
-                                })
-                              }
-                            />
-                          </label>
-                          <label className="field">
-                            <span>Nombre</span>
-                            <input
-                              value={dashboard.name}
-                              onChange={(event) =>
-                                updateDashboard(countryIndex, dashboardIndex, {
-                                  name: event.target.value,
-                                })
-                              }
-                            />
-                          </label>
-                          <label className="field">
-                            <span>Tipo</span>
-                            <input value={dashboard.dashboard_type} readOnly />
-                          </label>
-                          <label className="field">
-                            <span>Team ID</span>
-                            <input value={dashboard.team_id} readOnly />
-                          </label>
-                        </div>
-                        <div className="config-row-actions dashboard-actions-row">
-                          <label className="config-default-toggle">
-                            <input
-                              type="checkbox"
-                              checked={dashboard.is_default}
-                              onChange={(event) =>
-                                event.target.checked
-                                  ? setDefaultDashboard(
-                                      countryIndex,
-                                      dashboardIndex,
-                                    )
-                                  : undefined
-                              }
-                            />
-                            <span>Default del pais</span>
-                          </label>
-                          {dashboard.is_manual && !dashboard.validated && (
-                            <button
-                              className="command-button"
-                              type="button"
-                              disabled={
-                                !dashboard.dashboard_id ||
-                                testDashboard.isPending
-                              }
-                              onClick={() =>
-                                testDashboard.mutate({
-                                  country: row.country,
-                                  dashboardId: dashboard.dashboard_id,
-                                })
-                              }
-                            >
-                              <RefreshCw size={16} /> Test dashboard
-                            </button>
-                          )}
-                          {dashboard.is_manual && (
-                            <button
-                              className="icon-button danger"
-                              type="button"
-                              aria-label="Borrar dashboard manual"
-                              title="Borrar dashboard manual"
-                              onClick={() =>
-                                removeDashboard(countryIndex, dashboardIndex)
-                              }
-                            >
-                              <Trash2 size={16} />
-                            </button>
-                          )}
-                        </div>
-                        <div className="widget-config-section-grid">
-                          {WIDGET_CONFIG_GROUPS.map((group) => {
-                            const widgets = dashboard.widgets.filter(
-                              (widget) => widget.tab === group.tab,
-                            );
-                            return (
-                              <section
-                                className="widget-config-group"
-                                key={`${row.country}-${dashboardIndex}-${group.title}`}
-                              >
-                                <h4>{group.title}</h4>
-                                <div className="widget-config-grid">
-                                  {widgets.map((widget) => (
-                                    <label
-                                      className="widget-config-row"
-                                      key={`${dashboard.dashboard_id}-${widget.role}`}
-                                    >
-                                      <input
-                                        type="checkbox"
-                                        checked={widget.enabled}
-                                        onChange={(event) =>
-                                          updateWidget(
-                                            countryIndex,
-                                            dashboardIndex,
-                                            widget.role,
-                                            event.target.checked,
-                                          )
-                                        }
-                                      />
-                                      <span>
-                                        <strong>{widget.title}</strong>
-                                        <small>
-                                          id: {widget.widget_id || widget.role}
-                                        </small>
-                                      </span>
-                                      <em>{widget.widget_type}</em>
-                                    </label>
-                                  ))}
-                                </div>
-                              </section>
-                            );
-                          })}
-                        </div>
-                      </section>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="empty compact">
-                    Ejecuta Test pais o anade un dashboard manual.
-                  </div>
-                )}
-              </article>
-            ))}
+                        <span
+                          className={`status ${
+                            selectedDashboard.validated ? "ok" : "ko"
+                          }`}
+                        >
+                          {selectedDashboard.validated
+                            ? "Validado"
+                            : "Pendiente"}
+                        </span>
+                      </div>
+                      <div className="dashboard-fields-grid">
+                        <label className="field">
+                          <span>Dashboard ID</span>
+                          <input
+                            value={selectedDashboard.dashboard_id}
+                            readOnly
+                          />
+                        </label>
+                        <label className="field">
+                          <span>Nombre</span>
+                          <input value={selectedDashboard.name} readOnly />
+                        </label>
+                        <label className="field">
+                          <span>Tipo</span>
+                          <input
+                            value={selectedDashboard.dashboard_type}
+                            readOnly
+                          />
+                        </label>
+                        <label className="field">
+                          <span>Team ID</span>
+                          <input value={selectedDashboard.team_id} readOnly />
+                        </label>
+                      </div>
+                      <div className="config-row-actions dashboard-actions-row">
+                        <label className="config-default-toggle">
+                          <input
+                            type="checkbox"
+                            checked={selectedDashboard.is_default}
+                            onChange={(event) =>
+                              setDefaultDashboard(
+                                countryIndex,
+                                selectedDashboardIndex,
+                                event.target.checked,
+                              )
+                            }
+                          />
+                          <span>Default del pais</span>
+                        </label>
+                        <button
+                          className="command-button"
+                          type="button"
+                          disabled={
+                            !selectedDashboard.dashboard_id ||
+                            loadDashboardStructure.isPending
+                          }
+                          onClick={() =>
+                            loadDashboardStructure.mutate({
+                              country: row.country,
+                              dashboardId: selectedDashboard.dashboard_id,
+                            })
+                          }
+                        >
+                          <RefreshCw size={16} /> Actualizar widgets
+                        </button>
+                      </div>
+                      <WidgetGroups
+                        dashboard={selectedDashboard}
+                        countryIndex={countryIndex}
+                        dashboardIndex={selectedDashboardIndex}
+                        onToggle={updateWidget}
+                      />
+                    </section>
+                  ) : (
+                    <div className="empty compact">
+                      Actualiza dashboards para seleccionar el default del pais.
+                    </div>
+                  )}
+                </article>
+              );
+            })}
           </div>
         </section>
 
@@ -736,10 +713,16 @@ export function QuantumPage() {
         )}
 
         <div className="config-actions">
+          {countriesMissingDefault.length ? (
+            <span className="status ko">
+              Selecciona un dashboard default para{" "}
+              {countriesMissingDefault.map((row) => row.country).join(", ")}
+            </span>
+          ) : null}
           <button
             className="button"
             type="submit"
-            disabled={save.isPending || !countryRows.length || depthDaysInvalid}
+            disabled={save.isPending || !canSaveConfig}
           >
             <Save size={16} /> Guardar
           </button>
@@ -749,16 +732,112 @@ export function QuantumPage() {
   );
 }
 
-const WIDGET_CONFIG_GROUPS = [
-  {
-    title: "Resumen",
-    tab: "summary" as const,
-  },
-  {
-    title: "Errores",
-    tab: "errors" as const,
-  },
-];
+function WidgetGroups({
+  dashboard,
+  countryIndex,
+  dashboardIndex,
+  onToggle,
+}: {
+  dashboard: QuantumDashboardConfig;
+  countryIndex: number;
+  dashboardIndex: number;
+  onToggle: (
+    countryIndex: number,
+    dashboardIndex: number,
+    widgetKey: string,
+    enabled: boolean,
+  ) => void;
+}) {
+  const groups = dashboardWidgetGroups(dashboard);
+  return (
+    <div className="widget-config-section-grid">
+      {groups.map((group) => (
+        <section
+          className="widget-config-group"
+          key={`${dashboard.dashboard_id}-${group.tabIndex}-${group.title}`}
+        >
+          <h4>{group.title}</h4>
+          <div className="widget-config-grid">
+            {group.widgets.map((widget) => {
+              const supported = widget.supported ?? Boolean(widget.role);
+              return (
+                <label
+                  className="widget-config-row"
+                  key={`${dashboard.dashboard_id}-${widgetKeyFor(widget)}`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={widget.enabled && supported}
+                    disabled={!supported}
+                    onChange={(event) =>
+                      onToggle(
+                        countryIndex,
+                        dashboardIndex,
+                        widgetKeyFor(widget),
+                        event.target.checked,
+                      )
+                    }
+                  />
+                  <span>
+                    <strong>{widget.title}</strong>
+                    <small>
+                      id:{" "}
+                      {widget.widget_id || widget.card_id || widget.role || "-"}
+                    </small>
+                  </span>
+                  <em>
+                    {widget.widget_type}
+                    {supported ? "" : " · no soportado"}
+                  </em>
+                </label>
+              );
+            })}
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+function dashboardWidgetGroups(dashboard: QuantumDashboardConfig) {
+  const tabs = dashboard.tabs?.length
+    ? dashboard.tabs
+    : tabsFromWidgets(dashboard.widgets);
+  return tabs.map((tab) => ({
+    title: tab.name,
+    tabIndex: tab.tab_index,
+    widgets: dashboard.widgets.filter(
+      (widget) =>
+        widget.tab_index === tab.tab_index ||
+        widget.tab_name === tab.name ||
+        widget.tab === tab.normalized_role,
+    ),
+  }));
+}
+
+function tabsFromWidgets(
+  widgets: QuantumWidgetConfig[],
+): QuantumDashboardTabConfig[] {
+  const byKey = new Map<string, QuantumDashboardTabConfig>();
+  widgets.forEach((widget) => {
+    const tabName = widget.tab_name || widget.tab || "Tab";
+    const key = `${widget.tab_index}-${tabName}`;
+    if (!byKey.has(key)) {
+      byKey.set(key, {
+        tab_index: widget.tab_index,
+        name: tabName,
+        normalized_role: widget.tab,
+      });
+    }
+  });
+  return Array.from(byKey.values()).sort(
+    (left, right) => left.tab_index - right.tab_index,
+  );
+}
+
+function widgetKeyFor(widget: QuantumWidgetConfig) {
+  return widget.role || widget.widget_id || widget.card_id || widget.title;
+}
 
 function emptyCountryConfig(
   country: CountryCode,
@@ -773,62 +852,58 @@ function emptyCountryConfig(
   };
 }
 
-function emptyDashboardConfig(): QuantumDashboardConfig {
-  return {
-    dashboard_id: "",
-    name: "Dashboard manual",
-    dashboard_type: "Quantum dashboard",
-    team_id: "",
-    summary_tab: 0,
-    errors_tab: 1,
-    is_default: false,
-    is_manual: true,
-    validated: false,
-    validation_status: "not_tested",
-    widgets: defaultWidgetConfig(),
-  };
-}
-
 function defaultWidgetConfig(): QuantumWidgetConfig[] {
   return [
-    widget("summary.page_views", "Paginas vistas", "CHART", "summary"),
-    widget("summary.sessions", "Sesiones", "CHART", "summary"),
+    widget("summary.page_views", "Paginas vistas", "CHART", "summary", 0),
+    widget("summary.sessions", "Sesiones", "CHART", "summary", 0),
     widget(
       "summary.converted_sessions",
       "Sesiones con conversion",
       "CHART",
       "summary",
+      0,
     ),
     widget(
       "summary.avg_session_duration",
       "Tiempo medio de sesion",
       "CHART",
       "summary",
+      0,
     ),
     widget(
       "summary.detail_by_app_name_os",
       "Detalle App Name / SO",
       "TABLE",
       "summary",
+      0,
     ),
     widget(
       "errors.error_sessions_percentage_evolution",
       "% sesiones con error",
       "CHART",
       "errors",
+      1,
     ),
-    widget("errors.top_errors_by_error_name", "Top errores", "TABLE", "errors"),
+    widget(
+      "errors.top_errors_by_error_name",
+      "Top errores",
+      "TABLE",
+      "errors",
+      1,
+    ),
     widget(
       "errors.error_sessions_by_app_name_comparison",
       "Comparativa App Name",
       "DONUT",
       "errors",
+      1,
     ),
     widget(
       "errors.error_session_percentage_by_app_name",
       "% error por App Name",
       "TABLE",
       "errors",
+      1,
     ),
   ];
 }
@@ -837,7 +912,8 @@ function widget(
   role: string,
   title: string,
   widgetType: QuantumWidgetConfig["widget_type"],
-  tab: QuantumWidgetConfig["tab"],
+  tab: string,
+  tabIndex: number,
 ): QuantumWidgetConfig {
   return {
     role,
@@ -845,7 +921,12 @@ function widget(
     widget_id: `role:${role}`,
     widget_type: widgetType,
     tab,
+    tab_name: tab === "summary" ? "Resumen" : "Errores",
+    tab_index: tabIndex,
     enabled: true,
+    required: true,
+    supported: true,
+    source: "config_cache",
   };
 }
 
@@ -853,17 +934,30 @@ function normalizeDashboards(
   dashboards: QuantumDashboardConfig[] = [],
 ): QuantumDashboardConfig[] {
   if (!dashboards.length) return dashboards;
-  const defaultIndex = dashboards.findIndex(
-    (dashboard) => dashboard.is_default,
-  );
-  const resolvedDefault = defaultIndex >= 0 ? defaultIndex : 0;
-  return dashboards.map((dashboard, index) => ({
-    ...dashboard,
-    is_default: index === resolvedDefault,
-    widgets: dashboard.widgets?.length
+  let defaultSeen = false;
+  return dashboards.map((dashboard) => {
+    const isDefault = dashboard.is_default && !defaultSeen;
+    if (isDefault) defaultSeen = true;
+    const widgets = dashboard.widgets?.length
       ? dashboard.widgets
-      : defaultWidgetConfig(),
-  }));
+      : defaultWidgetConfig();
+    return {
+      ...dashboard,
+      name: isLegacyGeneratedName(dashboard)
+        ? dashboard.dashboard_id
+        : dashboard.name,
+      is_default: isDefault,
+      tabs: dashboard.tabs?.length ? dashboard.tabs : tabsFromWidgets(widgets),
+      widgets,
+    };
+  });
+}
+
+function isLegacyGeneratedName(dashboard: QuantumDashboardConfig) {
+  return (
+    dashboard.name === ["Dashboard", "default"].join(" ") &&
+    Boolean(dashboard.dashboard_id)
+  );
 }
 
 type LegacyCountryConfig = Partial<QuantumCountryConfig> & {
@@ -914,7 +1008,7 @@ function legacyDashboardConfig(
   return [
     {
       dashboard_id: row.dashboard_id,
-      name: "Dashboard default",
+      name: row.dashboard_id,
       dashboard_type: "Quantum dashboard",
       team_id: row.team_id ?? "",
       summary_tab: row.tab ?? 0,
@@ -923,6 +1017,8 @@ function legacyDashboardConfig(
       is_manual: false,
       validated: true,
       validation_status: "ok",
+      source: "config_cache",
+      tabs: [],
       widgets: defaultWidgetConfig(),
     },
   ];

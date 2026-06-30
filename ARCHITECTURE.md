@@ -29,6 +29,8 @@ Playwright ni clientes HTTP externos.
 
 - `catalog.py`: catalogo obligatorio de nueve roles visuales para Resumen y Errores.
 - `discovery.py`: resolucion interna de dashboard, team y tabs desde `.env`, config o URL.
+- `dashboard_discovery.py`: descubrimiento/cache de dashboards por pais desde payloads reales de Quantum Web.
+- `dashboard_structure.py`: normalizacion de tabs, widgets, card IDs y tipos por dashboard.
 - `capture.py`: captura guiada de tabs Resumen y Errores.
 - `card_mapper.py`: asociacion de llamadas Quantum a roles visuales.
 - `parsers.py`: estrategias por rol visual, con `chart_payload` cuando la respuesta trae puntos.
@@ -43,12 +45,12 @@ Playwright ni clientes HTTP externos.
 
 1. El usuario lanza una ingesta desde la seccion Ingesta.
 2. Se abre un contexto Playwright efimero con cookies en memoria.
-3. Se resuelve dashboard/team/tabs internamente.
+3. Se resuelve el dashboard default del pais desde configuracion.
 4. Se navega `Resumen` y `Errores`.
 5. Se capturan respuestas reales de `/analytics` y `/analytics/historical`.
 6. Se guardan raw calls normalizadas, particiones diarias y manifests en Parquet dentro de la ruta persistente.
 7. Se generan contratos visuales, snapshots web, datasets derivados y `derived/chart_payloads`.
-8. Se ejecuta regresion Web vs Local solo para widgets habilitados.
+8. Se ejecuta regresion Web vs Local solo para widgets soportados y habilitados.
 9. La ingesta solo termina `completed` si la regresion pasa.
 
 La politica de rango usa `QUANTUM_INGESTION_DEPTH_DAYS` como Profundidad por defecto del boton `Ingestar`, mas `QUANTUM_INCREMENTAL_REPROCESS_DAYS` y `QUANTUM_INGESTION_CHUNK_DAYS`. El planner divide ventanas largas en chunks y el rewriter aplica el rango activo a payloads Quantum antes de persistir.
@@ -72,7 +74,7 @@ Las cards graficas no se renderizan desde agregados. Backend persiste `ChartPayl
 
 ## Datasets Auditables
 
-Datasets expone entidades Parquet por pais mediante `/api/datasets/{country}/entities` y `/api/datasets/{country}/entities/{entity}`. Las entidades incluyen categoria, dashboard ID y widget role. Las respuestas son paginadas; RAW completo solo se lee bajo demanda. Export/import incluye `config/quantum_config.json` y datos Parquet, rechazando secretos y rutas peligrosas. `/api/datasets/{country}/evidence` expone la cadena Web -> RAW -> derived -> API.
+Datasets expone entidades Parquet por pais mediante `/api/datasets/{country}/entities` y `/api/datasets/{country}/entities/{entity}`. Las entidades incluyen categoria, dashboard ID, dashboard name, widget ID y widget role. Las respuestas son paginadas; RAW completo solo se lee bajo demanda. Export/import incluye `config/quantum_config.json`, `config/dashboards.json` y datos Parquet, rechazando secretos y rutas peligrosas. `/api/datasets/{country}/evidence` expone la cadena Web -> RAW -> derived -> API.
 
 Los derivados por rango se guardan bajo `parquet/country=<pais>/range_key=<range>/derived`.
 `today` conserva tambien la publicacion legacy para compatibilidad, pero los endpoints locales
@@ -82,7 +84,7 @@ filtran por `range_key` cuando se consulta un preset.
 
 `backend/app/quantum/config_store.py` escribe `config/quantum_config.json` de forma atomica con schema version. El modelo contiene paises, dashboards, widgets, tema, browser, modo de sesion y profundidad de ingesta. Cookies y Authorization nunca se persisten.
 
-El modo de sesion por defecto es `controlled`, con perfil Playwright propio de la app. El modo
+Cada pais activo requiere un dashboard default validado para guardar configuracion e ingestar. Si una API local recibe `dashboard_id`, filtra por ese dashboard; si se omite, resuelve el default del pais. El modo de sesion por defecto es `controlled`, con perfil Playwright propio de la app. El modo
 `browser` queda como compatibilidad legacy y se migra a `controlled` al leer configuracion.
 
 ## Offline

@@ -61,10 +61,13 @@ def build_derived_datasets(
     raw_calls: list[dict[str, Any]] | None = None,
     ingestion_id: str | None = None,
     enabled_roles: set[str] | list[str] | None = None,
+    dashboard_id: str | None = None,
+    dashboard_name: str | None = None,
     range_key: str = "today",
 ) -> DerivedBuildResult:
     calls = raw_calls if raw_calls is not None else _read_raw_calls(store, country, range_key)
     calls = _filter_calls_for_range(calls, range_key)
+    calls = _filter_calls_for_dashboard(calls, dashboard_id)
     enabled_role_set: set[str] = (
         set(enabled_roles)
         if enabled_roles is not None
@@ -91,7 +94,15 @@ def build_derived_datasets(
     parser_errors: list[dict[str, str]] = []
 
     for role, call in selected.items():
-        contract = _contract_from_call(country, role, call, now, range_key=range_key)
+        contract = _contract_from_call(
+            country,
+            role,
+            call,
+            now,
+            range_key=range_key,
+            dashboard_id=dashboard_id,
+            dashboard_name=dashboard_name,
+        )
         result = parse_card(call, role)
         if result.status != "ok":
             parser_errors.append(
@@ -424,6 +435,8 @@ def _contract_from_call(
     discovered_at: str,
     *,
     range_key: str,
+    dashboard_id: str | None = None,
+    dashboard_name: str | None = None,
 ) -> CardContract:
     spec = ROLE_SPECS[role]
     request_json = parse_json_object(call.get("request_json"))
@@ -437,9 +450,12 @@ def _contract_from_call(
         period.get("end") if period else _text(call.get("range_end")),
         (period.get("timezone") if period else None) or _text(call.get("range_timezone")) or "CST",
     )
+    card_id = _text(call.get("card_id") or metadata.get("cardId")) or f"mapped:{role}"
+    tab_index = _int(call.get("tab_index"), 0 if spec.tab == "summary" else 1)
     return CardContract(
         country=country,
-        dashboard_id=_text(call.get("dashboard_id") or metadata.get("dashboardId")),
+        dashboard_id=dashboard_id or _text(call.get("dashboard_id") or metadata.get("dashboardId")),
+        dashboard_name=dashboard_name or _text(call.get("dashboard_name")),
         team_id=_text(call.get("team_id") or metadata.get("teamId") or metadata.get("teamID")),
         range_key=_text(call.get("range_key")) or range_key,
         range_start=_text(call.get("range_start") or call.get("source_ts_start")),
@@ -451,7 +467,9 @@ def _contract_from_call(
         source_response_hash=_text(call.get("response_hash")) or hash_json(response_json),
         tab=spec.tab,
         tab_name="Resumen" if spec.tab == "summary" else "Errores",
-        card_id=_text(call.get("card_id") or metadata.get("cardId")) or f"mapped:{role}",
+        tab_index=tab_index,
+        widget_id=_text(call.get("widget_id")) or card_id,
+        card_id=card_id,
         card_title=card_title_for_role(role, call),
         card_type=_text(call.get("card_type") or metadata.get("cardType")) or spec.card_type,
         visual_role=role,
@@ -505,6 +523,7 @@ def _snapshot_from_result(
         ingestion_id=str(call.get("ingestion_id") or ""),
         country=country,
         dashboard_id=contract.dashboard_id,
+        dashboard_name=contract.dashboard_name,
         team_id=contract.team_id,
         range_key=contract.range_key,
         range_start=contract.range_start,
@@ -515,7 +534,9 @@ def _snapshot_from_result(
         source_response_hash=contract.source_response_hash,
         web_snapshot_hash=snapshot_hash,
         tab=contract.tab,
+        tab_index=contract.tab_index,
         card_role=contract.visual_role,
+        widget_id=contract.widget_id,
         card_title=contract.card_title,
         visible_value=visible_value,
         visible_breakdowns=_list_of_dicts(widget.get("breakdown") or widget.get("series")),
@@ -551,6 +572,13 @@ def _append_derived_rows(
             timeseries_rows.append(
                 {
                     "country": contract.country,
+                    "dashboard_id": contract.dashboard_id,
+                    "dashboard_name": contract.dashboard_name,
+                    "widget_id": contract.widget_id,
+                    "card_id": contract.card_id,
+                    "widget_type": contract.card_type,
+                    "tab_name": contract.tab_name,
+                    "tab_index": contract.tab_index,
                     "range_key": contract.range_key,
                     "range_start": contract.range_start,
                     "range_end": contract.range_end,
@@ -570,6 +598,13 @@ def _append_derived_rows(
             row = {
                 **item,
                 "country": contract.country,
+                "dashboard_id": contract.dashboard_id,
+                "dashboard_name": contract.dashboard_name,
+                "widget_id": contract.widget_id,
+                "card_id": contract.card_id,
+                "widget_type": contract.card_type,
+                "tab_name": contract.tab_name,
+                "tab_index": contract.tab_index,
                 "range_key": contract.range_key,
                 "range_start": contract.range_start,
                 "range_end": contract.range_end,
@@ -611,6 +646,13 @@ def _widget_row(contract: CardContract, widget: dict[str, Any]) -> dict[str, Any
     metric_id = str(widget.get("id") or contract.visual_role.split(".")[-1])
     return {
         "country": contract.country,
+        "dashboard_id": contract.dashboard_id,
+        "dashboard_name": contract.dashboard_name,
+        "widget_id": contract.widget_id,
+        "card_id": contract.card_id,
+        "widget_type": contract.card_type,
+        "tab_name": contract.tab_name,
+        "tab_index": contract.tab_index,
         "range_key": contract.range_key,
         "range_start": contract.range_start,
         "range_end": contract.range_end,
@@ -660,14 +702,19 @@ def _chart_payload_row(
         "country": contract.country,
         "ingestion_id": "",
         "dashboard_id": contract.dashboard_id,
+        "dashboard_name": contract.dashboard_name,
         "team_id": contract.team_id,
+        "widget_id": contract.widget_id,
         "range_key": contract.range_key,
         "range_start": contract.range_start,
         "range_end": contract.range_end,
         "range_timezone": contract.range_timezone,
         "capture_mode": contract.capture_mode,
         "tab": contract.tab,
+        "tab_name": contract.tab_name,
+        "tab_index": contract.tab_index,
         "card_id": contract.card_id,
+        "widget_type": contract.card_type,
         "card_role": contract.visual_role,
         "card_title": contract.card_title,
         "chart_type": payload.get("chart_type"),
@@ -723,7 +770,9 @@ def _dashboard_card_row(contract: CardContract) -> dict[str, Any]:
     return {
         "country": contract.country,
         "dashboard_id": contract.dashboard_id,
+        "dashboard_name": contract.dashboard_name,
         "team_id": contract.team_id,
+        "widget_id": contract.widget_id,
         "range_key": contract.range_key,
         "range_start": contract.range_start,
         "range_end": contract.range_end,
@@ -734,6 +783,7 @@ def _dashboard_card_row(contract: CardContract) -> dict[str, Any]:
         "web_snapshot_hash": contract.web_snapshot_hash,
         "tab": contract.tab,
         "tab_name": contract.tab_name,
+        "tab_index": contract.tab_index,
         "card_id": contract.card_id,
         "card_title": contract.card_title,
         "card_role": contract.visual_role,
@@ -789,6 +839,19 @@ def _filter_calls_for_range(
         call for call in calls if _safe_range_key(_text(call.get("range_key")) or "today") == key
     ]
     return filtered
+
+
+def _filter_calls_for_dashboard(
+    calls: list[dict[str, Any]], dashboard_id: str | None
+) -> list[dict[str, Any]]:
+    if not dashboard_id:
+        return calls
+    return [
+        call
+        for call in calls
+        if _text(call.get("dashboard_id")) in {dashboard_id, None}
+        or _metadata(parse_json_object(call.get("request_json"))).get("dashboardId") == dashboard_id
+    ]
 
 
 def _safe_range_key(range_key: str | None) -> str:
@@ -916,6 +979,13 @@ def _text(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _int(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _period_label(start: Any, end: Any, timezone: Any) -> str | None:
