@@ -8,7 +8,6 @@ import pytest
 
 from backend.app.api import routes
 from backend.app.config.settings import Settings
-from backend.app.main import app
 from backend.app.quantum.schemas import (
     Country,
     QuantumCountryConfig,
@@ -330,7 +329,7 @@ def test_card_detail_filters_widgets_by_dashboard_id(tmp_path: Path) -> None:
 
 
 def test_iteration14_dashboard_resource_routes_are_exposed() -> None:
-    paths = {getattr(route, "path", "") for route in app.routes}
+    paths = {getattr(route, "path", "") for route in routes.router.routes}
 
     assert "/api/quantum/discover-dashboard" not in paths
     assert "/api/quantum/test-dashboard" not in paths
