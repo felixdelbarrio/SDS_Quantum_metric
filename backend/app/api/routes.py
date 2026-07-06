@@ -615,7 +615,7 @@ def add_manual_quantum_dashboard(
         "country": country_config.country.value,
         "dashboard": dashboard.model_dump(mode="json"),
         "structure": structure.model_dump(mode="json"),
-        "warning": error,
+        "warning": "Dashboard validation completed with limited diagnostics." if error else None,
     }
 
 
