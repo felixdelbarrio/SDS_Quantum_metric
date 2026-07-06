@@ -816,7 +816,7 @@ class LocalDashboardService:
             return {"dashboard_id": None, "dashboard_name": None}
         return {
             "dashboard_id": dashboard.dashboard_id or None,
-            "dashboard_name": dashboard.name or dashboard.dashboard_id or None,
+            "dashboard_name": dashboard.name or None,
         }
 
 

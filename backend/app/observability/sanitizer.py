@@ -33,4 +33,4 @@ def sanitize(value: Any) -> Any:
 
 
 def sanitize_error(exc: BaseException) -> str:
-    return redact_text(str(exc))[:500]
+    return "An internal error occurred while processing the request."

@@ -27,3 +27,9 @@ Widgets:
 Los widgets sin parser quedan visibles como no soportados y no se activan por defecto.
 
 `entity.tabs` puede llegar serializado como JSON. Los widgets reales se extraen de `layoutCardsMap` y se ordenan con el `layout` del tab.
+
+## Iteracion 14
+
+La UI agrupa widgets por `tab_id` cuando existe; si no, por `tab_name` y finalmente por
+`normalized_role`. Un `tab_index` por si solo no basta para mezclar widgets entre tabs.
+Los widgets sin tab recuperable se muestran bajo `Sin pestana`.

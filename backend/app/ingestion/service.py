@@ -282,6 +282,11 @@ class IngestionService:
                         **row,
                         "dashboard_id": row.get("dashboard_id") or discovery.dashboard_id,
                         "dashboard_name": dashboard.name,
+                        "dashboard_source": dashboard.source,
+                        "team_id": row.get("team_id") or dashboard.team_id or discovery.team_id,
+                        "widget_id": row.get("widget_id") or row.get("card_id"),
+                        "widget_type": row.get("widget_type") or row.get("card_type"),
+                        "visual_role": row.get("visual_role") or row.get("card_role"),
                     }
                     for row in captured
                 ]

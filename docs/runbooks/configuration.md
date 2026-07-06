@@ -3,9 +3,15 @@
 1. Abrir Configuracion.
 2. Elegir pais y Base URL.
 3. Usar `Actualizar dashboards`.
-4. Seleccionar el dashboard real en el combo.
-5. Verificar que `Default del pais` esta marcado.
-6. Usar `Actualizar widgets` si se necesita refrescar tabs/widgets.
-7. Guardar.
+4. Confirmar que el combo muestra nombres y que el valor interno es el dashboard ID.
+5. Seleccionar el dashboard real en el combo.
+6. Usar `Anadir dashboard manual` si el dashboard no viene de la API.
+7. Validar el dashboard manual antes de marcarlo como default.
+8. Verificar que `Default del pais` esta marcado.
+9. Usar `Actualizar widgets` si se necesita refrescar tabs/widgets.
+10. Guardar.
 
 Si no hay default, la aplicacion no permite guardar.
+
+La lista de dashboards se cachea en `config/dashboard_resources/<country>.json`.
+`Actualizar dashboards` fuerza una nueva llamada GraphQL `resourcesList`; abrir Configuracion usa cache/config local.

@@ -96,6 +96,16 @@
   --semantic-warning: #ad6b00;
   --shadow-soft: 0 14px 42px rgba(7, 14, 70, 0.1);
   --shadow-panel: -18px 0 48px rgba(7, 14, 70, 0.18);
+  --config-panel-surface: var(--color-panel);
+  --config-panel-border: var(--color-border);
+  --config-panel-shadow: var(--shadow-soft);
+  --config-grid-gap: var(--space-3);
+  --config-control-height: 42px;
+  --config-widget-card-surface: var(--color-chip-bg);
+  --config-widget-card-border: var(--color-border);
+  --config-status-valid: var(--color-status-ok-bg);
+  --config-status-warning: var(--semantic-warning);
+  --config-status-error: var(--color-status-ko-bg);
 }
 
 [data-theme="dark"] {
@@ -162,4 +172,14 @@
   --semantic-warning: #ffd27a;
   --shadow-soft: 0 14px 42px rgba(0, 0, 0, 0.28);
   --shadow-panel: -18px 0 48px rgba(0, 0, 0, 0.34);
+  --config-panel-surface: var(--color-panel);
+  --config-panel-border: var(--color-border);
+  --config-panel-shadow: var(--shadow-soft);
+  --config-grid-gap: var(--space-3);
+  --config-control-height: 42px;
+  --config-widget-card-surface: var(--color-chip-bg);
+  --config-widget-card-border: var(--color-border);
+  --config-status-valid: var(--color-status-ok-bg);
+  --config-status-warning: var(--semantic-warning);
+  --config-status-error: var(--color-status-ko-bg);
 }
