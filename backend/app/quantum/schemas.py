@@ -136,8 +136,8 @@ class QuantumDashboardConfig(BaseModel):
 
     @model_validator(mode="after")
     def _seed_widgets(self) -> QuantumDashboardConfig:
-        if _is_legacy_generated_dashboard_name(self.name) and self.dashboard_id:
-            self.name = self.dashboard_id
+        if _is_legacy_generated_dashboard_name(self.name, self.dashboard_id):
+            self.name = ""
         if not self.tabs and self.widgets:
             self.tabs = _tabs_from_widgets(self.widgets)
         return self
@@ -170,7 +170,7 @@ class QuantumCountryConfig(BaseModel):
             self.dashboards = [
                 QuantumDashboardConfig(
                     dashboard_id=self.dashboard_id,
-                    name=self.dashboard_id,
+                    name="",
                     team_id=self.team_id,
                     summary_tab=self.tab,
                     errors_tab=1,
@@ -183,8 +183,8 @@ class QuantumCountryConfig(BaseModel):
         normalized: list[QuantumDashboardConfig] = []
         for dashboard in self.dashboards:
             next_dashboard = dashboard
-            if _is_legacy_generated_dashboard_name(dashboard.name) and dashboard.dashboard_id:
-                next_dashboard = next_dashboard.model_copy(update={"name": dashboard.dashboard_id})
+            if _is_legacy_generated_dashboard_name(dashboard.name, dashboard.dashboard_id):
+                next_dashboard = next_dashboard.model_copy(update={"name": ""})
             if next_dashboard.is_default:
                 if default_seen:
                     next_dashboard = next_dashboard.model_copy(update={"is_default": False})
@@ -463,8 +463,10 @@ def _tab_label(tab: str) -> str:
     return tab or "Tab"
 
 
-def _is_legacy_generated_dashboard_name(value: str) -> bool:
-    return value == " ".join(("Dashboard", "default"))
+def _is_legacy_generated_dashboard_name(value: str, dashboard_id: str = "") -> bool:
+    return bool(dashboard_id and value == dashboard_id) or value == " ".join(
+        ("Dashboard", "default")
+    )
 
 
 def _first_text(values: list[str] | None, default: str) -> str:

@@ -25,7 +25,7 @@ from backend.app.quantum.schemas import (
 )
 from backend.app.quantum_dashboard.card_mapper import map_card_role
 from backend.app.quantum_dashboard.catalog import spec_for_role
-from backend.app.quantum_dashboard.dashboard_discovery import QUANTUM_GRAPHQL_ENDPOINT
+from backend.app.quantum_dashboard.dashboard_resources import QUANTUM_GRAPHQL_ENDPOINT
 
 StructureSource = Literal["quantum_api", "quantum_web", "config_cache"]
 WidgetKind = Literal["chart", "table", "donut", "unknown"]
@@ -198,7 +198,7 @@ def structure_from_dashboard_config(
     return QuantumDashboardStructure(
         country=country,
         dashboard_id=dashboard.dashboard_id,
-        dashboard_name=dashboard.name or dashboard.dashboard_id,
+        dashboard_name=dashboard.name or None,
         team_id=dashboard.team_id or None,
         source="config_cache",
         discovered_at=dashboard.last_structure_at or dashboard.discovered_at or datetime.now(UTC),

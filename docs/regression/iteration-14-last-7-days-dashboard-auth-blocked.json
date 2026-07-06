@@ -1,0 +1,9 @@
+{
+  "verdict": "BLOCKED",
+  "reason": "Quantum Web redirected to authentication during Playwright audit.",
+  "country": "MX",
+  "dashboard_id": null,
+  "dashboard_name": null,
+  "range_key": "last_7_days",
+  "widgets": []
+}

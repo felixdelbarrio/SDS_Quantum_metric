@@ -191,6 +191,8 @@ class ParquetStore:
         country: str,
         dataset_path: str,
         *,
+        dashboard_id: str | None = None,
+        widget_id: str | None = None,
         search: str | None = None,
         sort: str | None = None,
         direction: str = "asc",
@@ -211,6 +213,16 @@ class ParquetStore:
         frame = pl.scan_parquet([str(file) for file in files])
         schema = frame.collect_schema()
         columns = list(schema.names())
+        if dashboard_id and "dashboard_id" in columns:
+            frame = frame.filter(pl.col("dashboard_id").cast(pl.Utf8) == dashboard_id)
+        if widget_id:
+            predicates = []
+            if "widget_id" in columns:
+                predicates.append(pl.col("widget_id").cast(pl.Utf8) == widget_id)
+            if "card_id" in columns:
+                predicates.append(pl.col("card_id").cast(pl.Utf8) == widget_id)
+            if predicates:
+                frame = frame.filter(pl.any_horizontal(predicates))
         if search:
             predicates = [
                 pl.col(column).cast(pl.Utf8).str.contains(search, literal=True)

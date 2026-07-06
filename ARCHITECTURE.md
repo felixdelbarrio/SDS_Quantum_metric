@@ -30,7 +30,9 @@ Playwright ni clientes HTTP externos.
 - `catalog.py`: catalogo obligatorio de nueve roles visuales para Resumen y Errores.
 - `discovery.py`: resolucion interna de dashboard, team y tabs desde `.env`, config o URL.
 - `dashboard_discovery.py`: descubrimiento/cache de dashboards por pais desde payloads reales de Quantum Web.
+- `dashboard_resources.py`: contrato paginado `resourcesList`, cache offline por pais y parsing de recursos dashboard.
 - `dashboard_structure.py`: normalizacion de tabs, widgets, card IDs y tipos por dashboard.
+- `manual_dashboard.py`: parseo y validacion de dashboards manuales por URL o dashboard ID.
 - `capture.py`: captura guiada de tabs Resumen y Errores.
 - `card_mapper.py`: asociacion de llamadas Quantum a roles visuales.
 - `parsers.py`: estrategias por rol visual, con `chart_payload` cuando la respuesta trae puntos.
@@ -83,6 +85,11 @@ filtran por `range_key` cuando se consulta un preset.
 ## Configuracion persistente
 
 `backend/app/quantum/config_store.py` escribe `config/quantum_config.json` de forma atomica con schema version. El modelo contiene paises, dashboards, widgets, tema, browser, modo de sesion y profundidad de ingesta. Cookies y Authorization nunca se persisten.
+
+La lista offline de recursos dashboard vive en `config/dashboard_resources/<country>.json`.
+El cache guarda IDs, nombres, tipo, starred, source y timestamps; no guarda cookies ni
+Authorization. `POST /api/quantum/countries/{country}/dashboards/refresh` fuerza Quantum
+GraphQL y `GET /api/quantum/countries/{country}/dashboards` lee cache/config local.
 
 Cada pais activo requiere un dashboard default validado para guardar configuracion e ingestar. Si una API local recibe `dashboard_id`, filtra por ese dashboard; si se omite, resuelve el default del pais. El modo de sesion por defecto es `controlled`, con perfil Playwright propio de la app. El modo
 `browser` queda como compatibilidad legacy y se migra a `controlled` al leer configuracion.

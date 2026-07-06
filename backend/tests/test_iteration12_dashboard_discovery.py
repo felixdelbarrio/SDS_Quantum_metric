@@ -329,14 +329,15 @@ def test_card_detail_filters_widgets_by_dashboard_id(tmp_path: Path) -> None:
     assert detail["widget"]["dashboard_name"] == "Dashboard B"
 
 
-def test_manual_dashboard_routes_are_not_exposed() -> None:
+def test_iteration14_dashboard_resource_routes_are_exposed() -> None:
     paths = {getattr(route, "path", "") for route in app.routes}
 
     assert "/api/quantum/discover-dashboard" not in paths
     assert "/api/quantum/test-dashboard" not in paths
     assert "/api/quantum/dashboards" not in paths
-    assert "/api/quantum/dashboards/refresh" not in paths
     assert "/api/quantum/dashboards/structure" not in paths
+    assert "/api/quantum/countries/{country}/dashboards/refresh" in paths
+    assert "/api/quantum/countries/{country}/dashboards/manual" in paths
 
 
 def test_dataset_regression_route_forwards_dashboard_scope(

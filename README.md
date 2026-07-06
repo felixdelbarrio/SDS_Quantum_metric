@@ -24,10 +24,15 @@ make kill
 La app configura Quantum por pais con una pantalla funcional: browser, modo de sesion,
 Base URL, pais por defecto, descubrimiento real por pais, dashboards por pais,
 widgets con ID/tipo/enabled, apariencia, profundidad de ingesta y accion de guardar.
+Desde Iteracion 14 la pantalla se guia por un unico pais seleccionado; cambiar el combo
+de pais cambia dashboards, estructura y widgets visibles.
 
 Dashboard ID, Team ID, tabs, widget IDs y tipos se muestran cuando forman parte de la
 configuracion auditable. La lista de dashboards sale de Quantum Web mediante GraphQL
 `resourcesList` y los tabs/widgets del dashboard seleccionado salen de `LoadDashboard`.
+La lista se cachea localmente por pais para uso offline hasta pulsar `Actualizar dashboards`.
+Los dashboards manuales pueden darse de alta por URL o ID y se validan contra Quantum antes
+de ser default.
 La app no crea widgets por defecto ni permite guardar un pais activo sin dashboard default.
 
 `.env.example` incluye Mexico. Para Espana, Colombia, Argentina o Peru se anade una fila en
@@ -117,6 +122,9 @@ recarga Home: el dashboard debe seguir funcionando sobre Parquet local.
 - Descubrimiento de dashboards en `docs/to-be/iteration-12-dashboard-discovery.md`.
 - Fix de descubrimiento real en `docs/to-be/iteration-13-dashboard-discovery-fix.md`.
 - API de dashboards por pais en `docs/to-be/dashboard-list-api-contract.md`.
+- Resources GraphQL en `docs/to-be/graphql-dashboard-resources-contract.md`.
+- Configuracion Iteracion 14 en `docs/to-be/iteration-14-wow-configuration.md`.
+- Dashboards manuales en `docs/to-be/manual-dashboard-contract.md`.
 - Tabs/widgets reales en `docs/to-be/dashboard-tabs-widgets-contract.md`.
 - Contrato de dashboards en `docs/to-be/dashboard-discovery-contract.md`.
 - Contrato de tabs/widgets en `docs/to-be/dashboard-structure-contract.md`.

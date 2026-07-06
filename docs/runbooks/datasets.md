@@ -9,3 +9,9 @@ Cuando existe metadata de Iteracion 12:
 - Export incluye `config/quantum_config.json` y `config/dashboards.json`.
 
 Import restaura la configuracion completa desde `quantum_config.json`.
+
+Endpoints utiles:
+
+- `GET /api/datasets/{country}/dashboards`
+- `GET /api/datasets/{country}/entities?dashboard_id=...`
+- `GET /api/datasets/{country}/entities/{entity}?dashboard_id=...&widget_id=...`
