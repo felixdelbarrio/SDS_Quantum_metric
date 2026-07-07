@@ -1,0 +1,39 @@
+{
+  "country": "CO",
+  "base_url": "https://bbvaco.quantummetric.com",
+  "dashboard_id": "fccfa9f6-5d01-47cf-9ba6-b7bccd4d4f2b",
+  "dashboard_name": "SDS",
+  "team_id": "24feba5b-307d-40ed-83de-478111f8938e",
+  "range_key": "last_7_days",
+  "ingestion_id": "9f17f495-f2d0-4c13-a3a4-beefb3dcfe89",
+  "status": "PASSED",
+  "capture": {
+    "status": "completed",
+    "planned_chunks": 1,
+    "completed_chunks": 1,
+    "calls_captured": 45,
+    "rows_captured": 565,
+    "mandatory_cards_total": 1,
+    "mandatory_cards_captured": 1,
+    "derived_datasets": 1,
+    "regression_status": "passed"
+  },
+  "dashboard_availability": {
+    "summary_status": "ok",
+    "summary_ready": true,
+    "errors_ready": true
+  },
+  "widgets_compared": [
+    {
+      "tab": "summary",
+      "role": "summary.sessions",
+      "title": "Sesiones",
+      "web_value": 6504.0,
+      "local_value": 6504.0,
+      "status": "passed",
+      "difference": 0.0
+    }
+  ],
+  "first_divergence": null,
+  "message": "The enabled and supported SDS widget matched Quantum Web 1:1 for last_7_days."
+}

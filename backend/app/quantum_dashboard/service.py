@@ -62,6 +62,18 @@ ERROR_APP_COLUMNS = [
     ),
 ]
 
+ROLE_DATASETS: dict[str, str] = {
+    "summary.page_views": DATASET_SUMMARY_WIDGETS,
+    "summary.sessions": DATASET_SUMMARY_WIDGETS,
+    "summary.converted_sessions": DATASET_SUMMARY_WIDGETS,
+    "summary.avg_session_duration": DATASET_SUMMARY_WIDGETS,
+    "summary.detail_by_app_name_os": DATASET_SUMMARY_TABLE,
+    "errors.error_sessions_percentage_evolution": DATASET_ERRORS_WIDGETS,
+    "errors.error_sessions_by_app_name_comparison": DATASET_ERRORS_WIDGETS,
+    "errors.top_errors_by_error_name": DATASET_ERRORS_TOP_ERRORS,
+    "errors.error_session_percentage_by_app_name": DATASET_ERRORS_APP_NAME,
+}
+
 
 class LocalDashboardService:
     def __init__(self, store: ParquetStore, config_store: QuantumConfigStore | None = None) -> None:
@@ -115,24 +127,13 @@ class LocalDashboardService:
         contract_roles = {str(row.get("visual_role")) for row in contracts}
         contract_roles = {role for role in contract_roles if role in enabled_roles}
         regression = self._latest_regression(country, range_key, resolved_dashboard_id)
+        summary_roles = self._enabled_roles_for_tab("summary", enabled_roles)
+        errors_roles = self._enabled_roles_for_tab("errors", enabled_roles)
         summary_ready = self._tab_ready("summary", contract_roles, enabled_roles) and (
-            self._dataset_ready_for_dashboard(
-                country, DATASET_SUMMARY_WIDGETS, range_key, resolved_dashboard_id
-            )
-            and self._dataset_ready_for_dashboard(
-                country, DATASET_SUMMARY_TABLE, range_key, resolved_dashboard_id
-            )
+            self._datasets_ready_for_roles(country, summary_roles, range_key, resolved_dashboard_id)
         )
         errors_ready = self._tab_ready("errors", contract_roles, enabled_roles) and (
-            self._dataset_ready_for_dashboard(
-                country, DATASET_ERRORS_WIDGETS, range_key, resolved_dashboard_id
-            )
-            and self._dataset_ready_for_dashboard(
-                country, DATASET_ERRORS_TOP_ERRORS, range_key, resolved_dashboard_id
-            )
-            and self._dataset_ready_for_dashboard(
-                country, DATASET_ERRORS_APP_NAME, range_key, resolved_dashboard_id
-            )
+            self._datasets_ready_for_roles(country, errors_roles, range_key, resolved_dashboard_id)
         )
         missing_roles = [
             role
@@ -549,16 +550,10 @@ class LocalDashboardService:
         raw_calls = self._raw_calls_for_range(country, range_key, dashboard_id)
         if not raw_calls:
             return None
+        required_datasets = self._datasets_for_roles(enabled_roles)
         derived_ready = all(
             self._dataset_ready_for_dashboard(country, dataset, range_key, dashboard_id)
-            for dataset in (
-                DATASET_SUMMARY_WIDGETS,
-                DATASET_SUMMARY_TABLE,
-                DATASET_ERRORS_WIDGETS,
-                DATASET_ERRORS_TOP_ERRORS,
-                DATASET_ERRORS_APP_NAME,
-                DATASET_CHART_PAYLOADS,
-            )
+            for dataset in required_datasets
         )
         regression = self._latest_regression(country, range_key, dashboard_id)
         regression_ready = _regression_usable(
@@ -600,6 +595,24 @@ class LocalDashboardService:
         enabled_roles: set[str],
     ) -> bool:
         return all(role in contract_roles for role in required_roles(tab) if role in enabled_roles)
+
+    def _enabled_roles_for_tab(self, tab: DashboardTab, enabled_roles: set[str]) -> set[str]:
+        return {role for role in required_roles(tab) if role in enabled_roles}
+
+    def _datasets_for_roles(self, roles: set[str]) -> set[str]:
+        return {dataset for role, dataset in ROLE_DATASETS.items() if role in roles}
+
+    def _datasets_ready_for_roles(
+        self,
+        country: str,
+        roles: set[str],
+        range_key: str,
+        dashboard_id: str | None = None,
+    ) -> bool:
+        return all(
+            self._dataset_ready_for_dashboard(country, dataset, range_key, dashboard_id)
+            for dataset in self._datasets_for_roles(roles)
+        )
 
     def _derived_dataset_count(self, country: str, range_key: str) -> int:
         return sum(

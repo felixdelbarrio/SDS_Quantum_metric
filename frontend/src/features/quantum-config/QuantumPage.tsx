@@ -51,6 +51,29 @@ type QuantumDashboardConfig = {
   widgets: QuantumWidgetConfig[];
 };
 
+type QuantumDashboardResource = {
+  dashboard_id: string;
+  name: string;
+  type: "DASHBOARD";
+  starred: boolean;
+  country: CountryCode;
+  team_id?: string | null;
+  source: "quantum_graphql" | "manual" | "cache";
+  order: number;
+  discovered_at?: string | null;
+  stale?: boolean;
+};
+
+type DashboardResourcesResponse = {
+  country: CountryCode;
+  total_count: number;
+  dashboards: QuantumDashboardResource[];
+  from_cache: boolean;
+  fetched_at: string;
+  source: string;
+  warning?: string | null;
+};
+
 type QuantumDashboardTabConfig = {
   tab_id?: string | null;
   tab_index: number;
@@ -83,6 +106,7 @@ type DashboardStructureResponse = {
 type ManualDashboardPayload = {
   url: string;
   name: string;
+  base_url?: string;
 };
 
 type QuantumConfig = {
@@ -122,7 +146,21 @@ export function QuantumPage() {
     countryRows.findIndex((row) => row.country === current?.country),
   );
   const selectedCountry = countryRows[selectedCountryIndex];
-  const selectedDashboard = selectedCountry?.dashboards.find(
+  const dashboardResources = useQuery({
+    queryKey: ["quantum-dashboard-resources", selectedCountry?.country],
+    enabled: Boolean(selectedCountry?.country),
+    queryFn: async () =>
+      apiGet<DashboardResourcesResponse>(
+        `/quantum/countries/${selectedCountry?.country}/dashboards`,
+      ),
+  });
+  const dashboardOptions = selectedCountry
+    ? mergeDashboardOptions(
+        selectedCountry.dashboards,
+        dashboardResources.data?.dashboards ?? [],
+      )
+    : [];
+  const selectedDashboard = dashboardOptions.find(
     (dashboard) => dashboard.is_default,
   );
   const selectedDashboardIndex = selectedDashboard
@@ -163,8 +201,10 @@ export function QuantumPage() {
   });
 
   const testCountry = useMutation({
-    mutationFn: (country: CountryCode) =>
-      apiPost(`/quantum/test-connection?country=${country}`),
+    mutationFn: (country: QuantumCountryConfig) =>
+      apiPost(`/quantum/test-connection?country=${country.country}`, {
+        base_url: country.base_url,
+      }),
     onSuccess: async () => {
       const result = await config.refetch();
       if (result.data) setForm(result.data);
@@ -173,12 +213,18 @@ export function QuantumPage() {
   });
 
   const refreshDashboards = useMutation({
-    mutationFn: (country: CountryCode) =>
-      apiPost(`/quantum/countries/${country}/dashboards/refresh`),
-    onSuccess: async () => {
+    mutationFn: (country: QuantumCountryConfig) =>
+      apiPost<DashboardResourcesResponse>(
+        `/quantum/countries/${country.country}/dashboards/refresh`,
+        { base_url: country.base_url },
+      ),
+    onSuccess: async (_data, country) => {
       const result = await config.refetch();
       if (result.data) setForm(result.data);
       void queryClient.invalidateQueries({ queryKey: ["quantum-config"] });
+      void queryClient.invalidateQueries({
+        queryKey: ["quantum-dashboard-resources", country.country],
+      });
     },
   });
 
@@ -186,19 +232,33 @@ export function QuantumPage() {
     mutationFn: ({
       country,
       dashboardId,
+      baseUrl,
+      dashboardName,
+      teamId,
     }: {
       country: CountryCode;
       dashboardId: string;
+      baseUrl: string;
+      dashboardName?: string;
+      teamId?: string;
     }) =>
       apiPost<DashboardStructureResponse>(
         `/quantum/countries/${country}/dashboards/${encodeURIComponent(
           dashboardId,
         )}/structure/discover`,
+        {
+          base_url: baseUrl,
+          dashboard_name: dashboardName,
+          team_id: teamId,
+        },
       ),
-    onSuccess: async () => {
+    onSuccess: async (_data, variables) => {
       const result = await config.refetch();
       if (result.data) setForm(result.data);
       void queryClient.invalidateQueries({ queryKey: ["quantum-config"] });
+      void queryClient.invalidateQueries({
+        queryKey: ["quantum-dashboard-resources", variables.country],
+      });
     },
   });
 
@@ -213,13 +273,17 @@ export function QuantumPage() {
       apiPost(`/quantum/countries/${country}/dashboards/manual`, {
         url: payload.url,
         name: payload.name,
+        base_url: payload.base_url,
       }),
-    onSuccess: async () => {
+    onSuccess: async (_data, variables) => {
       setManualDashboard({ url: "", name: "" });
       setManualDashboardOpen(false);
       const result = await config.refetch();
       if (result.data) setForm(result.data);
       void queryClient.invalidateQueries({ queryKey: ["quantum-config"] });
+      void queryClient.invalidateQueries({
+        queryKey: ["quantum-dashboard-resources", variables.country],
+      });
     },
   });
 
@@ -294,11 +358,22 @@ export function QuantumPage() {
 
   function selectDashboard(countryIndex: number, dashboardId: string) {
     if (!current) return;
+    const option = dashboardOptions.find(
+      (dashboard) => dashboard.dashboard_id === dashboardId,
+    );
     const countries = current.countries.map((countryRow, rowIndex) => {
       if (rowIndex !== countryIndex) return countryRow;
+      const hasDashboard = countryRow.dashboards.some(
+        (dashboard) => dashboard.dashboard_id === dashboardId,
+      );
+      const dashboards = hasDashboard
+        ? countryRow.dashboards
+        : option
+          ? [...countryRow.dashboards, option]
+          : countryRow.dashboards;
       return {
         ...countryRow,
-        dashboards: countryRow.dashboards.map((dashboard) => ({
+        dashboards: dashboards.map((dashboard) => ({
           ...dashboard,
           is_default: dashboard.dashboard_id === dashboardId,
         })),
@@ -307,7 +382,13 @@ export function QuantumPage() {
     setForm({ ...current, countries });
     const row = current.countries[countryIndex];
     if (row && dashboardId) {
-      loadDashboardStructure.mutate({ country: row.country, dashboardId });
+      loadDashboardStructure.mutate({
+        country: row.country,
+        dashboardId,
+        baseUrl: row.base_url,
+        dashboardName: option?.name,
+        teamId: option?.team_id ?? undefined,
+      });
     }
   }
 
@@ -381,7 +462,7 @@ export function QuantumPage() {
     if (!selectedCountry || !manualDashboard.url.trim()) return;
     addManualDashboard.mutate({
       country: selectedCountry.country,
-      payload: manualDashboard,
+      payload: { ...manualDashboard, base_url: selectedCountry.base_url },
     });
   }
 
@@ -583,9 +664,11 @@ export function QuantumPage() {
                   className="command-button"
                   type="button"
                   disabled={!selectedCountry.base_url || testCountry.isPending}
-                  onClick={() => testCountry.mutate(selectedCountry.country)}
+                  aria-busy={testCountry.isPending}
+                  onClick={() => testCountry.mutate(selectedCountry)}
                 >
-                  <CheckCircle2 size={16} /> Test pais
+                  <CheckCircle2 size={16} />{" "}
+                  {testCountry.isPending ? "Probando pais" : "Test pais"}
                 </button>
                 <button
                   className="command-button"
@@ -593,11 +676,13 @@ export function QuantumPage() {
                   disabled={
                     !selectedCountry.base_url || refreshDashboards.isPending
                   }
-                  onClick={() =>
-                    refreshDashboards.mutate(selectedCountry.country)
-                  }
+                  aria-busy={refreshDashboards.isPending}
+                  onClick={() => refreshDashboards.mutate(selectedCountry)}
                 >
-                  <RefreshCw size={16} /> Actualizar dashboards
+                  <RefreshCw size={16} />{" "}
+                  {refreshDashboards.isPending
+                    ? "Actualizando"
+                    : "Actualizar dashboards"}
                 </button>
                 <button
                   className="icon-button danger"
@@ -609,6 +694,22 @@ export function QuantumPage() {
                   <Trash2 size={16} />
                 </button>
               </div>
+              <ActionFeedback
+                mutation={testCountry}
+                pending="Validando acceso a Quantum."
+                success="Pais validado."
+                error="No se pudo validar el pais."
+              />
+              <ActionFeedback
+                mutation={refreshDashboards}
+                pending="Ejecutando resourcesList en Quantum."
+                success={`Dashboards actualizados${
+                  refreshDashboards.data?.total_count
+                    ? `: ${refreshDashboards.data.total_count}`
+                    : ""
+                }.`}
+                error="No se pudieron actualizar dashboards."
+              />
             </div>
           ) : (
             <div className="empty compact">Sin paises configurados</div>
@@ -645,7 +746,7 @@ export function QuantumPage() {
                   <option value="" disabled>
                     Selecciona un dashboard
                   </option>
-                  {selectedCountry.dashboards.map((dashboard) => (
+                  {dashboardOptions.map((dashboard) => (
                     <option
                       key={dashboard.dashboard_id}
                       value={dashboard.dashboard_id}
@@ -655,6 +756,19 @@ export function QuantumPage() {
                   ))}
                 </select>
               </label>
+              <div className="config-resource-summary">
+                <span>
+                  {dashboardResources.data
+                    ? `${dashboardResources.data.total_count} dashboards`
+                    : dashboardResources.isLoading
+                      ? "Cargando cache"
+                      : "Sin cache local"}
+                </span>
+                <span>{sourceLabelFromResources(dashboardResources.data)}</span>
+                {dashboardResources.data?.warning ? (
+                  <em>{dashboardResources.data.warning}</em>
+                ) : null}
+              </div>
 
               {manualDashboardOpen ? (
                 <section className="manual-dashboard-panel">
@@ -703,10 +817,20 @@ export function QuantumPage() {
                       !manualDashboard.url.trim() ||
                       addManualDashboard.isPending
                     }
+                    aria-busy={addManualDashboard.isPending}
                     onClick={submitManualDashboard}
                   >
-                    <CheckCircle2 size={16} /> Validar dashboard
+                    <CheckCircle2 size={16} />{" "}
+                    {addManualDashboard.isPending
+                      ? "Validando dashboard"
+                      : "Validar dashboard"}
                   </button>
+                  <ActionFeedback
+                    mutation={addManualDashboard}
+                    pending="Validando estructura real."
+                    success="Dashboard manual validado."
+                    error="No se pudo validar el dashboard manual."
+                  />
                 </section>
               ) : null}
 
@@ -777,16 +901,29 @@ export function QuantumPage() {
                         !selectedDashboard.dashboard_id ||
                         loadDashboardStructure.isPending
                       }
+                      aria-busy={loadDashboardStructure.isPending}
                       onClick={() =>
                         loadDashboardStructure.mutate({
                           country: selectedCountry.country,
                           dashboardId: selectedDashboard.dashboard_id,
+                          baseUrl: selectedCountry.base_url,
+                          dashboardName: selectedDashboard.name,
+                          teamId: selectedDashboard.team_id,
                         })
                       }
                     >
-                      <RefreshCw size={16} /> Actualizar widgets
+                      <RefreshCw size={16} />{" "}
+                      {loadDashboardStructure.isPending
+                        ? "Validando"
+                        : "Validar dashboard"}
                     </button>
                   </div>
+                  <ActionFeedback
+                    mutation={loadDashboardStructure}
+                    pending="Leyendo tabs y widgets reales."
+                    success="Estructura validada."
+                    error="No se pudo validar la estructura."
+                  />
                   <WidgetGroups
                     dashboard={selectedDashboard}
                     countryIndex={selectedCountryIndex}
@@ -908,6 +1045,38 @@ function WidgetGroups({
   );
 }
 
+function ActionFeedback({
+  mutation,
+  pending,
+  success,
+  error,
+}: {
+  mutation: {
+    isPending: boolean;
+    isSuccess: boolean;
+    isError: boolean;
+    error: unknown;
+  };
+  pending: string;
+  success: string;
+  error: string;
+}) {
+  if (mutation.isPending) {
+    return <p className="config-action-feedback pending">{pending}</p>;
+  }
+  if (mutation.isError) {
+    return (
+      <p className="config-action-feedback error">
+        {error} {mutationErrorMessage(mutation.error)}
+      </p>
+    );
+  }
+  if (mutation.isSuccess) {
+    return <p className="config-action-feedback success">{success}</p>;
+  }
+  return null;
+}
+
 function dashboardWidgetGroups(dashboard: QuantumDashboardConfig) {
   const tabs = dashboard.tabs?.length
     ? dashboard.tabs
@@ -1006,6 +1175,67 @@ function normalizeDashboards(
   });
 }
 
+function mergeDashboardOptions(
+  dashboards: QuantumDashboardConfig[],
+  resources: QuantumDashboardResource[],
+): QuantumDashboardConfig[] {
+  const byId = new Map<string, QuantumDashboardConfig>();
+  dashboards.forEach((dashboard) => {
+    if (dashboard.dashboard_id) byId.set(dashboard.dashboard_id, dashboard);
+  });
+  resources.forEach((resource) => {
+    const existing = byId.get(resource.dashboard_id);
+    const next = resourceToDashboardConfig(resource, existing);
+    byId.set(resource.dashboard_id, next);
+  });
+  return Array.from(byId.values()).sort(
+    (left, right) =>
+      dashboardOrder(left, resources) - dashboardOrder(right, resources) ||
+      dashboardLabel(left).localeCompare(dashboardLabel(right)),
+  );
+}
+
+function resourceToDashboardConfig(
+  resource: QuantumDashboardResource,
+  existing?: QuantumDashboardConfig,
+): QuantumDashboardConfig {
+  return {
+    dashboard_id: resource.dashboard_id,
+    name: resource.name || existing?.name || "",
+    dashboard_type: resource.type || existing?.dashboard_type || "DASHBOARD",
+    team_id: resource.team_id ?? existing?.team_id ?? "",
+    summary_tab: existing?.summary_tab ?? 0,
+    errors_tab: existing?.errors_tab ?? 1,
+    is_default: existing?.is_default ?? resource.starred,
+    is_manual: existing?.is_manual ?? resource.source === "manual",
+    validated: existing?.validated ?? resource.source !== "cache",
+    validation_status:
+      existing?.validation_status ??
+      (resource.source === "cache" ? "not_tested" : "ok"),
+    source:
+      existing?.source ??
+      (resource.source === "manual"
+        ? "manual"
+        : resource.source === "quantum_graphql"
+          ? "quantum_api"
+          : "config_cache"),
+    discovered_at: resource.discovered_at ?? existing?.discovered_at ?? null,
+    last_structure_at: existing?.last_structure_at ?? null,
+    tabs: existing?.tabs ?? [],
+    widgets: existing?.widgets ?? [],
+  };
+}
+
+function dashboardOrder(
+  dashboard: QuantumDashboardConfig,
+  resources: QuantumDashboardResource[],
+) {
+  const resource = resources.find(
+    (item) => item.dashboard_id === dashboard.dashboard_id,
+  );
+  return resource?.order ?? Number.MAX_SAFE_INTEGER;
+}
+
 function isLegacyGeneratedName(dashboard: QuantumDashboardConfig) {
   return (
     dashboard.name === ["Dashboard", "default"].join(" ") &&
@@ -1086,4 +1316,17 @@ function sourceLabel(source: QuantumDashboardConfig["source"]) {
   if (source === "quantum_api" || source === "quantum_web")
     return "Quantum API";
   return "Cache";
+}
+
+function sourceLabelFromResources(response?: DashboardResourcesResponse) {
+  if (!response) return "Cache no cargada";
+  if (response.from_cache) return "Cache local";
+  if (response.source === "quantum_graphql") return "Quantum API";
+  return response.source || "Cache local";
+}
+
+function mutationErrorMessage(value: unknown) {
+  if (value instanceof Error) return value.message;
+  if (typeof value === "string") return value;
+  return "";
 }

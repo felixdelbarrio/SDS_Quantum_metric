@@ -138,7 +138,7 @@ def build_derived_datasets(
         )
 
     validation_errors = _validate_required_chart_payloads(
-        selected, summary_widgets, errors_widgets, enabled_role_set
+        selected, summary_widgets, errors_widgets, snapshots, enabled_role_set
     )
     parser_errors.extend(validation_errors)
 
@@ -734,16 +734,26 @@ def _validate_required_chart_payloads(
     selected: dict[VisualRole, dict[str, Any]],
     summary_widgets: list[dict[str, Any]],
     errors_widgets: list[dict[str, Any]],
+    snapshots: list[WebSnapshot],
     enabled_roles: set[str],
 ) -> list[dict[str, str]]:
     widgets = {str(row.get("card_role")): row for row in [*summary_widgets, *errors_widgets]}
+    snapshots_by_role = {str(snapshot.card_role): snapshot for snapshot in snapshots}
     errors: list[dict[str, str]] = []
     for role in REQUIRED_CHART_ROLES:
         if str(role) not in enabled_roles:
             continue
         if role not in selected:
             continue
-        payload = widgets.get(role, {}).get("chart_payload")
+        widget = widgets.get(role, {})
+        payload = widget.get("chart_payload")
+        snapshot = snapshots_by_role.get(role)
+        expects_chart_payload = bool(
+            _list_of_dicts(widget.get("timeseries") or widget.get("series"))
+            or (snapshot.visible_series if snapshot else [])
+        )
+        if not expects_chart_payload and not isinstance(payload, dict):
+            continue
         if not isinstance(payload, dict) or not payload.get("series"):
             errors.append(
                 {

@@ -297,7 +297,11 @@ def _compare_chart_contract(
     if spec.card_type not in {"CHART", "KPI"}:
         return None
     payload = local.get("chart_payload")
+    web_series = _list(snapshot.get("visible_series"))
+    local_series = _list(local.get("timeseries") or local.get("series"))
     if not isinstance(payload, dict):
+        if not web_series and not local_series:
+            return None
         return _card_result(
             spec.tab,
             role,
@@ -365,7 +369,7 @@ def _compare_chart_contract(
                     local_value=len(points),
                     details=f"{label} series must be daily for Last 7 Days.",
                 )
-    web_points = len(_list(snapshot.get("visible_series")))
+    web_points = len(web_series)
     local_points = sum(len(_list(item.get("points"))) for item in series if isinstance(item, dict))
     if web_points and local_points < web_points:
         return _card_result(

@@ -53,6 +53,7 @@ def capture_quantum_dashboard_cards(
             )
 
     rows: list[dict[str, Any]] = []
+    tab_failures: list[str] = []
     for tab_name, tab_index in (("summary", summary_tab), ("errors", errors_tab)):
         if progress_callback is not None:
             progress_callback(tab_name)
@@ -61,37 +62,44 @@ def capture_quantum_dashboard_cards(
             dashboard_id=dashboard_id,
             team_id=team_id,
             tab=tab_index,
+            range_key=ingestion_range.range_key if ingestion_range else None,
         )
-        if capture_session:
-            captured = capture_session.capture(
-                dashboard_url=dashboard_url,
-                ingestion_range=ingestion_range,
-            )
-        else:
-            captured = capture_quantum_analytics(
-                settings=settings,
-                cookies=cookies,
-                country=country,
-                base_url=base_url,
-                dashboard_url=dashboard_url,
-                wait_seconds=settings.quantum_capture_timeout_seconds,
-                ingestion_id=ingestion_id,
-                ingestion_range=ingestion_range,
-            )
+        tab_label = "Resumen" if tab_name == "summary" else "Errores"
+        try:
+            if capture_session:
+                captured = capture_session.capture(
+                    dashboard_url=dashboard_url,
+                    ingestion_range=ingestion_range,
+                )
+            else:
+                captured = capture_quantum_analytics(
+                    settings=settings,
+                    cookies=cookies,
+                    country=country,
+                    base_url=base_url,
+                    dashboard_url=dashboard_url,
+                    wait_seconds=settings.quantum_capture_timeout_seconds,
+                    ingestion_id=ingestion_id,
+                    ingestion_range=ingestion_range,
+                )
+        except RuntimeError as exc:
+            captured = []
+            tab_failures.append(f"{tab_label}: {exc}")
         if not captured:
-            tab_label = "Resumen" if tab_name == "summary" else "Errores"
-            raise RuntimeError(
-                "No Quantum analytics responses were captured for "
-                f"{tab_label}. Check that the local controlled session is authenticated "
-                "and that the dashboard emits /analytics responses for the selected range."
-            )
+            tab_failures.append(f"{tab_label}: sin respuestas analytics")
+            continue
         for row in captured:
             row["tab"] = tab_name
-            row["tab_name"] = "Resumen" if tab_name == "summary" else "Errores"
+            row["tab_name"] = tab_label
             row["endpoint"] = row.get("source_endpoint")
             row["method"] = row.get("http_method")
             row["captured_at"] = row.get("ingestion_ts")
             row.setdefault("parse_status", "pending")
             row.setdefault("parse_error", None)
         rows.extend(captured)
+    if not rows:
+        details = " | ".join(dict.fromkeys(tab_failures))
+        raise RuntimeError(
+            f"No Quantum analytics responses were captured for any configured tab. {details}"
+        )
     return rows
