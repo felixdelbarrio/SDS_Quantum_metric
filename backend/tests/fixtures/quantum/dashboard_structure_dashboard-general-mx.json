@@ -1,0 +1,13 @@
+{
+  "data": {
+    "resource": {
+      "id": "dash-general-mx",
+      "entity": {
+        "id": "dash-general-mx",
+        "title": "Dashboard General MX",
+        "tabs": "[{\"id\":\"tab-summary\",\"name\":\"Resumen\",\"layout\":[{\"i\":\"summary-page-views\",\"x\":0,\"y\":0}],\"layoutCardsMap\":{\"summary-page-views\":{\"id\":\"summary-page-views\",\"component\":\"Chart\",\"adHocData\":{\"card\":{\"id\":\"card-page-views\",\"title\":\"Paginas vistas\",\"type\":\"CHART\",\"visualization\":\"line\"}}}}},{\"id\":\"tab-errors\",\"name\":\"Errores\",\"layout\":[{\"i\":\"errors-evolution\",\"x\":0,\"y\":0},{\"i\":\"errors-top\",\"x\":0,\"y\":1}],\"layoutCardsMap\":{\"errors-evolution\":{\"id\":\"errors-evolution\",\"component\":\"Chart\",\"adHocData\":{\"card\":{\"id\":\"card-errors-evolution\",\"title\":\"Evolutivo - % Sesiones con Error\",\"type\":\"CHART\",\"visualization\":\"line\"}}},\"errors-top\":{\"id\":\"errors-top\",\"component\":\"Table\",\"adHocData\":{\"card\":{\"id\":\"card-top-errors\",\"title\":\"Top 20 Errores por nombre del error\",\"type\":\"TABLE\",\"visualization\":\"table\"}}}}}]",
+        "cards": []
+      }
+    }
+  }
+}

@@ -694,6 +694,16 @@ textarea:focus-visible {
   gap: var(--space-3);
 }
 
+.generic-widget-table {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.generic-widget-table .dashboard-table {
+  min-width: 420px;
+  font-size: 13px;
+}
+
 .kpi-header,
 .section-heading {
   display: flex;
@@ -1621,10 +1631,10 @@ textarea:focus-visible {
 .config-panel {
   display: grid;
   gap: var(--space-4);
-  background: var(--color-panel);
-  border: 1px solid var(--color-border);
+  background: var(--config-panel-surface);
+  border: 1px solid var(--config-panel-border);
   border-radius: var(--radius-md);
-  box-shadow: var(--shadow-soft);
+  box-shadow: var(--config-panel-shadow);
   padding: var(--space-5);
 }
 
@@ -1639,7 +1649,7 @@ textarea:focus-visible {
 .config-control-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(180px, 1fr));
-  gap: var(--space-3);
+  gap: var(--config-grid-gap);
 }
 
 .config-field-card {
@@ -1657,7 +1667,26 @@ textarea:focus-visible {
 
 .config-field-card input,
 .config-field-card select {
+  min-height: var(--config-control-height);
   margin-top: var(--space-1);
+}
+
+.config-country-focus {
+  display: grid;
+  grid-template-columns:
+    minmax(180px, 0.8fr) minmax(280px, 1.3fr) minmax(180px, 0.7fr)
+    auto;
+  gap: var(--config-grid-gap);
+  align-items: stretch;
+}
+
+.config-country-state {
+  align-content: center;
+  gap: var(--space-2);
+}
+
+.config-country-actions {
+  justify-content: flex-end;
 }
 
 .config-actions {
@@ -1759,7 +1788,50 @@ textarea:focus-visible {
 
 .dashboard-config-list {
   display: grid;
-  gap: var(--space-3);
+  gap: var(--config-grid-gap);
+}
+
+.dashboard-selector-field select {
+  min-height: var(--config-control-height);
+}
+
+.config-resource-summary,
+.config-action-feedback {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+  min-width: 0;
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.config-resource-summary span,
+.config-action-feedback {
+  border: 1px solid var(--config-border);
+  border-radius: var(--radius-sm);
+  background: var(--config-widget-card);
+  padding: var(--space-2) var(--space-3);
+}
+
+.config-resource-summary em {
+  min-width: 0;
+  color: var(--config-status-warning);
+  font-style: normal;
+}
+
+.config-action-feedback.pending {
+  color: var(--color-accent-strong);
+}
+
+.config-action-feedback.success {
+  color: var(--semantic-positive);
+}
+
+.config-action-feedback.error {
+  color: var(--semantic-negative);
 }
 
 .dashboard-config-item {
@@ -1815,9 +1887,9 @@ textarea:focus-visible {
 .dashboard-fields-grid {
   display: grid;
   grid-template-columns:
-    minmax(220px, 1.2fr) minmax(180px, 0.8fr) minmax(160px, 0.7fr)
-    minmax(180px, 0.9fr);
-  gap: var(--space-3);
+    minmax(220px, 1.2fr) minmax(180px, 0.9fr) minmax(140px, 0.6fr)
+    minmax(120px, 0.5fr) minmax(180px, 0.8fr);
+  gap: var(--config-grid-gap);
 }
 
 .dashboard-fields-grid input[readonly] {
@@ -1840,7 +1912,7 @@ textarea:focus-visible {
 .widget-config-group {
   display: grid;
   gap: var(--space-3);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--config-widget-card-border);
   border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--color-panel) 90%, var(--color-bg));
   padding: var(--space-4);
@@ -1860,7 +1932,7 @@ textarea:focus-visible {
   min-width: 0;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
-  background: var(--color-chip-bg);
+  background: var(--config-widget-card-surface);
   padding: var(--space-2) var(--space-3);
   color: var(--color-muted);
   font-size: 13px;
@@ -1905,6 +1977,33 @@ textarea:focus-visible {
 
 .widget-config-grid input {
   accent-color: var(--color-accent);
+}
+
+.manual-dashboard-panel {
+  display: grid;
+  gap: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-panel) 92%, var(--color-bg));
+  padding: var(--space-4);
+}
+
+.manual-dashboard-panel > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.manual-dashboard-panel h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.manual-dashboard-grid {
+  display: grid;
+  grid-template-columns: minmax(260px, 1.5fr) minmax(180px, 0.8fr);
+  gap: var(--config-grid-gap);
 }
 
 .config-table {
@@ -2389,8 +2488,10 @@ textarea:focus-visible {
   .errors-widget-grid,
   .config-control-grid,
   .config-country-grid,
+  .config-country-focus,
   .config-country-fields,
   .dashboard-fields-grid,
+  .manual-dashboard-grid,
   .widget-config-section-grid,
   .dataset-kpi-grid,
   .dataset-business-grid,

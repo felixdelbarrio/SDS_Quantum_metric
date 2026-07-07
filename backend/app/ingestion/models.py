@@ -54,8 +54,13 @@ class IngestionJob(BaseModel):
         "completed",
         "completed_with_warnings",
         "failed",
+        "failed_no_session",
+        "failed_dashboard_not_found",
+        "failed_no_widgets",
+        "failed_no_analytics_responses",
         "failed_regression",
         "cancelled",
+        "cancelled_by_user",
     ]
     started_at: datetime
     finished_at: datetime | None = None

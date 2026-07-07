@@ -7,6 +7,12 @@ from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from backend.app.quantum_dashboard.generic_roles import (
+    generic_role_for_widget,
+    is_generic_role,
+    is_supported_generic_widget_type,
+)
+
 
 class BrowserName(StrEnum):
     chrome = "chrome"
@@ -111,6 +117,23 @@ class QuantumWidgetConfig(BaseModel):
     def _strip_widget_text(cls, value: object) -> object:
         return value.strip() if isinstance(value, str) else value
 
+    @model_validator(mode="after")
+    def _migrate_generic_widget_support(self) -> QuantumWidgetConfig:
+        if self.role and is_generic_role(self.role):
+            self.supported = True
+            return self
+        if not self.role and is_supported_generic_widget_type(self.widget_type):
+            self.role = generic_role_for_widget(
+                widget_id=self.widget_id,
+                card_id=self.card_id,
+                widget_type=self.widget_type,
+                tab_index=self.tab_index,
+            )
+            self.supported = True
+            self.required = True
+            self.enabled = True
+        return self
+
 
 class QuantumDashboardConfig(BaseModel):
     dashboard_id: str = ""
@@ -136,8 +159,8 @@ class QuantumDashboardConfig(BaseModel):
 
     @model_validator(mode="after")
     def _seed_widgets(self) -> QuantumDashboardConfig:
-        if _is_legacy_generated_dashboard_name(self.name) and self.dashboard_id:
-            self.name = self.dashboard_id
+        if _is_legacy_generated_dashboard_name(self.name, self.dashboard_id):
+            self.name = ""
         if not self.tabs and self.widgets:
             self.tabs = _tabs_from_widgets(self.widgets)
         return self
@@ -170,7 +193,7 @@ class QuantumCountryConfig(BaseModel):
             self.dashboards = [
                 QuantumDashboardConfig(
                     dashboard_id=self.dashboard_id,
-                    name=self.dashboard_id,
+                    name="",
                     team_id=self.team_id,
                     summary_tab=self.tab,
                     errors_tab=1,
@@ -183,8 +206,8 @@ class QuantumCountryConfig(BaseModel):
         normalized: list[QuantumDashboardConfig] = []
         for dashboard in self.dashboards:
             next_dashboard = dashboard
-            if _is_legacy_generated_dashboard_name(dashboard.name) and dashboard.dashboard_id:
-                next_dashboard = next_dashboard.model_copy(update={"name": dashboard.dashboard_id})
+            if _is_legacy_generated_dashboard_name(dashboard.name, dashboard.dashboard_id):
+                next_dashboard = next_dashboard.model_copy(update={"name": ""})
             if next_dashboard.is_default:
                 if default_seen:
                     next_dashboard = next_dashboard.model_copy(update={"is_default": False})
@@ -463,8 +486,10 @@ def _tab_label(tab: str) -> str:
     return tab or "Tab"
 
 
-def _is_legacy_generated_dashboard_name(value: str) -> bool:
-    return value == " ".join(("Dashboard", "default"))
+def _is_legacy_generated_dashboard_name(value: str, dashboard_id: str = "") -> bool:
+    return bool(dashboard_id and value == dashboard_id) or value == " ".join(
+        ("Dashboard", "default")
+    )
 
 
 def _first_text(values: list[str] | None, default: str) -> str:

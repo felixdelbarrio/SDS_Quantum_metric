@@ -30,10 +30,14 @@ Playwright ni clientes HTTP externos.
 - `catalog.py`: catalogo obligatorio de nueve roles visuales para Resumen y Errores.
 - `discovery.py`: resolucion interna de dashboard, team y tabs desde `.env`, config o URL.
 - `dashboard_discovery.py`: descubrimiento/cache de dashboards por pais desde payloads reales de Quantum Web.
+- `dashboard_resources.py`: contrato paginado `resourcesList`, cache offline por pais y parsing de recursos dashboard.
 - `dashboard_structure.py`: normalizacion de tabs, widgets, card IDs y tipos por dashboard.
-- `capture.py`: captura guiada de tabs Resumen y Errores.
+- `manual_dashboard.py`: parseo y validacion de dashboards manuales por URL o dashboard ID.
+- `capture.py`: captura guiada de tabs configuradas, con rango `ts` explicito y fallo solo si todas quedan sin analytics.
 - `card_mapper.py`: asociacion de llamadas Quantum a roles visuales.
-- `parsers.py`: estrategias por rol visual, con `chart_payload` cuando la respuesta trae puntos.
+- `widget_support.py`: evaluacion centralizada de soporte por parser especifico o capacidad generica.
+- `widget_roles.py`: descriptores de widgets y resolucion por `widget_id`, `card_id` o secuencia cuando Quantum comparte IDs temporales.
+- `parsers.py`: estrategias por rol visual y parsers genericos, con `chart_payload` cuando la respuesta trae puntos.
 - `builder.py`: raw calls -> visual contracts -> web snapshots -> derived Parquet -> chart payloads.
 - `service.py`: endpoints `/api/local-dashboard/*` desde derivados.
 - `regression.py`: comparacion Web vs Local de valores, ejes, leyendas, series y tablas.
@@ -46,18 +50,20 @@ Playwright ni clientes HTTP externos.
 1. El usuario lanza una ingesta desde la seccion Ingesta.
 2. Se abre un contexto Playwright efimero con cookies en memoria.
 3. Se resuelve el dashboard default del pais desde configuracion.
-4. Se navega `Resumen` y `Errores`.
+4. Se navegan las tabs configuradas con `ts=<range_key>` cuando aplica.
 5. Se capturan respuestas reales de `/analytics` y `/analytics/historical`.
 6. Se guardan raw calls normalizadas, particiones diarias y manifests en Parquet dentro de la ruta persistente.
 7. Se generan contratos visuales, snapshots web, datasets derivados y `derived/chart_payloads`.
 8. Se ejecuta regresion Web vs Local solo para widgets soportados y habilitados.
-9. La ingesta solo termina `completed` si la regresion pasa.
+9. La ingesta solo termina `completed` si la regresion pasa; fallos de sesion, dashboard, widgets, analytics y cancelacion usan estados accionables.
 
 La politica de rango usa `QUANTUM_INGESTION_DEPTH_DAYS` como Profundidad por defecto del boton `Ingestar`, mas `QUANTUM_INCREMENTAL_REPROCESS_DAYS` y `QUANTUM_INGESTION_CHUNK_DAYS`. El planner divide ventanas largas en chunks y el rewriter aplica el rango activo a payloads Quantum antes de persistir.
 Cuando la UI solicita Today, Yesterday o Last 7 Days, la ingesta crea un contrato explicito con
 `range_key`, `range_start`, `range_end`, `range_timezone` y `capture_mode=range_contract`.
 Cada response se valida tras la reescritura temporal; si el rango extraido no coincide, no se
 publica como dato local valido.
+Las TABLE que Quantum ya acota con `ts=<range_key>` conservan su rango nativo cuando la reescritura
+forzada provoca errores del endpoint; el resultado se compara igualmente por Web snapshot.
 
 ## Flujo del dashboard offline
 
@@ -84,6 +90,11 @@ filtran por `range_key` cuando se consulta un preset.
 
 `backend/app/quantum/config_store.py` escribe `config/quantum_config.json` de forma atomica con schema version. El modelo contiene paises, dashboards, widgets, tema, browser, modo de sesion y profundidad de ingesta. Cookies y Authorization nunca se persisten.
 
+La lista offline de recursos dashboard vive en `config/dashboard_resources/<country>.json`.
+El cache guarda IDs, nombres, tipo, starred, source y timestamps; no guarda cookies ni
+Authorization. `POST /api/quantum/countries/{country}/dashboards/refresh` fuerza Quantum
+GraphQL y `GET /api/quantum/countries/{country}/dashboards` lee cache/config local.
+
 Cada pais activo requiere un dashboard default validado para guardar configuracion e ingestar. Si una API local recibe `dashboard_id`, filtra por ese dashboard; si se omite, resuelve el default del pais. El modo de sesion por defecto es `controlled`, con perfil Playwright propio de la app. El modo
 `browser` queda como compatibilidad legacy y se migra a `controlled` al leer configuracion.
 
@@ -92,3 +103,9 @@ Cada pais activo requiere un dashboard default validado para guardar configuraci
 Home, Dashboards, Datasets y Analytics no importan modulos Quantum ni llaman URLs externas. El backend expone datos calculados desde Parquet.
 
 La app local excluye videos de sesiones: no hay rutas `/video`, componentes de reproduccion, enlaces ni persistencia de URLs de video.
+
+## Iteracion 16
+
+Colombia SDS y Mexico default usan el mismo pipeline Web -> RAW -> derivados -> Home -> regresion.
+Los widgets `generic.*` permiten reproducir dashboards personalizados sin hardcodear titulos. La
+regresion 2026-07-07 queda documentada en `docs/regression/iteration-16-*.md`.

@@ -19,44 +19,14 @@ from backend.app.ingestion.capture import (
 )
 from backend.app.observability.sanitizer import sanitize_error
 from backend.app.quantum.schemas import Country, QuantumCountryConfig
+from backend.app.quantum_dashboard.dashboard_resources import (
+    DashboardResourcesResult,
+    fetch_resource_payloads_via_sync_request,
+    resources_list_payload,
+    result_from_resources_payloads,
+)
 
 DashboardSource = Literal["quantum_api", "quantum_web", "config_cache"]
-QUANTUM_GRAPHQL_ENDPOINT = "https://api.quantummetric.com/query"
-RESOURCES_LIST_QUERY = """
-        query resourcesList(
-            $userId: ID!
-            $resourceFilter: ResourceFilter
-            $pagination: PaginationInfo
-        ) {
-            resources(userId: $userId, filter: $resourceFilter, pagination: $pagination) {
-                totalCount
-                resources {
-                    id
-                    type
-                    name
-                    lastEditedAt
-                    highestAccessLevel
-                    starred
-                    tags {
-                        id
-                        name
-                    }
-                    entity {
-                        ... on Filter {
-                        id
-                        json
-                        description
-                        version
-                        }
-                    }
-                }
-            }
-            resourceTags {
-                id
-                name
-            }
-        }
-    """
 
 
 class QuantumDashboardSummary(BaseModel):
@@ -131,7 +101,7 @@ def dashboards_from_config_cache(
     rows = [
         QuantumDashboardSummary(
             dashboard_id=dashboard.dashboard_id,
-            name=dashboard.name or dashboard.dashboard_id,
+            name=dashboard.name or "",
             type=dashboard.dashboard_type or "dashboard",
             team_id=dashboard.team_id or None,
             country=country_config.country,
@@ -192,6 +162,30 @@ def discover_dashboards_via_browser(
     wait_seconds: int,
     session_mode: str,
 ) -> tuple[list[QuantumDashboardSummary], str | None]:
+    result, error = fetch_dashboard_resources_via_browser(
+        settings=settings,
+        cookies=cookies,
+        country=country,
+        base_url=base_url,
+        wait_seconds=wait_seconds,
+        session_mode=session_mode,
+        page_size=25,
+    )
+    if result.resources:
+        return _summaries_from_resource_result(result), error
+    return [], error
+
+
+def fetch_dashboard_resources_via_browser(
+    *,
+    settings: Settings,
+    cookies: list[BrowserCookie],
+    country: Country,
+    base_url: str,
+    wait_seconds: int,
+    session_mode: str,
+    page_size: int = 25,
+) -> tuple[DashboardResourcesResult, str | None]:
     _configure_playwright_browser_path()
     from playwright.sync_api import sync_playwright
 
@@ -233,15 +227,14 @@ def discover_dashboards_via_browser(
                 wait_seconds,
             )
             if query_context is not None:
-                payload = _resources_list_payload(str(query_context["user_id"]))
-                response = context.request.post(
-                    QUANTUM_GRAPHQL_ENDPOINT,
-                    headers=cast(dict[str, str], query_context["headers"]),
-                    data=payload,
-                    timeout=60_000,
+                payloads.extend(
+                    fetch_resource_payloads_via_sync_request(
+                        context.request,
+                        headers=cast(dict[str, str], query_context["headers"]),
+                        user_id=str(query_context["user_id"]),
+                        page_size=page_size,
+                    )
                 )
-                if response.ok:
-                    payloads.append(response.json())
             embedded = page.evaluate(
                 """
                 () => Array.from(document.scripts)
@@ -265,12 +258,31 @@ def discover_dashboards_via_browser(
             if browser is not None:
                 browser.close()
 
-    summaries = discover_dashboards_from_payloads(
+    result = result_from_resources_payloads(
         payloads,
         country=country,
-        source="quantum_web",
+        source="quantum_graphql",
     )
-    return summaries, error
+    return result, error
+
+
+def _summaries_from_resource_result(
+    result: DashboardResourcesResult,
+) -> list[QuantumDashboardSummary]:
+    return [
+        QuantumDashboardSummary(
+            dashboard_id=resource.dashboard_id,
+            name=resource.name,
+            type=resource.type,
+            team_id=resource.team_id,
+            country=resource.country,
+            order=resource.order,
+            is_default_candidate=resource.starred,
+            source="quantum_web",
+            discovered_at=resource.discovered_at,
+        )
+        for resource in result.resources
+    ]
 
 
 async def _payloads_from_session(session: Any) -> list[Any]:
@@ -459,21 +471,8 @@ def _resource_list_summaries(
     return rows
 
 
-def _resources_list_payload(user_id: str, *, first: int = 0, size: int = 100) -> dict[str, Any]:
-    return {
-        "operationName": "resourcesList",
-        "query": RESOURCES_LIST_QUERY,
-        "variables": {
-            "userId": user_id,
-            "resourceFilter": {"namePrefix": "", "types": ["DASHBOARD"], "tags": []},
-            "pagination": {
-                "first": first,
-                "size": size,
-                "orderBy": "LAST_EDITED_AT",
-                "order": "Desc",
-            },
-        },
-    }
+def _resources_list_payload(user_id: str, *, first: int = 0, size: int = 25) -> dict[str, Any]:
+    return resources_list_payload(user_id, first=first, size=size)
 
 
 def _capture_query_context(

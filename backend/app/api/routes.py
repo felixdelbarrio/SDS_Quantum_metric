@@ -3,15 +3,16 @@ from __future__ import annotations
 import os
 import shutil
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Body, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from backend.app.analytics.models import SortDirection
 from backend.app.analytics.service import AnalyticsService
-from backend.app.auth.browser_cookies import BrowserCookie, BrowserCookieProvider
+from backend.app.auth.browser_cookies import BrowserCookie, BrowserCookieProvider, CookieAccessError
 from backend.app.auth.session_store import secret_store
 from backend.app.config.settings import Settings, get_settings
 from backend.app.ingestion.models import (
@@ -23,6 +24,7 @@ from backend.app.ingestion.service import IngestionService
 from backend.app.quantum.client import QuantumClient
 from backend.app.quantum.config_store import QuantumConfigStore
 from backend.app.quantum.schemas import (
+    Country,
     QuantumConfig,
     QuantumConfigUpdate,
     QuantumCountryConfig,
@@ -35,9 +37,16 @@ from backend.app.quantum.schemas import (
 )
 from backend.app.quantum_dashboard.builder import build_derived_datasets
 from backend.app.quantum_dashboard.dashboard_discovery import (
-    QuantumDashboardSummary,
     dashboards_from_config_cache,
-    discover_dashboards_via_browser,
+    fetch_dashboard_resources_via_browser,
+)
+from backend.app.quantum_dashboard.dashboard_resources import (
+    DashboardResourcesResult,
+    QuantumDashboardResource,
+    read_dashboard_resources_cache,
+    resources_from_dashboard_configs,
+    result_from_resource_rows,
+    write_dashboard_resources_cache,
 )
 from backend.app.quantum_dashboard.dashboard_structure import (
     discover_dashboard_structure_via_browser,
@@ -47,6 +56,10 @@ from backend.app.quantum_dashboard.dashboard_structure import (
 )
 from backend.app.quantum_dashboard.discovery import discover_dashboard_from_config
 from backend.app.quantum_dashboard.evidence import build_evidence_report
+from backend.app.quantum_dashboard.manual_dashboard import (
+    ManualDashboardRequest,
+    manual_dashboard_input_from_request,
+)
 from backend.app.quantum_dashboard.range_query import range_resolution_payload, resolve_range
 from backend.app.quantum_dashboard.regression import run_regression
 from backend.app.quantum_dashboard.service import LocalDashboardService
@@ -55,11 +68,21 @@ from backend.app.storage.parquet_store import ParquetStore
 
 router = APIRouter(prefix="/api")
 _INGESTION_SERVICE: IngestionService | None = None
+DashboardConfigSource = Literal["quantum_api", "quantum_web", "config_cache", "manual"]
 
 
 class DatasetExportRequest(BaseModel):
     countries: list[str] = Field(default_factory=list)
     export_path: str | None = None
+
+
+class CountryActionRequest(BaseModel):
+    base_url: str | None = None
+
+
+class DashboardStructureRequest(CountryActionRequest):
+    dashboard_name: str | None = None
+    team_id: str | None = None
 
 
 def settings_dep() -> Settings:
@@ -94,22 +117,28 @@ def ingestion_service_dep(
     return _INGESTION_SERVICE
 
 
-def _dashboard_from_summary(
-    summary: QuantumDashboardSummary,
+def _dashboard_from_resource(
+    resource: QuantumDashboardResource,
     *,
     is_default: bool,
 ) -> QuantumDashboardConfig:
+    if resource.source == "quantum_graphql":
+        source: DashboardConfigSource = "quantum_api"
+    elif resource.source == "manual":
+        source = "manual"
+    else:
+        source = "config_cache"
     return QuantumDashboardConfig(
-        dashboard_id=summary.dashboard_id,
-        name=summary.name,
-        dashboard_type=summary.type,
-        team_id=summary.team_id or "",
+        dashboard_id=resource.dashboard_id,
+        name=resource.name,
+        dashboard_type=resource.type,
+        team_id=resource.team_id or "",
         is_default=is_default,
-        is_manual=False,
+        is_manual=resource.source == "manual",
         validated=True,
         validation_status="ok",
-        source=summary.source,
-        discovered_at=summary.discovered_at,
+        source=source,
+        discovered_at=resource.discovered_at,
     )
 
 
@@ -197,6 +226,66 @@ def _write_config(
     )
 
 
+def _dashboard_resources_cache_dir(settings: Settings) -> Path:
+    return settings.config_dir / "dashboard_resources"
+
+
+def _country_config_for_action(
+    config: QuantumConfig,
+    country: str | None,
+    *,
+    base_url: str | None = None,
+) -> QuantumCountryConfig:
+    try:
+        target = Country(country or config.country)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Country {country} is not supported.") from exc
+    resolved_base_url = (base_url or "").strip()
+    existing = config.country_config(target)
+    if existing is not None:
+        if resolved_base_url and resolved_base_url != existing.base_url:
+            return existing.model_copy(update={"base_url": resolved_base_url})
+        return existing
+    if not resolved_base_url:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Country {target.value} needs a base URL before running this action.",
+        )
+    return QuantumCountryConfig(
+        country=target,
+        base_url=resolved_base_url,
+        enabled=True,
+        dashboards=[],
+    )
+
+
+def _config_with_country(
+    config: QuantumConfig,
+    country_config: QuantumCountryConfig,
+) -> QuantumConfig:
+    countries: list[QuantumCountryConfig] = []
+    replaced = False
+    for item in config.countries:
+        if item.country == country_config.country:
+            countries.append(country_config)
+            replaced = True
+        else:
+            countries.append(item)
+    if not replaced:
+        countries.append(country_config)
+    return config.model_copy(update={"country": country_config.country, "countries": countries})
+
+
+def _persist_action_country(
+    store: QuantumConfigStore,
+    config: QuantumConfig,
+    country_config: QuantumCountryConfig,
+) -> QuantumConfig:
+    action_config = _config_with_country(config, country_config)
+    _write_config(store, action_config, action_config.countries)
+    return action_config
+
+
 def _validate_default_dashboards(config: QuantumConfigUpdate) -> None:
     missing = [
         country.country.value
@@ -230,30 +319,34 @@ def _cookies_for_quantum(
             )
         return cookie_provider.from_manual_header(manual_cookie, str(country_config.base_url))
     if config.session_mode == "controlled":
-        return []
+        try:
+            return cookie_provider.load(config.browser.value, str(country_config.base_url))
+        except CookieAccessError:
+            return []
     return cookie_provider.load(config.browser.value, str(country_config.base_url))
 
 
-def _merge_discovered_dashboards(
+def _merge_dashboard_resources(
     country_config: QuantumCountryConfig,
-    summaries: list[QuantumDashboardSummary],
+    result: DashboardResourcesResult,
 ) -> list[QuantumDashboardConfig]:
     existing_by_id = {dashboard.dashboard_id: dashboard for dashboard in country_config.dashboards}
     default_dashboard = country_config.default_dashboard()
     default_id = default_dashboard.dashboard_id if default_dashboard else None
     dashboards = list(country_config.dashboards)
-    for summary in summaries:
-        existing = existing_by_id.get(summary.dashboard_id)
+    for resource in result.resources:
+        existing = existing_by_id.get(resource.dashboard_id)
         fallback_team_id = (existing.team_id if existing else "") or country_config.team_id
-        is_default = summary.dashboard_id == default_id or (
-            default_id is None and summary.is_default_candidate
+        is_default = resource.dashboard_id == default_id or (
+            default_id is None and resource.starred
+        )
+        dashboard = _dashboard_from_resource(
+            resource.model_copy(update={"team_id": resource.team_id or fallback_team_id}),
+            is_default=is_default,
         )
         dashboards = _upsert_dashboard(
             dashboards,
-            _dashboard_from_summary(
-                summary.model_copy(update={"team_id": summary.team_id or fallback_team_id}),
-                is_default=is_default,
-            ).model_copy(
+            dashboard.model_copy(
                 update={
                     "widgets": existing.widgets if existing else [],
                     "tabs": existing.tabs if existing else [],
@@ -288,8 +381,17 @@ def _structure_tab_index(
         normalized_role = getattr(tab, "normalized_role", None)
         tab_index = getattr(tab, "tab_index", fallback)
         if normalized_role == structure_role:
-            return int(tab_index)
+            return _int(tab_index)
     return fallback
+
+
+def _int(value: object) -> int:
+    if not isinstance(value, int | float | str):
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
 
 
 @router.get("/health")
@@ -325,46 +427,97 @@ def put_quantum_config(
 def list_country_quantum_dashboards(
     country: str,
     store: Annotated[QuantumConfigStore, Depends(config_store_dep)],
+    settings: Annotated[Settings, Depends(settings_dep)],
 ) -> dict[str, object]:
     config = store.read()
     country_config = config.required_country_config(country)
-    dashboards = dashboards_from_config_cache(country_config)
+    result = read_dashboard_resources_cache(
+        country_config.country,
+        cache_dir=_dashboard_resources_cache_dir(settings),
+    )
+    if result is None:
+        result = resources_from_dashboard_configs(
+            country_config.dashboards,
+            country=country_config.country,
+        )
     return {
         "country": country_config.country.value,
-        "dashboards": [dashboard.model_dump(mode="json") for dashboard in dashboards],
-        "source": "config_cache",
+        "total_count": result.total_count,
+        "from_cache": result.from_cache,
+        "fetched_at": result.fetched_at.isoformat(),
+        "dashboards": [dashboard.model_dump(mode="json") for dashboard in result.resources],
+        "source": "dashboard_resources_cache" if result.from_cache else "quantum_graphql",
+        "warning": result.warning,
     }
 
 
-@router.post("/quantum/countries/{country}/dashboards/discover")
-def discover_country_quantum_dashboards(
+@router.post("/quantum/countries/{country}/dashboards/refresh")
+def refresh_country_quantum_dashboards(
     country: str,
     store: Annotated[QuantumConfigStore, Depends(config_store_dep)],
     settings: Annotated[Settings, Depends(settings_dep)],
     cookie_provider: Annotated[BrowserCookieProvider, Depends(cookie_provider_dep)],
+    request: Annotated[CountryActionRequest | None, Body()] = None,
 ) -> dict[str, object]:
     config = store.read()
-    country_config = config.required_country_config(country)
+    country_config = _country_config_for_action(
+        config,
+        country,
+        base_url=request.base_url if request else None,
+    )
+    config = _persist_action_country(store, config, country_config)
     cookies = _cookies_for_quantum(config, country_config, cookie_provider)
-    discovered, error = discover_dashboards_via_browser(
+    result, error = fetch_dashboard_resources_via_browser(
         settings=settings,
         cookies=cookies,
         country=country_config.country,
         base_url=country_config.base_url or settings.quantum_default_base_url,
         wait_seconds=settings.quantum_capture_timeout_seconds,
         session_mode=config.session_mode.value,
+        page_size=25,
     )
-    cached = dashboards_from_config_cache(country_config)
-    summaries = discovered or cached
-    if not summaries:
-        detail = error or "No se encontraron dashboards en Quantum Web ni en cache local."
+    cache_dir = _dashboard_resources_cache_dir(settings)
+    cached_result = read_dashboard_resources_cache(country_config.country, cache_dir=cache_dir)
+    fetched_live = bool(result.resources)
+    if fetched_live:
+        write_dashboard_resources_cache(result, cache_dir=cache_dir)
+    elif cached_result is not None:
+        result = cached_result.model_copy(
+            update={
+                "warning": error
+                or "No se pudo ejecutar resourcesList en Quantum; se conserva cache local."
+            }
+        )
+    else:
+        cached = dashboards_from_config_cache(country_config)
+        result = result_from_resource_rows(
+            [
+                QuantumDashboardResource(
+                    dashboard_id=summary.dashboard_id,
+                    name=summary.name if summary.name != summary.dashboard_id else "",
+                    type="DASHBOARD",
+                    starred=summary.is_default_candidate,
+                    country=summary.country,
+                    team_id=summary.team_id,
+                    source="cache",
+                    order=summary.order or 0,
+                    discovered_at=summary.discovered_at,
+                )
+                for summary in cached
+            ],
+            country=country_config.country,
+            fetched_at=datetime.now(UTC),
+            from_cache=True,
+        )
+    if not result.resources:
+        detail = error or "No se encontraron dashboards desde resourcesList ni en cache local."
         raise HTTPException(status_code=400, detail=detail)
     updated_countries = [
         item.model_copy(
             update={
-                "dashboards": _merge_discovered_dashboards(
+                "dashboards": _merge_dashboard_resources(
                     item,
-                    summaries,
+                    result,
                 )
             }
         )
@@ -375,11 +528,127 @@ def discover_country_quantum_dashboards(
     _write_config(store, config, updated_countries)
     return {
         "country": country_config.country.value,
-        "dashboards": [summary.model_dump(mode="json") for summary in summaries],
-        "source": summaries[0].source if summaries else "config_cache",
+        "total_count": result.total_count,
+        "from_cache": result.from_cache,
+        "dashboards": [resource.model_dump(mode="json") for resource in result.resources],
+        "source": "quantum_graphql" if fetched_live else "cache",
         "warning": error
-        if discovered
-        else (error or "No se pudo descubrir dashboards en Quantum Web; se conserva cache local."),
+        if fetched_live
+        else (error or "No se pudo ejecutar resourcesList en Quantum; se conserva cache local."),
+    }
+
+
+@router.post("/quantum/countries/{country}/dashboards/discover")
+def discover_country_quantum_dashboards(
+    country: str,
+    store: Annotated[QuantumConfigStore, Depends(config_store_dep)],
+    settings: Annotated[Settings, Depends(settings_dep)],
+    cookie_provider: Annotated[BrowserCookieProvider, Depends(cookie_provider_dep)],
+    request: Annotated[CountryActionRequest | None, Body()] = None,
+) -> dict[str, object]:
+    return refresh_country_quantum_dashboards(
+        country,
+        store,
+        settings,
+        cookie_provider,
+        request=request,
+    )
+
+
+@router.post("/quantum/countries/{country}/dashboards/manual")
+def add_manual_quantum_dashboard(
+    country: str,
+    request: ManualDashboardRequest,
+    store: Annotated[QuantumConfigStore, Depends(config_store_dep)],
+    settings: Annotated[Settings, Depends(settings_dep)],
+    cookie_provider: Annotated[BrowserCookieProvider, Depends(cookie_provider_dep)],
+) -> dict[str, object]:
+    config = store.read()
+    country_config = _country_config_for_action(
+        config,
+        country,
+        base_url=request.base_url,
+    )
+    config = _persist_action_country(store, config, country_config)
+    manual = manual_dashboard_input_from_request(
+        request,
+        fallback_base_url=country_config.base_url or settings.quantum_default_base_url,
+    )
+    cookies = _cookies_for_quantum(config, country_config, cookie_provider)
+    structure, error = discover_dashboard_structure_via_browser(
+        settings=settings,
+        cookies=cookies,
+        country=country_config.country,
+        base_url=manual.base_url or country_config.base_url or settings.quantum_default_base_url,
+        dashboard_id=manual.dashboard_id,
+        team_id=manual.team_id or country_config.team_id or None,
+        wait_seconds=settings.quantum_capture_timeout_seconds,
+        session_mode=config.session_mode.value,
+    )
+    if not structure.tabs and not structure.widgets:
+        detail = error or "No se pudo validar el dashboard manual contra Quantum."
+        raise HTTPException(status_code=400, detail=detail)
+    existing = _dashboard_by_id(country_config, manual.dashboard_id)
+    existing_name = existing.name if existing else ""
+    dashboard = QuantumDashboardConfig(
+        dashboard_id=manual.dashboard_id,
+        name=manual.name or structure.dashboard_name or existing_name,
+        dashboard_type="DASHBOARD",
+        team_id=manual.team_id or structure.team_id or (existing.team_id if existing else ""),
+        summary_tab=_structure_tab_index(
+            "summary",
+            existing.summary_tab if existing else 0,
+            structure.tabs,
+        ),
+        errors_tab=_structure_tab_index(
+            "errors",
+            existing.errors_tab if existing else 1,
+            structure.tabs,
+        ),
+        is_default=existing.is_default if existing else False,
+        is_manual=True,
+        validated=True,
+        validation_status="ok",
+        source="manual",
+        discovered_at=structure.discovered_at,
+        last_structure_at=structure.discovered_at,
+        tabs=tab_configs_from_structure(structure),
+        widgets=widget_configs_from_structure(structure, existing.widgets if existing else []),
+    )
+    updated_countries = [
+        item.model_copy(update={"dashboards": _upsert_dashboard(item.dashboards, dashboard)})
+        if item.country == country_config.country
+        else item
+        for item in config.countries
+    ]
+    _write_config(store, config, updated_countries)
+    cache_dir = _dashboard_resources_cache_dir(settings)
+    cached = read_dashboard_resources_cache(country_config.country, cache_dir=cache_dir)
+    resource = QuantumDashboardResource(
+        dashboard_id=dashboard.dashboard_id,
+        name=dashboard.name,
+        type="DASHBOARD",
+        starred=dashboard.is_default,
+        country=country_config.country,
+        team_id=dashboard.team_id or None,
+        source="manual",
+        order=len(cached.resources) if cached else len(country_config.dashboards),
+        discovered_at=dashboard.discovered_at or datetime.now(UTC),
+    )
+    write_dashboard_resources_cache(
+        result_from_resource_rows(
+            [*(cached.resources if cached else []), resource],
+            country=country_config.country,
+            fetched_at=datetime.now(UTC),
+            from_cache=True,
+        ),
+        cache_dir=cache_dir,
+    )
+    return {
+        "country": country_config.country.value,
+        "dashboard": dashboard.model_dump(mode="json"),
+        "structure": structure.model_dump(mode="json"),
+        "warning": "Dashboard validation completed with limited diagnostics." if error else None,
     }
 
 
@@ -390,12 +659,45 @@ def discover_quantum_dashboard_structure(
     store: Annotated[QuantumConfigStore, Depends(config_store_dep)],
     settings: Annotated[Settings, Depends(settings_dep)],
     cookie_provider: Annotated[BrowserCookieProvider, Depends(cookie_provider_dep)],
+    request: Annotated[DashboardStructureRequest | None, Body()] = None,
 ) -> dict[str, object]:
     config = store.read()
-    country_config = config.required_country_config(country)
+    country_config = _country_config_for_action(
+        config,
+        country,
+        base_url=request.base_url if request else None,
+    )
+    config = _persist_action_country(store, config, country_config)
     dashboard = _dashboard_by_id(country_config, dashboard_id)
     if dashboard is None:
-        raise HTTPException(status_code=404, detail="Dashboard is not configured for this country.")
+        cached = read_dashboard_resources_cache(
+            country_config.country,
+            cache_dir=_dashboard_resources_cache_dir(settings),
+        )
+        resource = next(
+            (
+                item
+                for item in (cached.resources if cached else [])
+                if item.dashboard_id == dashboard_id
+            ),
+            None,
+        )
+        if resource is not None:
+            dashboard = _dashboard_from_resource(resource, is_default=False)
+        elif request and request.dashboard_name:
+            dashboard = QuantumDashboardConfig(
+                dashboard_id=dashboard_id,
+                name=request.dashboard_name,
+                team_id=request.team_id or country_config.team_id,
+                validated=False,
+                validation_status="not_tested",
+                source="config_cache",
+            )
+        else:
+            raise HTTPException(
+                status_code=404,
+                detail="Dashboard is not configured for this country.",
+            )
     cookies = _cookies_for_quantum(config, country_config, cookie_provider)
     structure, error = discover_dashboard_structure_via_browser(
         settings=settings,
@@ -403,21 +705,24 @@ def discover_quantum_dashboard_structure(
         country=country_config.country,
         base_url=country_config.base_url or settings.quantum_default_base_url,
         dashboard_id=dashboard.dashboard_id,
-        team_id=dashboard.team_id or country_config.team_id or None,
+        team_id=dashboard.team_id
+        or (request.team_id if request else None)
+        or country_config.team_id
+        or None,
         wait_seconds=settings.quantum_capture_timeout_seconds,
         session_mode=config.session_mode.value,
     )
     if not structure.tabs and not structure.widgets:
-        cached = structure_from_dashboard_config(country_config.country, dashboard)
-        if not cached.tabs and not cached.widgets:
+        cached_structure = structure_from_dashboard_config(country_config.country, dashboard)
+        if not cached_structure.tabs and not cached_structure.widgets:
             detail = error or "No se pudo leer la estructura real del dashboard en Quantum Web."
             raise HTTPException(status_code=400, detail=detail)
-        payload = cached.model_dump(mode="json")
+        payload = cached_structure.model_dump(mode="json")
         payload["warning"] = error or "Se conserva la ultima estructura real guardada."
         return payload
     dashboard_with_structure = dashboard.model_copy(
         update={
-            "name": structure.dashboard_name or dashboard.name or dashboard.dashboard_id,
+            "name": structure.dashboard_name or dashboard.name,
             "summary_tab": _structure_tab_index(
                 "summary",
                 dashboard.summary_tab,
@@ -454,23 +759,18 @@ def test_connection(
     cookie_provider: Annotated[BrowserCookieProvider, Depends(cookie_provider_dep)],
     settings: Annotated[Settings, Depends(settings_dep)],
     country: str | None = None,
+    request: Annotated[CountryActionRequest | None, Body()] = None,
 ) -> dict[str, object]:
     config = store.read()
-    try:
-        country_config = config.required_country_config(country)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    country_config = _country_config_for_action(
+        config,
+        country,
+        base_url=request.base_url if request else None,
+    )
+    config = _persist_action_country(store, config, country_config)
     if not country_config.base_url:
         raise HTTPException(status_code=400, detail="Selected country needs a base URL.")
-    if config.session_mode == "manual":
-        manual_cookie = secret_store.get_manual_cookie()
-        if not manual_cookie:
-            raise HTTPException(status_code=400, detail="Manual cookie is not available in memory.")
-        cookies = cookie_provider.from_manual_header(manual_cookie, str(country_config.base_url))
-    elif config.session_mode == "controlled":
-        cookies = []
-    else:
-        cookies = cookie_provider.load(config.browser.value, str(country_config.base_url))
+    cookies = _cookies_for_quantum(config, country_config, cookie_provider)
     return (
         QuantumClient(settings, config, cookie_provider, cookies)
         .test_connection()
@@ -647,6 +947,32 @@ def dataset_entities(
     }
 
 
+@router.get("/datasets/{country}/dashboards")
+def dataset_dashboards(
+    country: str,
+    store: Annotated[ParquetStore, Depends(parquet_store_dep)],
+) -> dict[str, object]:
+    dashboards: dict[str, dict[str, object]] = {}
+    for entity in store.list_country_entities(country):
+        dashboard_id = entity.get("dashboard_id")
+        if not dashboard_id:
+            continue
+        row = dashboards.setdefault(
+            str(dashboard_id),
+            {
+                "dashboard_id": dashboard_id,
+                "dashboard_name": entity.get("dashboard_name"),
+                "entities": 0,
+                "rows": 0,
+                "bytes": 0,
+            },
+        )
+        row["entities"] = _int(row["entities"]) + 1
+        row["rows"] = _int(row["rows"]) + _int(entity.get("rows"))
+        row["bytes"] = _int(row["bytes"]) + _int(entity.get("bytes"))
+    return {"country": country, "dashboards": list(dashboards.values())}
+
+
 @router.get("/datasets/{country}/evidence")
 def dataset_evidence(
     country: str,
@@ -679,6 +1005,8 @@ def dataset_entity_rows(
     country: str,
     entity: str,
     store: Annotated[ParquetStore, Depends(parquet_store_dep)],
+    dashboard_id: str | None = None,
+    widget_id: str | None = None,
     search: str | None = None,
     sort: str | None = None,
     direction: SortDirection = "asc",
@@ -688,6 +1016,8 @@ def dataset_entity_rows(
     page = store.read_country_entity_page(
         country,
         entity,
+        dashboard_id=dashboard_id,
+        widget_id=widget_id,
         search=search,
         sort=sort,
         direction=direction,

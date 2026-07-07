@@ -151,6 +151,11 @@ class QuantumAnalyticsCaptureSession:
             analytics_state["requests"] = int(analytics_state["requests"]) + 1
             raw_post_data = request.post_data or ""
             request_json = _parse_json(raw_post_data)
+            if _preserve_quantum_native_range(request_json):
+                routed_payloads_by_id[id(request)] = request_json
+                routed_payloads_by_key[(request.method, request.url, raw_post_data)] = request_json
+                route.continue_()
+                return
             rewritten, changed = apply_ingestion_range(request_json, ingestion_range)
             routed_payloads_by_id[id(request)] = rewritten if changed else request_json
             routed_payloads_by_key[(request.method, request.url, raw_post_data)] = (
@@ -188,7 +193,7 @@ class QuantumAnalyticsCaptureSession:
                 response_json,
             )
             range_validation = None
-            if ingestion_range is not None:
+            if ingestion_range is not None and not _preserve_quantum_native_range(request_json):
                 validation_target = IngestionChunk(
                     start=ingestion_range.start,
                     end=ingestion_range.end,
@@ -219,6 +224,9 @@ class QuantumAnalyticsCaptureSession:
                     "method": request.method,
                     "status_code": response.status,
                     "dashboard_id": metadata.get("dashboardId"),
+                    "widget_id": metadata.get("widgetId")
+                    or metadata.get("widget_id")
+                    or metadata.get("cardWidgetId"),
                     "card_id": metadata.get("cardId"),
                     "card_title": metadata.get("cardTitle") or metadata.get("title"),
                     "card_role": metadata.get("cardRole") or metadata.get("visualRole"),
@@ -361,6 +369,17 @@ def _parse_json(raw: str) -> dict[str, Any]:
     except Exception:
         return {}
     return value if isinstance(value, dict) else {"value": value}
+
+
+def _preserve_quantum_native_range(request_json: dict[str, Any]) -> bool:
+    query = request_json.get("query")
+    container = query if isinstance(query, dict) else request_json
+    metadata = container.get("metadata") if isinstance(container, dict) else None
+    if not isinstance(metadata, dict):
+        return False
+    card_type = str(metadata.get("cardType") or "").upper()
+    view_name = str(metadata.get("viewName") or "")
+    return card_type == "TABLE" and view_name in {"topN", "table", "coreMetrics"}
 
 
 def _effective_source_end(

@@ -24,8 +24,12 @@ from backend.app.quantum.schemas import (
     QuantumWidgetConfig,
 )
 from backend.app.quantum_dashboard.card_mapper import map_card_role
-from backend.app.quantum_dashboard.catalog import spec_for_role
-from backend.app.quantum_dashboard.dashboard_discovery import QUANTUM_GRAPHQL_ENDPOINT
+from backend.app.quantum_dashboard.dashboard_resources import QUANTUM_GRAPHQL_ENDPOINT
+from backend.app.quantum_dashboard.generic_roles import (
+    generic_role_for_widget,
+    is_supported_generic_widget_type,
+)
+from backend.app.quantum_dashboard.widget_support import assess_widget_support
 
 StructureSource = Literal["quantum_api", "quantum_web", "config_cache"]
 WidgetKind = Literal["chart", "table", "donut", "unknown"]
@@ -190,7 +194,13 @@ def structure_from_dashboard_config(
             widget_type=_to_widget_kind(widget.widget_type),
             enabled=widget.enabled,
             required=widget.required,
-            supported=widget.supported and bool(widget.role and spec_for_role(widget.role)),
+            supported=widget.supported
+            and assess_widget_support(
+                widget_id=widget.widget_id or widget.card_id or widget.role,
+                title=widget.title or widget.role,
+                widget_type=widget.widget_type,
+                visual_role=widget.role or None,
+            ).supported,
             source=widget.source,
         )
         for widget in dashboard.widgets
@@ -198,7 +208,7 @@ def structure_from_dashboard_config(
     return QuantumDashboardStructure(
         country=country,
         dashboard_id=dashboard.dashboard_id,
-        dashboard_name=dashboard.name or dashboard.dashboard_id,
+        dashboard_name=dashboard.name or None,
         team_id=dashboard.team_id or None,
         source="config_cache",
         discovered_at=dashboard.last_structure_at or dashboard.discovered_at or datetime.now(UTC),
@@ -305,10 +315,24 @@ def widget_configs_from_structure(
     }
     configs: list[QuantumWidgetConfig] = []
     for widget in structure.widgets:
-        role = widget.visual_role or ""
-        key = _widget_key(role, widget.widget_id, widget.card_id)
         widget_type = _to_config_widget_type(widget.widget_type)
-        supported = bool(role and spec_for_role(role))
+        role = widget.visual_role or (
+            generic_role_for_widget(
+                widget_id=widget.widget_id,
+                card_id=widget.card_id,
+                widget_type=widget_type,
+                tab_index=widget.tab_index,
+            )
+            if is_supported_generic_widget_type(widget_type)
+            else ""
+        )
+        key = _widget_key(role, widget.widget_id, widget.card_id)
+        supported = assess_widget_support(
+            widget_id=widget.widget_id,
+            title=widget.title,
+            widget_type=widget_type,
+            visual_role=role,
+        ).supported
         configs.append(
             QuantumWidgetConfig(
                 role=role,
@@ -522,6 +546,20 @@ def _widget_from_candidate(
     role: str | None = str(mapped_role) if mapped_role is not None else None
     if tab_role == "errors" and (role is None or role.startswith("summary.")):
         role = _errors_role_from_title(title, kind) or role
+    widget_type = _to_config_widget_type(kind)
+    if role is None and is_supported_generic_widget_type(widget_type):
+        role = generic_role_for_widget(
+            widget_id=widget_id,
+            card_id=card_id,
+            widget_type=widget_type,
+            tab_index=tab_index,
+        )
+    support = assess_widget_support(
+        widget_id=widget_id,
+        title=title,
+        widget_type=widget_type,
+        visual_role=role,
+    )
     return QuantumDashboardWidget(
         widget_id=widget_id,
         card_id=card_id,
@@ -532,8 +570,8 @@ def _widget_from_candidate(
         visual_role=role,
         widget_type=kind,
         enabled=bool(role),
-        required=bool(role and spec_for_role(role)),
-        supported=bool(role and spec_for_role(role)),
+        required=support.supported,
+        supported=support.supported,
         source=source,
     )
 

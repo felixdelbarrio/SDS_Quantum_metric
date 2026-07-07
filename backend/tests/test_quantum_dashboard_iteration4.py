@@ -10,7 +10,13 @@ from backend.app.api.routes import config_store_dep, parquet_store_dep, settings
 from backend.app.config.settings import Settings
 from backend.app.main import app
 from backend.app.quantum.config_store import QuantumConfigStore
-from backend.app.quantum.schemas import Country, QuantumCountryConfig
+from backend.app.quantum.schemas import (
+    Country,
+    QuantumConfigUpdate,
+    QuantumCountryConfig,
+    QuantumDashboardConfig,
+    QuantumWidgetConfig,
+)
 from backend.app.quantum_dashboard.builder import DATASET_WEB_SNAPSHOTS, build_derived_datasets
 from backend.app.quantum_dashboard.card_mapper import map_card_role
 from backend.app.quantum_dashboard.catalog import SUMMARY_DETAIL_TABLE
@@ -24,6 +30,7 @@ from backend.app.quantum_dashboard.parsers import (
 )
 from backend.app.quantum_dashboard.regression import run_regression
 from backend.app.quantum_dashboard.service import LocalDashboardService
+from backend.app.quantum_dashboard.widget_support import assess_widget_support
 from backend.app.storage.parquet_store import ParquetStore
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "quantum_dashboard"
@@ -83,6 +90,115 @@ def test_config_api_exposes_auditable_dashboard_widget_metadata(tmp_path: Path) 
     assert dashboard["dashboard_id"] == "dash-default"
     assert dashboard["team_id"] == "team-default"
     assert dashboard["widgets"] == []
+
+
+def test_unknown_chart_table_and_donut_widgets_are_supported_by_generic_parser() -> None:
+    for widget_type, parser_name in {
+        "CHART": "generic_metric_card_v1",
+        "TABLE": "generic_table_card_v1",
+        "DONUT": "generic_donut_card_v1",
+    }.items():
+        assessment = assess_widget_support(
+            widget_id=f"{widget_type.lower()}-widget",
+            title=f"Custom {widget_type}",
+            widget_type=widget_type,
+            visual_role=None,
+        )
+
+        assert assessment.supported is True
+        assert assessment.support_level == "generic_type"
+        assert assessment.parser_name == parser_name
+
+
+def test_unknown_widget_type_is_not_supported_without_parser_evidence() -> None:
+    assessment = assess_widget_support(
+        widget_id="custom-widget",
+        title="Custom widget",
+        widget_type="CANVAS",
+        visual_role=None,
+    )
+
+    assert assessment.supported is False
+    assert assessment.support_level == "unsupported"
+    assert assessment.parser_name is None
+
+
+def test_generic_metric_parser_builds_percent_chart_payload() -> None:
+    result = parse_card(
+        {
+            "card_type": "CHART",
+            "card_title": "Navigation Error Rate",
+            "response_json": json.dumps(
+                {
+                    "rows": [
+                        {"dimensions": [1782968400], "metrics": [0.02]},
+                        {"dimensions": [1783054800], "metrics": [0.04]},
+                    ]
+                }
+            ),
+        },
+        "generic.1.chart.navigation_error_rate",
+    )
+
+    widget = result.data["widget"]
+
+    assert result.status == "ok"
+    assert widget["unit"] == "percent"
+    assert widget["value"] == 3.0
+    assert widget["chart_payload"]["chart_type"] == "line"
+    assert widget["chart_payload"]["series"][0]["points"]
+    assert [point["value"] for point in widget["timeseries"]] == [2.0, 4.0]
+
+
+def test_generic_table_parser_extracts_dynamic_dimensions_and_metrics() -> None:
+    result = parse_card(
+        {
+            "card_type": "TABLE",
+            "card_title": "Top Navigation Errors",
+            "response_json": json.dumps(
+                {
+                    "rows": [
+                        {"dimensions": ["Possible Frustration"], "metrics": [758]},
+                        {"dimensions": ["Rage Click"], "metrics": [212]},
+                    ]
+                }
+            ),
+        },
+        "generic.1.table.top_navigation_errors",
+    )
+
+    widget = result.data["widget"]
+
+    assert result.status == "ok"
+    assert widget["chart_type"] == "table"
+    assert widget["table_columns"] == ["name", "dimension_1", "metric_1"]
+    assert widget["table_rows"][0]["name"] == "Possible Frustration"
+    assert widget["table_rows"][0]["metric_1"] == 758
+
+
+def test_generic_donut_parser_builds_segments_and_payload() -> None:
+    result = parse_card(
+        {
+            "card_type": "DONUT",
+            "card_title": "Sessions by App",
+            "response_json": json.dumps(
+                {
+                    "rows": [
+                        {"dimensions": ["App A"], "metrics": [10]},
+                        {"dimensions": ["App B"], "metrics": [5]},
+                    ]
+                }
+            ),
+        },
+        "generic.1.donut.sessions_by_app",
+    )
+
+    widget = result.data["widget"]
+
+    assert result.status == "ok"
+    assert widget["total"] == 15
+    assert widget["chart_payload"]["chart_type"] == "donut"
+    assert [item["name"] for item in widget["series"]] == ["App A", "App B"]
 
 
 def test_builder_persists_contracts_snapshots_derived_and_no_cookies(tmp_path: Path) -> None:
@@ -351,6 +467,209 @@ def test_regression_fails_when_chart_payload_is_missing(tmp_path: Path) -> None:
 
     assert report.verdict == "FAILED"
     assert any(card.status == "failed_chart_contract_incomplete" for card in report.cards)
+
+
+def test_regression_compares_aggregate_chart_without_visible_series(tmp_path: Path) -> None:
+    store = ParquetStore(Settings(qm_data_dir=tmp_path))
+    aggregate_sessions_call = {
+        **_summary_metric_shape_call(["session", "id"]),
+        "dashboard_id": "sds-co",
+        "dashboard_name": "SDS",
+        "team_id": "team-co",
+        "range_key": "last_7_days",
+        "range_start": "2026-07-01T06:00:00Z",
+        "range_end": "2026-07-07T08:59:59Z",
+        "response_json": json.dumps({"rows": [{"metrics": [6504]}]}),
+    }
+    store.merge_raw_calls("CO", [aggregate_sessions_call])
+
+    build = build_derived_datasets(
+        store,
+        "CO",
+        enabled_roles={"summary.sessions"},
+        dashboard_id="sds-co",
+        range_key="last_7_days",
+    )
+    report = run_regression(
+        store,
+        "CO",
+        enabled_roles={"summary.sessions"},
+        dashboard_id="sds-co",
+        range_key="last_7_days",
+    )
+
+    widget = store.read_country_dataset(
+        "CO",
+        "range_key=last_7_days/derived/summary_widgets",
+    )[0]
+    card = report.cards[0]
+    assert build.regression_status == "passed"
+    assert widget["chart_payload"] is None
+    assert card.status == "passed"
+    assert card.web_value == 6504
+    assert card.local_value == 6504
+
+
+def test_local_dashboard_reads_partial_supported_dashboard_after_regression(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(qm_data_dir=tmp_path)
+    store = ParquetStore(settings)
+    config_store = QuantumConfigStore(settings)
+    config_store.write(
+        QuantumConfigUpdate(
+            country=Country.CO,
+            countries=[
+                QuantumCountryConfig(
+                    country=Country.CO,
+                    base_url="https://bbvaco.quantummetric.com",
+                    dashboards=[
+                        QuantumDashboardConfig(
+                            dashboard_id="sds-co",
+                            name="SDS",
+                            team_id="team-co",
+                            is_default=True,
+                            validated=True,
+                            validation_status="ok",
+                            widgets=[
+                                QuantumWidgetConfig(
+                                    role="summary.sessions",
+                                    title="Sesiones",
+                                    widget_id="sessions-widget",
+                                    widget_type="CHART",
+                                    tab="summary",
+                                    tab_index=0,
+                                    enabled=True,
+                                    supported=True,
+                                )
+                            ],
+                        )
+                    ],
+                )
+            ],
+        )
+    )
+    aggregate_sessions_call = {
+        **_summary_metric_shape_call(["session", "id"]),
+        "dashboard_id": "sds-co",
+        "dashboard_name": "SDS",
+        "team_id": "team-co",
+        "range_key": "last_7_days",
+        "range_start": "2026-07-01T06:00:00Z",
+        "range_end": "2026-07-07T08:59:59Z",
+        "response_json": json.dumps({"rows": [{"metrics": [6504]}]}),
+    }
+    store.merge_raw_calls("CO", [aggregate_sessions_call])
+    build_derived_datasets(
+        store,
+        "CO",
+        enabled_roles={"summary.sessions"},
+        dashboard_id="sds-co",
+        dashboard_name="SDS",
+        range_key="last_7_days",
+    )
+    run_regression(
+        store,
+        "CO",
+        enabled_roles={"summary.sessions"},
+        dashboard_id="sds-co",
+        range_key="last_7_days",
+    )
+
+    service = LocalDashboardService(store, config_store)
+    status = service.status("CO", range_key="last_7_days")
+    summary = service.summary("CO", range_key="last_7_days")
+
+    assert status["mandatory_cards"] == 1
+    assert status["summary_ready"] is True
+    assert status["errors_ready"] is True
+    assert summary["status"] == "ok"
+    assert summary["widgets"][0]["role"] == "summary.sessions"
+    assert summary["widgets"][0]["value"] == 6504
+
+
+def test_local_dashboard_status_cannot_pass_with_missing_enabled_generic_role(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(qm_data_dir=tmp_path)
+    store = ParquetStore(settings)
+    config_store = QuantumConfigStore(settings)
+    config_store.write(
+        QuantumConfigUpdate(
+            country=Country.CO,
+            countries=[
+                QuantumCountryConfig(
+                    country=Country.CO,
+                    base_url="https://bbvaco.quantummetric.com",
+                    dashboards=[
+                        QuantumDashboardConfig(
+                            dashboard_id="sds-co",
+                            name="SDS",
+                            team_id="team-co",
+                            is_default=True,
+                            validated=True,
+                            validation_status="ok",
+                            widgets=[
+                                QuantumWidgetConfig(
+                                    role="summary.sessions",
+                                    title="Sessions",
+                                    widget_id="sessions-widget",
+                                    widget_type="CHART",
+                                    tab="summary",
+                                    enabled=True,
+                                    supported=True,
+                                ),
+                                QuantumWidgetConfig(
+                                    role="generic.0.table.custom",
+                                    title="Custom table",
+                                    widget_id="custom-table",
+                                    widget_type="TABLE",
+                                    tab="summary",
+                                    enabled=True,
+                                    supported=True,
+                                ),
+                            ],
+                        )
+                    ],
+                )
+            ],
+        )
+    )
+    store.write_country_dataset(
+        "CO",
+        "range_key=last_7_days/visual_contracts",
+        [
+            {
+                "country": "CO",
+                "dashboard_id": "sds-co",
+                "visual_role": "summary.sessions",
+                "range_key": "last_7_days",
+            }
+        ],
+        file_name="visual_contracts.parquet",
+    )
+    store.write_country_dataset(
+        "CO",
+        "range_key=last_7_days/regression/web_vs_local_results",
+        [
+            {
+                "country": "CO",
+                "dashboard_id": "sds-co",
+                "range_key": "last_7_days",
+                "status": "passed",
+                "verdict": "PASSED",
+                "generated_at": "2026-07-07T12:00:00Z",
+            }
+        ],
+    )
+
+    status = LocalDashboardService(store, config_store).status("CO", range_key="last_7_days")
+
+    assert status["regression_status"] == "failed_missing_card"
+    assert status["regression_verdict"] == "FAILED"
+    assert status["mandatory_cards"] == 2
+    assert status["mandatory_cards_captured"] == 1
+    assert status["missing_roles"] == ["generic.0.table.custom"]
 
 
 def test_summary_detail_parser_keeps_flat_rows_when_web_has_no_hierarchy() -> None:

@@ -27,8 +27,13 @@ type IngestionJob = {
     | "completed"
     | "completed_with_warnings"
     | "failed"
+    | "failed_no_session"
+    | "failed_dashboard_not_found"
+    | "failed_no_widgets"
+    | "failed_no_analytics_responses"
     | "failed_regression"
-    | "cancelled";
+    | "cancelled"
+    | "cancelled_by_user";
   started_at: string;
   finished_at?: string;
   endpoint_current?: string;
@@ -220,9 +225,15 @@ function IngestionCard({
   );
   const isTerminal = [
     "completed",
+    "completed_with_warnings",
     "failed",
+    "failed_no_session",
+    "failed_dashboard_not_found",
+    "failed_no_widgets",
+    "failed_no_analytics_responses",
     "failed_regression",
     "cancelled",
+    "cancelled_by_user",
   ].includes(job.status);
   return (
     <article className="ingestion-progress-card">
@@ -341,9 +352,18 @@ function mergeHistory(history: IngestionJob[], active: IngestionJob[]) {
 }
 
 function isTerminalJob(job: IngestionJob) {
-  return ["completed", "failed", "failed_regression", "cancelled"].includes(
-    job.status,
-  );
+  return [
+    "completed",
+    "completed_with_warnings",
+    "failed",
+    "failed_no_session",
+    "failed_dashboard_not_found",
+    "failed_no_widgets",
+    "failed_no_analytics_responses",
+    "failed_regression",
+    "cancelled",
+    "cancelled_by_user",
+  ].includes(job.status);
 }
 
 function ingestionResult(job: IngestionJob) {

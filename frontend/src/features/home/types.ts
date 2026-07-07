@@ -128,9 +128,12 @@ export type KpiWidget = {
   title: string;
   value?: number | null;
   unit: "count" | "seconds" | "percent";
+  chart_type?: "line" | "bar" | "donut" | "table" | null;
   breakdown: KpiBreakdownItem[];
   timeseries: TimeseriesPoint[];
   chart_payload?: ChartPayload | null;
+  table_columns?: string[] | null;
+  table_rows?: Array<Record<string, unknown>> | null;
   comparison?: DashboardComparison | null;
   delta_percent?: number | null;
   semantic_state?: "positive" | "negative" | "neutral" | null;

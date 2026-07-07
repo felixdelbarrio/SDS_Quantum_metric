@@ -84,6 +84,8 @@ def map_card_role(call: dict[str, Any]) -> VisualRole | None:
     tab = _text(call.get("tab"))
     card_type = _text(call.get("card_type"))
     view_name = _text(call.get("view_name")) or ""
+    if view_name in {"navbarMetricsQuery", "dashboardReplayQuery"}:
+        return None
     metric_ids = _metric_ids(call.get("metric_ids"), metadata.get("metricIds"))
     dimension_paths = _dimension_paths(request_json)
 
@@ -142,11 +144,12 @@ def map_card_role(call: dict[str, Any]) -> VisualRole | None:
 def card_title_for_role(role: VisualRole, call: dict[str, Any]) -> str:
     request_json = _parse_json(call.get("request_json"))
     metadata = _metadata(request_json)
+    spec = spec_for_role(role)
     return (
         _text(call.get("card_title"))
         or _text(metadata.get("cardTitle"))
         or _text(metadata.get("title"))
-        or spec_for_role(role).title  # type: ignore[union-attr]
+        or (spec.title if spec else str(role))
     )
 
 
