@@ -694,6 +694,16 @@ textarea:focus-visible {
   gap: var(--space-3);
 }
 
+.generic-widget-table {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.generic-widget-table .dashboard-table {
+  min-width: 420px;
+  font-size: 13px;
+}
+
 .kpi-header,
 .section-heading {
   display: flex;

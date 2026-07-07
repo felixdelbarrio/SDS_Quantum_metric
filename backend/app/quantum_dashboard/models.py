@@ -13,18 +13,11 @@ type ParseStrategy = Literal[
     "donut_distribution_card_v1",
     "top_errors_table_card_v1",
     "percentage_table_card_v1",
+    "generic_metric_card_v1",
+    "generic_table_card_v1",
+    "generic_donut_card_v1",
 ]
-type VisualRole = Literal[
-    "summary.page_views",
-    "summary.sessions",
-    "summary.converted_sessions",
-    "summary.avg_session_duration",
-    "summary.detail_by_app_name_os",
-    "errors.error_sessions_percentage_evolution",
-    "errors.top_errors_by_error_name",
-    "errors.error_sessions_by_app_name_comparison",
-    "errors.error_session_percentage_by_app_name",
-]
+type VisualRole = str
 type RegressionStatus = Literal[
     "passed",
     "passed_with_tolerance",

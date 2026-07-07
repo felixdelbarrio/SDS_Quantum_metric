@@ -24,6 +24,7 @@ from backend.app.quantum_dashboard.chart_axes import (
     readable_x_ticks,
     readable_y_ticks,
 )
+from backend.app.quantum_dashboard.generic_roles import infer_generic_unit, is_generic_role
 from backend.app.quantum_dashboard.models import ParserResult, VisualRole
 from backend.app.quantum_dashboard.periods import parse_datetime, zoneinfo_for
 
@@ -108,6 +109,8 @@ def parse_card(call: dict[str, Any], role: VisualRole) -> ParserResult:
     response_json = parse_json_object(call.get("response_json"))
     if not response_json:
         return _error(role, "empty_response", "Quantum response_json is empty or not JSON.")
+    if is_generic_role(role):
+        return _parse_generic_card(call, role, response_json)
     strategy = ROLE_SPECS[role].parse_strategy
     if strategy in {
         "timeseries_metric_card_v1",
@@ -124,6 +127,146 @@ def parse_card(call: dict[str, Any], role: VisualRole) -> ParserResult:
     if strategy == "donut_distribution_card_v1":
         return _parse_donut(role, response_json)
     return _error(role, "missing_strategy", f"No parser strategy registered for {strategy}.")
+
+
+def _parse_generic_card(
+    call: dict[str, Any],
+    role: VisualRole,
+    response_json: dict[str, Any],
+) -> ParserResult:
+    card_type = str(call.get("card_type") or call.get("widget_type") or "").upper()
+    if card_type == "TABLE":
+        return _parse_generic_table(call, role, response_json)
+    if card_type == "DONUT":
+        return _parse_generic_donut(call, role, response_json)
+    return _parse_generic_metric(call, role, response_json)
+
+
+def _parse_generic_metric(
+    call: dict[str, Any],
+    role: VisualRole,
+    response_json: dict[str, Any],
+) -> ParserResult:
+    title = _generic_title(call, role)
+    rows = _rows(response_json)
+    value = _number_from_object(
+        response_json,
+        ("visible_value", "main_value", "total", "value", "count", "sessions"),
+    )
+    if value is None:
+        values = _generic_row_metric_values(rows)
+        if values:
+            unit_hint = infer_generic_unit(title, values[0])
+            value = _aggregate_values(values, average=unit_hint == "percent")
+    timeseries = _generic_timeseries(response_json)
+    if value is None and timeseries:
+        unit_hint = infer_generic_unit(title, timeseries[0].get("value"))
+        value = _aggregate_values(
+            [point["value"] for point in timeseries],
+            average=unit_hint == "percent",
+        )
+    if value is None:
+        result_values = _values_from_results(response_json)
+        if result_values:
+            unit_hint = infer_generic_unit(title, result_values[0])
+            value = _aggregate_values(result_values, average=unit_hint == "percent")
+    if value is None:
+        return _error(role, "metric_not_found", f"No generic value found for role {role}.")
+    unit = infer_generic_unit(title, value)
+    if unit == "percent":
+        value = _as_percent(value) or value
+        for point in timeseries:
+            parsed = _to_number(point.get("value"))
+            if parsed is not None:
+                point["value"] = _as_percent(parsed) or parsed
+    widget = {
+        "id": role,
+        "role": role,
+        "title": title,
+        "value": value,
+        "unit": unit,
+        "chart_type": "line",
+        "breakdown": [],
+        "timeseries": timeseries,
+        "comparison": _comparison(response_json),
+        "chart_payload": _line_chart_payload(
+            response_json=response_json,
+            role=role,
+            title=title,
+            unit=unit,
+            points=timeseries,
+        ),
+        "missing_source_field": None,
+    }
+    return ParserResult(role=role, status="ok", data={"widget": widget})
+
+
+def _parse_generic_table(
+    call: dict[str, Any],
+    role: VisualRole,
+    response_json: dict[str, Any],
+) -> ParserResult:
+    parsed_rows: list[dict[str, Any]] = []
+    for index, row in enumerate(_rows(response_json)):
+        parsed = _generic_table_row(row, index)
+        if parsed:
+            parsed_rows.append(parsed)
+    if not parsed_rows:
+        return _error(role, "row_shape_unknown", "Generic table has no parseable rows.")
+    columns = _generic_table_columns(response_json, parsed_rows)
+    widget = {
+        "id": role,
+        "role": role,
+        "title": _generic_title(call, role),
+        "value": len(parsed_rows),
+        "unit": "count",
+        "chart_type": "table",
+        "breakdown": [],
+        "timeseries": [],
+        "table_columns": columns,
+        "table_rows": parsed_rows,
+        "comparison": _comparison(response_json),
+    }
+    return ParserResult(
+        role=role,
+        status="ok",
+        data={"columns": columns, "rows": parsed_rows, "widget": widget},
+    )
+
+
+def _parse_generic_donut(
+    call: dict[str, Any],
+    role: VisualRole,
+    response_json: dict[str, Any],
+) -> ParserResult:
+    series = _series(response_json)
+    if not series:
+        for row in _rows(response_json):
+            label = _dimension_label(row, 0)
+            value = _first_metric_value(row)
+            if value is not None:
+                series.append({"name": label, "value": value, "percent": 0.0})
+    if not series:
+        return _error(role, "row_shape_unknown", "Generic donut has no parseable series.")
+    series = _group_web_donut_series(series)
+    total = _number_from_object(response_json, ("total", "visible_value")) or round(
+        sum(float(point.get("value") or 0) for point in series),
+        2,
+    )
+    title = _generic_title(call, role)
+    widget = {
+        "id": role,
+        "role": role,
+        "title": title,
+        "chart_type": "donut",
+        "total": total,
+        "value": total,
+        "unit": "count",
+        "series": series,
+        "chart_payload": _donut_chart_payload(series, role, title),
+        "comparison": _comparison(response_json),
+    }
+    return ParserResult(role=role, status="ok", data={"widget": widget})
 
 
 def _parse_metric_widget(
@@ -381,6 +524,108 @@ def _rows(response_json: dict[str, Any]) -> list[Any]:
     if isinstance(rows, list):
         return rows
     return extract_response_rows(response_json)
+
+
+def _generic_title(call: dict[str, Any], role: str) -> str:
+    return str(call.get("card_title") or call.get("title") or role)
+
+
+def _generic_row_metric_values(rows: list[Any]) -> list[float]:
+    values: list[float] = []
+    for row in rows:
+        value = _first_metric_value(row)
+        if value is not None:
+            values.append(value)
+    return values
+
+
+def _first_metric_value(row: Any) -> float | None:
+    if isinstance(row, dict):
+        metrics = row.get("metrics")
+        if isinstance(metrics, list):
+            for metric in metrics:
+                value = _to_number(metric[-1] if isinstance(metric, list) and metric else metric)
+                if value is not None:
+                    return value
+        value = _to_number(metrics)
+        if value is not None:
+            return value
+        flat = flatten_row(row)
+        for key in ("value", "count", "sessions", "metric", "metrics"):
+            value = _number_from_row(flat, (key,))
+            if value is not None:
+                return value
+    return None
+
+
+def _generic_timeseries(response_json: dict[str, Any]) -> list[dict[str, Any]]:
+    points = _timeseries(response_json, ("value", "count", "sessions", "metric", "metrics"))
+    if points:
+        return points
+    parsed: list[dict[str, Any]] = []
+    for row in _rows(response_json):
+        if not isinstance(row, dict):
+            continue
+        ts = _dimension_at(row, 0)
+        value = _first_metric_value(row)
+        if ts and value is not None:
+            parsed.append({"ts": ts, "value": value})
+    return parsed
+
+
+def _generic_table_row(row: Any, index: int) -> dict[str, Any]:
+    if not isinstance(row, dict):
+        return {}
+    flat = flatten_row(row)
+    parsed: dict[str, Any] = {"row_index": index}
+    dimensions = row.get("dimensions")
+    if isinstance(dimensions, list):
+        for dimension_index, value in enumerate(dimensions, start=1):
+            parsed[f"dimension_{dimension_index}"] = value
+        if dimensions:
+            parsed["name"] = "Null" if dimensions[0] is None else str(dimensions[0])
+    elif dimensions is not None:
+        parsed["dimension_1"] = dimensions
+        parsed["name"] = "Null" if dimensions is None else str(dimensions)
+    metrics = row.get("metrics")
+    if isinstance(metrics, list):
+        for metric_index, value in enumerate(metrics, start=1):
+            parsed[f"metric_{metric_index}"] = _to_number(
+                value[-1] if isinstance(value, list) and value else value
+            )
+    elif metrics is not None:
+        parsed["metric_1"] = _to_number(metrics)
+    for key, value in flat.items():
+        if key not in parsed and key not in {"dimensions", "metrics"}:
+            parsed[canonicalize_key(key)] = value
+    if "name" not in parsed:
+        parsed["name"] = _string_from_row(flat, ("name", "error name", "app name")) or "Null"
+    return parsed
+
+
+def _generic_table_columns(
+    response_json: dict[str, Any],
+    rows: list[dict[str, Any]],
+) -> list[str]:
+    response_columns = response_json.get("columns") or response_json.get("columnNames")
+    columns: list[str] = []
+    if isinstance(response_columns, list):
+        for column in response_columns:
+            if isinstance(column, str):
+                columns.append(canonicalize_key(column))
+            elif isinstance(column, dict):
+                value = column.get("key") or column.get("name") or column.get("label")
+                if value:
+                    columns.append(canonicalize_key(str(value)))
+    if not columns:
+        preferred = ["name"]
+        metric_keys = sorted({key for row in rows for key in row if key.startswith("metric_")})
+        dimension_keys = sorted(
+            {key for row in rows for key in row if key.startswith("dimension_")}
+        )
+        columns = [key for key in [*preferred, *dimension_keys, *metric_keys] if key in rows[0]]
+    extras = [key for key in rows[0] if key not in columns and key != "row_index"]
+    return [*columns, *extras]
 
 
 def _values_from_results(response_json: dict[str, Any]) -> list[float]:
@@ -658,6 +903,8 @@ def build_line_chart_payload_from_series(
     response_json: dict[str, Any] | None = None,
     aggregate_daily: bool = False,
     period_end: str | datetime | None = None,
+    mobile_label: str = "Mobile",
+    desktop_label: str = "Desktop",
 ) -> dict[str, Any] | None:
     point_builder = _visual_timeseries_points if aggregate_daily else _captured_timeseries_points
     parsed_period_end = parse_datetime(period_end, timezone="CST") if aggregate_daily else None
@@ -686,7 +933,7 @@ def build_line_chart_payload_from_series(
         "series": [
             {
                 "id": f"{role}.mobile",
-                "label": "Mobile",
+                "label": mobile_label,
                 "kind": "line",
                 "device": "mobile",
                 "points": mobile_visual_points,
@@ -694,17 +941,17 @@ def build_line_chart_payload_from_series(
             },
             {
                 "id": f"{role}.desktop",
-                "label": "Desktop",
+                "label": desktop_label,
                 "kind": "line",
                 "device": "desktop",
                 "points": desktop_visual_points,
-                "visible": True,
+                "visible": bool(desktop_visual_points),
             },
         ],
         "bands": _bands(response_json or {}),
         "legends": [
-            {"id": "mobile", "label": "Mobile", "device": "mobile"},
-            {"id": "desktop", "label": "Desktop", "device": "desktop"},
+            {"id": "mobile", "label": mobile_label, "device": "mobile"},
+            {"id": "desktop", "label": desktop_label, "device": "desktop"},
         ],
         "period_label": None,
         "granularity": "daily" if aggregate_daily else "captured",

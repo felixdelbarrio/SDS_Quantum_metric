@@ -17,7 +17,8 @@ from backend.app.quantum_dashboard.builder import (
     DATASET_WEB_SNAPSHOTS,
     range_dataset_path,
 )
-from backend.app.quantum_dashboard.catalog import MANDATORY_CARDS, ROLE_SPECS
+from backend.app.quantum_dashboard.catalog import MANDATORY_CARDS, ROLE_SPECS, spec_for_role
+from backend.app.quantum_dashboard.generic_roles import is_generic_role
 from backend.app.quantum_dashboard.models import (
     DashboardTab,
     RegressionCardResult,
@@ -61,7 +62,13 @@ def run_regression(
         set(enabled_roles) if enabled_roles is not None else {spec.role for spec in MANDATORY_CARDS}
     )
 
-    for spec in MANDATORY_CARDS:
+    specs = [spec for spec in MANDATORY_CARDS if spec.role in enabled_role_set]
+    for role in sorted(enabled_role_set - set(ROLE_SPECS)):
+        spec = spec_for_role(role)
+        if spec is not None:
+            specs.append(spec)
+
+    for spec in specs:
         if spec.role not in enabled_role_set:
             continue
         if spec.role not in contract_roles:
@@ -140,7 +147,18 @@ def _compare_card(
     tolerance: float,
     range_key: str,
 ) -> RegressionCardResult:
-    spec = ROLE_SPECS[role]
+    spec = spec_for_role(role)
+    if spec is None:
+        return _card_result(
+            "summary",
+            role,
+            str(role),
+            "failed_parse_error",
+            range_key=range_key,
+            details="No local spec available for role.",
+        )
+    if is_generic_role(role) and local.get("title"):
+        spec = spec.model_copy(update={"title": str(local.get("title"))})
     widget_id = _text(local.get("widget_id") or snapshot.get("widget_id"))
     if spec.card_type == "TABLE":
         web_rows = _list(snapshot.get("visible_table_rows"))
@@ -251,11 +269,25 @@ def _local_payload(
     range_key: str,
     dashboard_id: str | None,
 ) -> dict[str, Any] | None:
+    if is_generic_role(role):
+        rows = [
+            *_filter_dashboard_rows(
+                _read_dataset(store, country, DATASET_SUMMARY_WIDGETS, range_key),
+                dashboard_id,
+            ),
+            *_filter_dashboard_rows(
+                _read_dataset(store, country, DATASET_ERRORS_WIDGETS, range_key),
+                dashboard_id,
+            ),
+        ]
+        local = _first_role(rows, role)
+        if not local:
+            return None
+        if local.get("chart_type") == "table":
+            return {**local, "rows": _list(local.get("table_rows"))}
+        return local
     if role.startswith("summary.") and role != "summary.detail_by_app_name_os":
-        rows = _filter_dashboard_rows(
-            _read_dataset(store, country, DATASET_SUMMARY_WIDGETS, range_key),
-            dashboard_id,
-        )
+        rows = _widget_rows(store, country, range_key, dashboard_id)
         return _first_role(rows, role)
     if role == "summary.detail_by_app_name_os":
         rows = _filter_dashboard_rows(
@@ -267,10 +299,7 @@ def _local_payload(
         "errors.error_sessions_percentage_evolution",
         "errors.error_sessions_by_app_name_comparison",
     }:
-        rows = _filter_dashboard_rows(
-            _read_dataset(store, country, DATASET_ERRORS_WIDGETS, range_key),
-            dashboard_id,
-        )
+        rows = _widget_rows(store, country, range_key, dashboard_id)
         return _first_role(rows, role)
     if role == "errors.top_errors_by_error_name":
         rows = _filter_dashboard_rows(
@@ -287,13 +316,33 @@ def _local_payload(
     return None
 
 
+def _widget_rows(
+    store: ParquetStore,
+    country: str,
+    range_key: str,
+    dashboard_id: str | None,
+) -> list[dict[str, Any]]:
+    return [
+        *_filter_dashboard_rows(
+            _read_dataset(store, country, DATASET_SUMMARY_WIDGETS, range_key),
+            dashboard_id,
+        ),
+        *_filter_dashboard_rows(
+            _read_dataset(store, country, DATASET_ERRORS_WIDGETS, range_key),
+            dashboard_id,
+        ),
+    ]
+
+
 def _compare_chart_contract(
     role: VisualRole,
     snapshot: dict[str, Any],
     local: dict[str, Any],
     range_key: str,
 ) -> RegressionCardResult | None:
-    spec = ROLE_SPECS[role]
+    spec = spec_for_role(role)
+    if spec is None:
+        return None
     if spec.card_type not in {"CHART", "KPI"}:
         return None
     payload = local.get("chart_payload")
@@ -333,7 +382,13 @@ def _compare_chart_contract(
             details="Chart payload is missing x/y axis ticks.",
         )
     legend_labels = {str(item.get("label")) for item in legends if isinstance(item, dict)}
-    if not {"Mobile", "Desktop"}.issubset(legend_labels) and payload.get("chart_type") == "line":
+    single_series_chart = "All Users" in legend_labels
+    if (
+        not is_generic_role(role)
+        and not single_series_chart
+        and not {"Mobile", "Desktop"}.issubset(legend_labels)
+        and payload.get("chart_type") == "line"
+    ):
         return _card_result(
             spec.tab,
             role,
@@ -342,7 +397,12 @@ def _compare_chart_contract(
             range_key=range_key,
             details="Chart payload does not expose Mobile and Desktop legends.",
         )
-    if payload.get("chart_type") == "line" and len(series) < 2:
+    if (
+        payload.get("chart_type") == "line"
+        and not is_generic_role(role)
+        and not single_series_chart
+        and len(series) < 2
+    ):
         return _card_result(
             spec.tab,
             role,
@@ -355,9 +415,14 @@ def _compare_chart_contract(
         series_by_label = {
             str(item.get("label")): _list(item.get("points"))
             for item in series
-            if isinstance(item, dict)
+            if isinstance(item, dict) and item.get("visible") is not False
         }
-        for label in ("Mobile", "Desktop"):
+        expected_labels = (
+            tuple(series_by_label)
+            if is_generic_role(role) or single_series_chart
+            else ("Mobile", "Desktop")
+        )
+        for label in expected_labels:
             points = series_by_label.get(label) or []
             if not points or len(points) > 8:
                 return _card_result(
@@ -395,6 +460,10 @@ def _table_row_signature(role: VisualRole, row: Any) -> tuple[Any, ...]:
         keys = ("name", "error_name", "error_sessions", "error_session_percent")
     elif role == "errors.error_session_percentage_by_app_name":
         keys = ("name", "app_name", "sessions", "sessions_with_error", "error_session_percent")
+    elif is_generic_role(role):
+        metric_keys = tuple(sorted(key for key in row if key.startswith("metric_")))
+        dimension_keys = tuple(sorted(key for key in row if key.startswith("dimension_")))
+        keys = ("name", *dimension_keys, *metric_keys)
     else:
         keys = ("name",)
     return tuple(_signature_value(row.get(key)) for key in keys)
@@ -572,7 +641,8 @@ def _markdown(report: RegressionReport) -> str:
 def _chart_rows(report: RegressionReport) -> list[str]:
     rows = []
     for card in report.cards:
-        if ROLE_SPECS[card.card_role].card_type == "TABLE":
+        spec = spec_for_role(card.card_role)
+        if spec and spec.card_type == "TABLE":
             continue
         rows.append(
             f"| {card.tab} | {card.card_title} | - | "
@@ -586,7 +656,8 @@ def _chart_rows(report: RegressionReport) -> list[str]:
 def _table_rows(report: RegressionReport) -> list[str]:
     rows = []
     for card in report.cards:
-        if ROLE_SPECS[card.card_role].card_type != "TABLE":
+        spec = spec_for_role(card.card_role)
+        if not spec or spec.card_type != "TABLE":
             continue
         rows.append(
             f"| {card.tab} | {card.card_title} | checked | {_format_cell(card.local_value)} | "

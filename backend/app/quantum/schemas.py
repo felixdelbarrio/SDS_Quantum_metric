@@ -7,6 +7,12 @@ from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from backend.app.quantum_dashboard.generic_roles import (
+    generic_role_for_widget,
+    is_generic_role,
+    is_supported_generic_widget_type,
+)
+
 
 class BrowserName(StrEnum):
     chrome = "chrome"
@@ -110,6 +116,23 @@ class QuantumWidgetConfig(BaseModel):
     @classmethod
     def _strip_widget_text(cls, value: object) -> object:
         return value.strip() if isinstance(value, str) else value
+
+    @model_validator(mode="after")
+    def _migrate_generic_widget_support(self) -> QuantumWidgetConfig:
+        if self.role and is_generic_role(self.role):
+            self.supported = True
+            return self
+        if not self.role and is_supported_generic_widget_type(self.widget_type):
+            self.role = generic_role_for_widget(
+                widget_id=self.widget_id,
+                card_id=self.card_id,
+                widget_type=self.widget_type,
+                tab_index=self.tab_index,
+            )
+            self.supported = True
+            self.required = True
+            self.enabled = True
+        return self
 
 
 class QuantumDashboardConfig(BaseModel):

@@ -21,3 +21,9 @@ Desde Iteracion 15:
 - `Test pais`, `Actualizar dashboards` y `Validar dashboard` muestran pending, success y error.
 - Colombia puede usar manualmente `https://bbvaco.quantummetric.com` y el dashboard SDS.
 - El selector usa `dashboard_id` como value y `name` como label.
+
+Desde Iteracion 16:
+
+- CHART/KPI, TABLE y DONUT desconocidos se evalúan por capacidad y dejan de aparecer como `no soportado` si existe parser generico.
+- Colombia SDS debe quedar con 11 widgets habilitados/soportados.
+- Si un dashboard manual comparte `card_id` entre widgets TABLE, la validacion conserva el orden de widgets de Quantum para resolverlos.

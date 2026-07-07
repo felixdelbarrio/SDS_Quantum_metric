@@ -17,3 +17,9 @@ Endpoints utiles:
 - `GET /api/datasets/{country}/entities/{entity}?dashboard_id=...&widget_id=...`
 
 Para auditar Iteracion 15, filtrar siempre por `country`, `dashboard_id`, `widget_id` y `range_key` antes de comparar Colombia y Mexico.
+
+Para auditar Iteracion 16:
+
+- Revisar `range_key=last_7_days/derived/summary_widgets` y `derived/errors_widgets` para widgets genericos.
+- Las tablas genericas se persistiran dentro del widget con `chart_type=table`, `table_columns` y `table_rows`.
+- Comparar `source_query_hash` y `source_response_hash` por widget cuando una fila no cuadre con Quantum Web.

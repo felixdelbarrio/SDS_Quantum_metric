@@ -35,7 +35,9 @@ Playwright ni clientes HTTP externos.
 - `manual_dashboard.py`: parseo y validacion de dashboards manuales por URL o dashboard ID.
 - `capture.py`: captura guiada de tabs configuradas, con rango `ts` explicito y fallo solo si todas quedan sin analytics.
 - `card_mapper.py`: asociacion de llamadas Quantum a roles visuales.
-- `parsers.py`: estrategias por rol visual, con `chart_payload` cuando la respuesta trae puntos.
+- `widget_support.py`: evaluacion centralizada de soporte por parser especifico o capacidad generica.
+- `widget_roles.py`: descriptores de widgets y resolucion por `widget_id`, `card_id` o secuencia cuando Quantum comparte IDs temporales.
+- `parsers.py`: estrategias por rol visual y parsers genericos, con `chart_payload` cuando la respuesta trae puntos.
 - `builder.py`: raw calls -> visual contracts -> web snapshots -> derived Parquet -> chart payloads.
 - `service.py`: endpoints `/api/local-dashboard/*` desde derivados.
 - `regression.py`: comparacion Web vs Local de valores, ejes, leyendas, series y tablas.
@@ -60,6 +62,8 @@ Cuando la UI solicita Today, Yesterday o Last 7 Days, la ingesta crea un contrat
 `range_key`, `range_start`, `range_end`, `range_timezone` y `capture_mode=range_contract`.
 Cada response se valida tras la reescritura temporal; si el rango extraido no coincide, no se
 publica como dato local valido.
+Las TABLE que Quantum ya acota con `ts=<range_key>` conservan su rango nativo cuando la reescritura
+forzada provoca errores del endpoint; el resultado se compara igualmente por Web snapshot.
 
 ## Flujo del dashboard offline
 
@@ -99,3 +103,9 @@ Cada pais activo requiere un dashboard default validado para guardar configuraci
 Home, Dashboards, Datasets y Analytics no importan modulos Quantum ni llaman URLs externas. El backend expone datos calculados desde Parquet.
 
 La app local excluye videos de sesiones: no hay rutas `/video`, componentes de reproduccion, enlaces ni persistencia de URLs de video.
+
+## Iteracion 16
+
+Colombia SDS y Mexico default usan el mismo pipeline Web -> RAW -> derivados -> Home -> regresion.
+Los widgets `generic.*` permiten reproducir dashboards personalizados sin hardcodear titulos. La
+regresion 2026-07-07 queda documentada en `docs/regression/iteration-16-*.md`.

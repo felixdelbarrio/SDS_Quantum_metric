@@ -6,11 +6,18 @@ from datetime import UTC, datetime
 from typing import Any
 
 from backend.app.analytics.normalizer import canonicalize_key, parse_json_object
-from backend.app.quantum_dashboard.card_mapper import card_title_for_role, map_card_role
-from backend.app.quantum_dashboard.catalog import ERRORS_APP_COMPARISON, ROLE_SPECS, required_roles
+from backend.app.quantum.schemas import QuantumWidgetConfig
+from backend.app.quantum_dashboard.card_mapper import card_title_for_role
+from backend.app.quantum_dashboard.catalog import (
+    ERRORS_APP_COMPARISON,
+    required_roles,
+    spec_for_role,
+)
+from backend.app.quantum_dashboard.generic_roles import is_generic_role
 from backend.app.quantum_dashboard.models import (
     CardContract,
     DashboardPeriod,
+    DashboardTab,
     DerivedBuildResult,
     ParserResult,
     RegressionStatus,
@@ -20,6 +27,13 @@ from backend.app.quantum_dashboard.models import (
 from backend.app.quantum_dashboard.parsers import build_line_chart_payload_from_series, parse_card
 from backend.app.quantum_dashboard.periods import format_period_label, parse_datetime
 from backend.app.quantum_dashboard.semantics import semantic_intent, semantic_state
+from backend.app.quantum_dashboard.widget_roles import (
+    WidgetRoleDescriptor,
+    descriptors_from_widgets,
+    enrich_ambiguous_calls_with_descriptor_sequence,
+    enrich_call_with_descriptor,
+    resolve_call_role,
+)
 from backend.app.storage.parquet_store import ParquetStore, hash_json
 
 DATASET_VISUAL_CONTRACTS = "visual_contracts"
@@ -64,18 +78,26 @@ def build_derived_datasets(
     dashboard_id: str | None = None,
     dashboard_name: str | None = None,
     range_key: str = "today",
+    widget_configs: list[QuantumWidgetConfig] | None = None,
 ) -> DerivedBuildResult:
     calls = raw_calls if raw_calls is not None else _read_raw_calls(store, country, range_key)
     calls = _filter_calls_for_range(calls, range_key)
     calls = _filter_calls_for_dashboard(calls, dashboard_id)
+    calls = _filter_calls_to_latest_period(calls, range_key)
     enabled_role_set: set[str] = (
         set(enabled_roles)
         if enabled_roles is not None
         else {str(role) for role in required_roles()}
     )
-    selected = _latest_call_by_role(calls)
+    descriptors = descriptors_from_widgets(widget_configs)
+    calls = enrich_ambiguous_calls_with_descriptor_sequence(
+        calls,
+        descriptors=descriptors,
+        enabled_roles=enabled_role_set,
+    )
+    selected = _latest_call_by_role(calls, descriptors, enabled_role_set)
     selected = {role: call for role, call in selected.items() if str(role) in enabled_role_set}
-    related_calls_by_role = _related_calls_by_role(calls)
+    related_calls_by_role = _related_calls_by_role(calls, descriptors, enabled_role_set)
     related_calls_by_role = {
         role: calls
         for role, calls in related_calls_by_role.items()
@@ -184,7 +206,7 @@ def build_derived_datasets(
         store, country, DATASET_CHART_PAYLOADS, chart_payload_rows, range_key=range_key
     )
 
-    expected_roles = [role for role in required_roles() if str(role) in enabled_role_set]
+    expected_roles = sorted(enabled_role_set)
     missing = [role for role in expected_roles if role not in selected]
     mandatory_captured = len([role for role in expected_roles if role in selected])
     regression_status: RegressionStatus = (
@@ -221,26 +243,47 @@ def build_derived_datasets(
     )
 
 
-def _latest_call_by_role(calls: list[dict[str, Any]]) -> dict[VisualRole, dict[str, Any]]:
+def _latest_call_by_role(
+    calls: list[dict[str, Any]],
+    descriptors: list[WidgetRoleDescriptor],
+    enabled_roles: set[str],
+) -> dict[VisualRole, dict[str, Any]]:
     selected: dict[VisualRole, dict[str, Any]] = {}
     scores: dict[VisualRole, int] = {}
     for call in calls:
-        role = map_card_role(call)
+        if _is_non_widget_query(call):
+            continue
+        role, descriptor = resolve_call_role(
+            call,
+            descriptors=descriptors,
+            enabled_roles=enabled_roles,
+        )
         if role is None:
             continue
-        score = _call_score(role, call)
+        enriched = enrich_call_with_descriptor(call, descriptor, role)
+        score = _call_score(role, enriched)
         if role not in selected or score >= scores[role]:
-            selected[role] = {**call, "card_role": role}
+            selected[role] = enriched
             scores[role] = score
     return selected
 
 
-def _related_calls_by_role(calls: list[dict[str, Any]]) -> dict[VisualRole, RelatedRoleCalls]:
+def _related_calls_by_role(
+    calls: list[dict[str, Any]],
+    descriptors: list[WidgetRoleDescriptor],
+    enabled_roles: set[str],
+) -> dict[VisualRole, RelatedRoleCalls]:
     selected: dict[VisualRole, RelatedRoleCalls] = {}
     scores: dict[tuple[VisualRole, str], int] = {}
     last_role_by_card: dict[str, VisualRole] = {}
     for call in calls:
-        mapped_role = map_card_role(call)
+        if _is_non_widget_query(call):
+            continue
+        mapped_role, descriptor = resolve_call_role(
+            call,
+            descriptors=descriptors,
+            enabled_roles=enabled_roles,
+        )
         card_id = _text(call.get("card_id"))
         view_name = str(call.get("view_name") or "")
         if mapped_role is not None and card_id:
@@ -250,22 +293,23 @@ def _related_calls_by_role(calls: list[dict[str, Any]]) -> dict[VisualRole, Rela
             continue
         if _response_has_error(call):
             continue
+        enriched = enrich_call_with_descriptor(call, descriptor, role)
         related = selected.setdefault(role, RelatedRoleCalls())
         variant = "comparison" if "ComparisonSegment" in view_name else "base"
         if "timeSeriesQuery" in view_name:
             slot = f"{variant}_timeseries"
-            score = _timeseries_score(call)
+            score = _timeseries_score(enriched)
         elif view_name in {"coreMetrics", "coreMetricsComparisonSegment"}:
             slot = f"{variant}_total_metric"
-            score = _call_score(role, call)
+            score = _call_score(role, enriched)
         elif ":historical" in view_name:
             continue
         else:
             slot = f"{variant}_metric"
-            score = _call_score(role, call)
+            score = _call_score(role, enriched)
         key = (role, slot)
         if score >= scores.get(key, -1):
-            setattr(related, slot, {**call, "card_role": role})
+            setattr(related, slot, enriched)
             scores[key] = score
     return selected
 
@@ -280,6 +324,10 @@ def _timeseries_score(call: dict[str, Any]) -> int:
     return score
 
 
+def _is_non_widget_query(call: dict[str, Any]) -> bool:
+    return str(call.get("view_name") or "") in {"navbarMetricsQuery", "dashboardReplayQuery"}
+
+
 def _with_related_timeseries(
     result: ParserResult,
     related_calls: RelatedRoleCalls | None,
@@ -292,17 +340,31 @@ def _with_related_timeseries(
     widget = result.data.get("widget")
     if not isinstance(widget, dict):
         return result
+    base_timeseries = _parsed_timeseries(related_calls.base_timeseries, role)
+    comparison_timeseries = _parsed_timeseries(related_calls.comparison_timeseries, role)
+    single_series = bool(base_timeseries) and not comparison_timeseries
     base_widget = _parsed_widget(related_calls.base_metric, role)
     comparison_widget = _parsed_widget(related_calls.comparison_metric, role)
     if base_widget or comparison_widget:
         breakdown = []
         if base_widget and base_widget.get("value") is not None:
-            breakdown.append({"label": "Desktop", "value": base_widget["value"]})
+            breakdown.append(
+                {
+                    "label": "All Users" if is_generic_role(role) or single_series else "Desktop",
+                    "value": base_widget["value"],
+                }
+            )
         if comparison_widget and comparison_widget.get("value") is not None:
-            breakdown.append({"label": "Mobile", "value": comparison_widget["value"]})
+            breakdown.append(
+                {
+                    "label": "Historical Range" if is_generic_role(role) else "Mobile",
+                    "value": comparison_widget["value"],
+                }
+            )
         if breakdown:
             widget["breakdown"] = breakdown
-            unit = str(widget.get("unit") or ROLE_SPECS[role].unit or "count")
+            spec = spec_for_role(role)
+            unit = str(widget.get("unit") or (spec.unit if spec else None) or "count")
             if unit == "count":
                 widget["value"] = round(sum(float(item["value"]) for item in breakdown), 2)
             elif comparison_widget and comparison_widget.get("value") is not None:
@@ -315,8 +377,6 @@ def _with_related_timeseries(
         if total is not None:
             widget["value"] = total
             widget["total"] = total
-    base_timeseries = _parsed_timeseries(related_calls.base_timeseries, role)
-    comparison_timeseries = _parsed_timeseries(related_calls.comparison_timeseries, role)
     period_call = (
         related_calls.comparison_timeseries
         or related_calls.base_timeseries
@@ -327,12 +387,17 @@ def _with_related_timeseries(
     )
     period = _period_from_call(period_call or {})
     if base_timeseries or comparison_timeseries:
+        spec = spec_for_role(role)
+        mobile_points = (
+            base_timeseries if is_generic_role(role) or single_series else comparison_timeseries
+        )
+        desktop_points = [] if is_generic_role(role) or single_series else base_timeseries
         chart_payload = build_line_chart_payload_from_series(
             role=role,
-            title=str(widget.get("title") or ROLE_SPECS[role].title),
-            unit=str(widget.get("unit") or ROLE_SPECS[role].unit or "count"),
-            mobile_points=comparison_timeseries,
-            desktop_points=base_timeseries,
+            title=str(widget.get("title") or (spec.title if spec else role)),
+            unit=str(widget.get("unit") or (spec.unit if spec else None) or "count"),
+            mobile_points=mobile_points,
+            desktop_points=desktop_points,
             response_json=parse_json_object(
                 (related_calls.comparison_timeseries or related_calls.base_timeseries or {}).get(
                     "response_json"
@@ -340,6 +405,8 @@ def _with_related_timeseries(
             ),
             aggregate_daily=range_key == "last_7_days",
             period_end=period.get("end") if period else None,
+            mobile_label="All Users" if is_generic_role(role) or single_series else "Mobile",
+            desktop_label="Desktop",
         )
         if isinstance(chart_payload, dict):
             widget["chart_payload"] = chart_payload
@@ -395,7 +462,16 @@ def _flatten_chart_series(chart_payload: dict[str, Any]) -> list[dict[str, Any]]
 def _call_score(role: VisualRole, call: dict[str, Any]) -> int:
     view_name = str(call.get("view_name") or "")
     score = int(call.get("row_count") or 0)
-    if role in {
+    if is_generic_role(role) and str(call.get("card_type") or "").upper() == "TABLE":
+        if view_name == "table":
+            score += 1000
+        if view_name == "topN":
+            score += 900
+        if view_name == "dimensionQuery":
+            score += 800
+        if view_name == "coreMetrics":
+            score += 100
+    elif role in {
         "summary.detail_by_app_name_os",
         "errors.top_errors_by_error_name",
         "errors.error_session_percentage_by_app_name",
@@ -424,6 +500,11 @@ def _call_score(role: VisualRole, call: dict[str, Any]) -> int:
 
 
 def _response_has_error(call: dict[str, Any]) -> bool:
+    try:
+        if int(call.get("status_code") or 0) >= 400:
+            return True
+    except (TypeError, ValueError):
+        pass
     response = parse_json_object(call.get("response_json"))
     return bool(response.get("error"))
 
@@ -438,7 +519,9 @@ def _contract_from_call(
     dashboard_id: str | None = None,
     dashboard_name: str | None = None,
 ) -> CardContract:
-    spec = ROLE_SPECS[role]
+    spec = spec_for_role(role)
+    if spec is None:
+        raise ValueError(f"No dashboard card spec registered for role {role}.")
     request_json = parse_json_object(call.get("request_json"))
     response_json = parse_json_object(call.get("response_json"))
     metadata = _metadata(request_json)
@@ -451,7 +534,10 @@ def _contract_from_call(
         (period.get("timezone") if period else None) or _text(call.get("range_timezone")) or "CST",
     )
     card_id = _text(call.get("card_id") or metadata.get("cardId")) or f"mapped:{role}"
-    tab_index = _int(call.get("tab_index"), 0 if spec.tab == "summary" else 1)
+    tab = _text(call.get("tab"))
+    tab_name = _text(call.get("tab_name"))
+    resolved_tab: DashboardTab = "errors" if tab == "errors" or spec.tab == "errors" else "summary"
+    tab_index = _int(call.get("tab_index"), 0 if resolved_tab == "summary" else 1)
     return CardContract(
         country=country,
         dashboard_id=dashboard_id or _text(call.get("dashboard_id") or metadata.get("dashboardId")),
@@ -465,12 +551,12 @@ def _contract_from_call(
         capture_mode=_text(call.get("capture_mode")) or "range_contract",
         source_query_hash=_text(call.get("query_hash")) or hash_json(request_json),
         source_response_hash=_text(call.get("response_hash")) or hash_json(response_json),
-        tab=spec.tab,
-        tab_name="Resumen" if spec.tab == "summary" else "Errores",
+        tab=resolved_tab,
+        tab_name=tab_name or ("Resumen" if resolved_tab == "summary" else "Errores"),
         tab_index=tab_index,
         widget_id=_text(call.get("widget_id")) or card_id,
         card_id=card_id,
-        card_title=card_title_for_role(role, call),
+        card_title=_text(call.get("card_title")) or card_title_for_role(role, call),
         card_type=_text(call.get("card_type") or metadata.get("cardType")) or spec.card_type,
         visual_role=role,
         source_endpoint=_text(call.get("endpoint") or call.get("source_endpoint")) or "unknown",
@@ -672,6 +758,8 @@ def _widget_row(contract: CardContract, widget: dict[str, Any]) -> dict[str, Any
         "breakdown": widget.get("breakdown", []),
         "series": widget.get("series", []),
         "timeseries": widget.get("timeseries", []),
+        "table_columns": widget.get("table_columns", []),
+        "table_rows": widget.get("table_rows", []),
         "chart_payload": chart_payload,
         "comparison": widget.get("comparison"),
         "delta_percent": delta_percent,
@@ -862,6 +950,44 @@ def _filter_calls_for_dashboard(
         if _text(call.get("dashboard_id")) in {dashboard_id, None}
         or _metadata(parse_json_object(call.get("request_json"))).get("dashboardId") == dashboard_id
     ]
+
+
+def _filter_calls_to_latest_period(
+    calls: list[dict[str, Any]],
+    range_key: str | None,
+) -> list[dict[str, Any]]:
+    key = _safe_range_key(range_key)
+    if key not in {"today", "yesterday", "last_7_days"} or not calls:
+        return calls
+    periods: list[tuple[datetime, str, dict[str, Any]]] = []
+    for call in calls:
+        start = _period_filter_start(call)
+        end = _period_filter_end(call)
+        parsed_end = parse_datetime(end, _text(call.get("source_timezone")) or "CST")
+        if parsed_end is None:
+            continue
+        periods.append((parsed_end, f"{start or ''}|{end or ''}", call))
+    if not periods:
+        return calls
+    latest_end = max(item[0] for item in periods)
+    latest_keys = {period_key for end, period_key, _ in periods if end == latest_end}
+    return [
+        call
+        for call in calls
+        if f"{_period_filter_start(call) or ''}|{_period_filter_end(call) or ''}" in latest_keys
+    ]
+
+
+def _period_filter_start(call: dict[str, Any]) -> str | None:
+    return _text(
+        call.get("range_start") or call.get("capture_chunk_start") or call.get("source_ts_start")
+    )
+
+
+def _period_filter_end(call: dict[str, Any]) -> str | None:
+    return _text(
+        call.get("range_end") or call.get("capture_chunk_end") or call.get("source_ts_end")
+    )
 
 
 def _safe_range_key(range_key: str | None) -> str:

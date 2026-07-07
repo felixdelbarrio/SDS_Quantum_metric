@@ -13,6 +13,11 @@ type Props = {
 export function KpiWidget({ widget }: Props) {
   const [expanded, setExpanded] = useState(false);
   const hasValue = widget.value !== null && widget.value !== undefined;
+  const isTable = widget.chart_type === "table";
+  const tableRows = widget.table_rows ?? [];
+  const tableColumns = widget.table_columns?.length
+    ? widget.table_columns
+    : inferColumns(tableRows);
 
   return (
     <article
@@ -49,7 +54,9 @@ export function KpiWidget({ widget }: Props) {
           <Maximize2 size={16} />
         </button>
       </div>
-      {hasValue ? (
+      {isTable ? (
+        <GenericTablePreview columns={tableColumns} rows={tableRows} />
+      ) : hasValue ? (
         <>
           {widget.breakdown.length ? (
             <div className="kpi-segment-values">
@@ -61,7 +68,9 @@ export function KpiWidget({ widget }: Props) {
               ))}
             </div>
           ) : null}
-          <QuantumChart payload={widget.chart_payload} title={widget.title} />
+          {widget.chart_payload || !widget.role?.startsWith("generic.") ? (
+            <QuantumChart payload={widget.chart_payload} title={widget.title} />
+          ) : null}
           <div className="breakdown-list">
             {widget.breakdown.slice(0, 3).map((item) => (
               <span key={item.label}>
@@ -89,6 +98,62 @@ export function KpiWidget({ widget }: Props) {
       />
     </article>
   );
+}
+
+function GenericTablePreview({
+  columns,
+  rows,
+}: {
+  columns: string[];
+  rows: Array<Record<string, unknown>>;
+}) {
+  if (!rows.length || !columns.length) {
+    return (
+      <span className="widget-missing">Sin filas locales para esta tabla</span>
+    );
+  }
+  return (
+    <div className="generic-widget-table">
+      <table className="table dashboard-table">
+        <thead>
+          <tr>
+            {columns.slice(0, 4).map((column) => (
+              <th key={column}>{labelForColumn(column)}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.slice(0, 5).map((row, index) => (
+            <tr key={String(row.row_index ?? index)}>
+              {columns.slice(0, 4).map((column) => (
+                <td key={column}>{formatCell(row[column])}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function inferColumns(rows: Array<Record<string, unknown>>) {
+  if (!rows.length) return [];
+  return Object.keys(rows[0]).filter((key) => key !== "row_index");
+}
+
+function labelForColumn(value: string) {
+  return value
+    .replace(/^dimension_/, "Dimension ")
+    .replace(/^metric_/, "Metric ")
+    .replaceAll("_", " ");
+}
+
+function formatCell(value: unknown) {
+  if (value === null || value === undefined || value === "") return "-";
+  if (typeof value === "number") {
+    return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  }
+  return String(value);
 }
 
 function domainLabel(widget: KpiWidgetType) {

@@ -135,6 +135,13 @@ recarga Home: el dashboard debe seguir funcionando sobre Parquet local.
 - Iteracion 9 storage audit en `docs/as-is/iteration-9-storage-audit.md`.
 - Iteracion 9 RCA de ingesta en `docs/as-is/iteration-9-ingestion-failure-rca.md`.
 - Evidencia Web/Local en `docs/to-be/web-local-evidence-chain.md`.
+- RCA Iteracion 16 en `docs/as-is/iteration-16-widget-support-rca.md`.
+- Soporte generico de widgets en `docs/to-be/iteration-16-widget-support-refactor.md`.
+- Contrato de parsers genericos en `docs/to-be/generic-widget-parser-contract.md`.
+- Validacion Colombia SDS en `docs/to-be/colombia-sds-validation.md`.
+- Recuperacion Mexico last 7 days en `docs/to-be/mexico-regression-recovery.md`.
+- Estados de ingesta Iteracion 16 en `docs/to-be/ingestion-failure-states.md`.
+- Regresion CO/MX Iteracion 16 en `docs/regression/iteration-16-*-last-7-days.md`.
 - Backend local versionado bajo `/api`.
 - Persistencia Parquet en la ruta de usuario activa bajo `parquet/country=<pais>`.
 - Export/import ZIP en la ruta de usuario activa bajo `exports`.
