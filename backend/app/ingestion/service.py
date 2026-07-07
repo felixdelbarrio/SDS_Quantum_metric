@@ -18,11 +18,16 @@ from backend.app.quantum.config_store import QuantumConfigStore
 from backend.app.quantum.schemas import QuantumDashboardConfig
 from backend.app.quantum_dashboard.builder import build_derived_datasets
 from backend.app.quantum_dashboard.capture import capture_quantum_dashboard_cards
-from backend.app.quantum_dashboard.card_mapper import map_card_role
 from backend.app.quantum_dashboard.discovery import discover_dashboard_from_config
 from backend.app.quantum_dashboard.models import DerivedBuildResult, RegressionReport
 from backend.app.quantum_dashboard.periods import parse_date, zoneinfo_for
 from backend.app.quantum_dashboard.regression import REGRESSION_REPORT_PATH, run_regression
+from backend.app.quantum_dashboard.widget_roles import (
+    descriptors_from_widgets,
+    enrich_ambiguous_calls_with_descriptor_sequence,
+    enrich_call_with_descriptor,
+    resolve_call_role,
+)
 from backend.app.storage.parquet_store import ParquetStore, RawCallMergeResult
 
 INGESTION_TERMINAL_STATUSES = {
@@ -306,7 +311,7 @@ class IngestionService:
                             str(exc),
                         ) from exc
                     raise
-                captured = _filter_enabled_rows(captured, enabled_roles)
+                captured = _filter_enabled_rows(captured, enabled_roles, dashboard.widgets)
                 captured = [
                     {
                         **row,
@@ -338,6 +343,7 @@ class IngestionService:
                     dashboard_id=discovery.dashboard_id,
                     dashboard_name=dashboard.name,
                     range_key=ingestion_range.range_key,
+                    widget_configs=dashboard.widgets,
                 )
                 rows_replaced += merge.rows_replaced if merge else 0
                 rows_after_merge = merge.rows_after if merge else rows_after_merge
@@ -379,6 +385,7 @@ class IngestionService:
                     dashboard_id=discovery.dashboard_id,
                     dashboard_name=dashboard.name,
                     range_key=ingestion_range.range_key,
+                    widget_configs=dashboard.widgets,
                 )
                 update_progress(job, status="running_regression", message="Ejecutando regresion.")
                 report = run_regression(
@@ -409,6 +416,7 @@ class IngestionService:
                     enabled_roles=enabled_roles,
                     dashboard_id=discovery.dashboard_id,
                     dashboard_name=dashboard.name,
+                    widget_configs=dashboard.widgets,
                     range_key=ingestion_range.range_key,
                 )
             if report is None:
@@ -615,6 +623,7 @@ def _publish_completed_chunk(
     dashboard_id: str | None = None,
     dashboard_name: str | None = None,
     range_key: str | None = None,
+    widget_configs: list[Any] | None = None,
 ) -> tuple[RawCallMergeResult | None, DerivedBuildResult, RegressionReport]:
     resolved_range_key = range_key or _range_key_from_rows(rows)
     merge = store.merge_raw_calls(country, rows) if rows else None
@@ -626,6 +635,7 @@ def _publish_completed_chunk(
         dashboard_id=dashboard_id,
         dashboard_name=dashboard_name,
         range_key=resolved_range_key,
+        widget_configs=widget_configs,
     )
     report = run_regression(
         store,
@@ -667,16 +677,31 @@ def _set_chunk_status(job: IngestionJob, index: int, status: str) -> None:
 def _filter_enabled_rows(
     rows: list[dict[str, Any]],
     enabled_roles: set[str],
+    widget_configs: list[Any] | None = None,
 ) -> list[dict[str, Any]]:
+    descriptors = descriptors_from_widgets(widget_configs)
+    rows = enrich_ambiguous_calls_with_descriptor_sequence(
+        rows,
+        descriptors=descriptors,
+        enabled_roles=enabled_roles,
+    )
     card_roles_by_id: dict[str, set[str]] = {}
     for row in rows:
-        role = map_card_role(row)
+        role, descriptor = resolve_call_role(
+            row,
+            descriptors=descriptors,
+            enabled_roles=enabled_roles,
+        )
         card_id = str(row.get("card_id") or "")
         if role is not None and card_id:
             card_roles_by_id.setdefault(card_id, set()).add(str(role))
     filtered: list[dict[str, Any]] = []
     for row in rows:
-        role = map_card_role(row)
+        role, descriptor = resolve_call_role(
+            row,
+            descriptors=descriptors,
+            enabled_roles=enabled_roles,
+        )
         card_id = str(row.get("card_id") or "")
         resolved_role = str(role) if role is not None else None
         inferred_roles = card_roles_by_id.get(card_id, set())
@@ -684,7 +709,14 @@ def _filter_enabled_rows(
             resolved_role = next(iter(inferred_roles))
         if resolved_role is not None:
             if resolved_role in enabled_roles:
-                filtered.append({**row, "card_role": resolved_role})
+                filtered.append(enrich_call_with_descriptor(row, descriptor, resolved_role))
+            continue
+        disabled_role, _ = resolve_call_role(
+            row,
+            descriptors=descriptors,
+            enabled_roles=None,
+        )
+        if disabled_role is not None and disabled_role not in enabled_roles:
             continue
         filtered.append(row)
     return filtered

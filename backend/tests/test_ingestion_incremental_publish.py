@@ -66,10 +66,12 @@ async def test_ingestion_publishes_dashboard_after_each_completed_chunk(
         dashboard_id: str | None = None,
         dashboard_name: str | None = None,
         range_key: str | None = None,
+        widget_configs: list[Any] | None = None,
     ) -> tuple[RawCallMergeResult, _Build, _Report]:
         _ = parquet_store, country, ingestion_id, dashboard_name, range_key
         assert "summary.page_views" in enabled_roles
         assert dashboard_id == "dash"
+        assert widget_configs is not None
         published_chunks.append(rows)
         return (
             RawCallMergeResult(
@@ -204,6 +206,59 @@ def test_filter_enabled_rows_materializes_resolved_card_role() -> None:
         "summary.page_views",
         "summary.page_views",
     ]
+
+
+def test_filter_enabled_rows_assigns_ambiguous_table_calls_by_widget_order() -> None:
+    widgets = [
+        QuantumWidgetConfig(
+            role="generic.0.table.first",
+            title="First table",
+            widget_id="first-widget",
+            card_id="shared-card",
+            widget_type="TABLE",
+            tab="summary",
+            tab_index=0,
+            enabled=True,
+            supported=True,
+        ),
+        QuantumWidgetConfig(
+            role="generic.0.table.second",
+            title="Second table",
+            widget_id="second-widget",
+            card_id="shared-card",
+            widget_type="TABLE",
+            tab="summary",
+            tab_index=0,
+            enabled=True,
+            supported=True,
+        ),
+    ]
+    rows = [
+        {
+            "card_id": "shared-card",
+            "card_type": "TABLE",
+            "view_name": "table",
+            "response_json": "{}",
+        },
+        {
+            "card_id": "shared-card",
+            "card_type": "TABLE",
+            "view_name": "table",
+            "response_json": "{}",
+        },
+    ]
+
+    filtered = _filter_enabled_rows(
+        rows,
+        {"generic.0.table.first", "generic.0.table.second"},
+        widgets,
+    )
+
+    assert [row["card_role"] for row in filtered] == [
+        "generic.0.table.first",
+        "generic.0.table.second",
+    ]
+    assert [row["widget_id"] for row in filtered] == ["first-widget", "second-widget"]
 
 
 class _ConfigStore(QuantumConfigStore):

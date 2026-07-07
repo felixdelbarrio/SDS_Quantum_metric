@@ -1,0 +1,21 @@
+{
+  "country": "CO",
+  "dashboard_id": "fccfa9f6-5d01-47cf-9ba6-b7bccd4d4f2b",
+  "dashboard_name": "SDS",
+  "range_key": "last_7_days",
+  "status": "passed",
+  "verdict": "PASSED",
+  "cards": [
+    {"role": "summary.sessions", "title": "Sesiones", "status": "passed", "web": 15966.0, "local": 15966.0},
+    {"role": "generic.0.chart.3e37dc4a-15ae-45fc-85fa-f0154d7fb47b", "title": "SDS Score General", "status": "passed", "web": 8.68, "local": 8.68},
+    {"role": "generic.0.chart.5ffbd00d-ec82-4f4e-bd58-f75abb60bceb", "title": "Pago Nominas - CR general >1 interaccion", "status": "passed", "web": 82.0, "local": 82.0},
+    {"role": "generic.0.chart.63ff105b-3270-4db3-9616-36707bd96262", "title": "SDS - Usabilidad", "status": "passed", "web": 9.84, "local": 9.84},
+    {"role": "generic.0.chart.9c7bc6e3-0d8e-477e-a981-ec018a32ade3", "title": "SDS Score - Tecnico", "status": "passed", "web": 7.37, "local": 7.37},
+    {"role": "generic.0.table.44423800-fab0-49bf-86b7-c7a6e3343213", "title": "Tabla errores tecnico", "status": "passed", "web_rows": 3, "local_rows": 3},
+    {"role": "generic.0.table.e4b59b59-a5a0-48da-8358-7b6ac7fb9291", "title": "Tabla errores usabilidad", "status": "passed", "web_rows": 3, "local_rows": 3},
+    {"role": "generic.1.chart.7863650a-ae90-4af9-b352-a883f4cc83c4", "title": "Navigation Error Rate", "status": "passed", "web": 3.0, "local": 3.0},
+    {"role": "generic.1.chart.835f752e-6339-4083-8a83-c29c0196fbda", "title": "Experience Health Score - Pago de Nominas por importar archivo", "status": "passed", "web": 7.87, "local": 7.87},
+    {"role": "generic.1.chart.d611d982-e30f-467c-a7de-71c7abdbb000", "title": "Pago de Nominas por importar archivo Task Success Rate", "status": "passed", "web": 60.0, "local": 60.0},
+    {"role": "generic.1.table.d8d90988-dd9b-4831-b6bd-965fefdf2fce", "title": "Top Navigation Errors", "status": "passed", "web_rows": 3, "local_rows": 3}
+  ]
+}

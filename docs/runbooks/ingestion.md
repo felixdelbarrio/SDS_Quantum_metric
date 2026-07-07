@@ -23,3 +23,9 @@ Estados accionables de Iteracion 15:
 - `cancelled_by_user`: cancelacion explicita del usuario.
 
 Para rangos preset, la URL de captura incluye `ts=<range_key>`.
+
+Desde Iteracion 16:
+
+- Las TABLE nativas que Quantum ya emite para `ts=<range_key>` no fuerzan reescritura temporal si eso rompe la query.
+- `navbarMetricsQuery` y `dashboardReplayQuery` se guardan como evidencia RAW, pero no cuentan como widgets.
+- La ingesta CO/SDS `last_7_days` debe terminar `completed` con 11/11 widgets y regresion `passed`.

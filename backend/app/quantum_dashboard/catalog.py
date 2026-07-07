@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-from backend.app.quantum_dashboard.models import DashboardCardSpec, DashboardTab, VisualRole
+from backend.app.quantum_dashboard.generic_roles import generic_kind_from_role, is_generic_role
+from backend.app.quantum_dashboard.models import (
+    DashboardCardSpec,
+    DashboardTab,
+    ParseStrategy,
+    VisualRole,
+)
 
 SUMMARY_PAGE_VIEWS: VisualRole = "summary.page_views"
 SUMMARY_SESSIONS: VisualRole = "summary.sessions"
@@ -104,6 +110,28 @@ def spec_for_role(role: str | None) -> DashboardCardSpec | None:
     for visual_role, spec in ROLE_SPECS.items():
         if visual_role == role:
             return spec
+    if is_generic_role(role):
+        kind = generic_kind_from_role(role) or "CHART"
+        strategy: ParseStrategy
+        if kind == "TABLE":
+            strategy = "generic_table_card_v1"
+            card_type = "TABLE"
+        elif kind == "DONUT":
+            strategy = "generic_donut_card_v1"
+            card_type = "DONUT"
+        else:
+            strategy = "generic_metric_card_v1"
+            card_type = "CHART"
+        return DashboardCardSpec(
+            tab="summary",
+            role=role,
+            title=role,
+            card_type=card_type,
+            parse_strategy=strategy,
+            local_id=role,
+            unit="count",
+            required=True,
+        )
     return None
 
 
@@ -112,4 +140,5 @@ def required_roles(tab: DashboardTab | None = None) -> list[VisualRole]:
 
 
 def role_tab(role: VisualRole) -> DashboardTab:
-    return ROLE_SPECS[role].tab
+    spec = spec_for_role(role)
+    return spec.tab if spec is not None else "summary"
