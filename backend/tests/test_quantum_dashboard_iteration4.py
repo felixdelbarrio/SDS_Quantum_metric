@@ -10,7 +10,13 @@ from backend.app.api.routes import config_store_dep, parquet_store_dep, settings
 from backend.app.config.settings import Settings
 from backend.app.main import app
 from backend.app.quantum.config_store import QuantumConfigStore
-from backend.app.quantum.schemas import Country, QuantumCountryConfig
+from backend.app.quantum.schemas import (
+    Country,
+    QuantumConfigUpdate,
+    QuantumCountryConfig,
+    QuantumDashboardConfig,
+    QuantumWidgetConfig,
+)
 from backend.app.quantum_dashboard.builder import DATASET_WEB_SNAPSHOTS, build_derived_datasets
 from backend.app.quantum_dashboard.card_mapper import map_card_role
 from backend.app.quantum_dashboard.catalog import SUMMARY_DETAIL_TABLE
@@ -351,6 +357,125 @@ def test_regression_fails_when_chart_payload_is_missing(tmp_path: Path) -> None:
 
     assert report.verdict == "FAILED"
     assert any(card.status == "failed_chart_contract_incomplete" for card in report.cards)
+
+
+def test_regression_compares_aggregate_chart_without_visible_series(tmp_path: Path) -> None:
+    store = ParquetStore(Settings(qm_data_dir=tmp_path))
+    aggregate_sessions_call = {
+        **_summary_metric_shape_call(["session", "id"]),
+        "dashboard_id": "sds-co",
+        "dashboard_name": "SDS",
+        "team_id": "team-co",
+        "range_key": "last_7_days",
+        "range_start": "2026-07-01T06:00:00Z",
+        "range_end": "2026-07-07T08:59:59Z",
+        "response_json": json.dumps({"rows": [{"metrics": [6504]}]}),
+    }
+    store.merge_raw_calls("CO", [aggregate_sessions_call])
+
+    build = build_derived_datasets(
+        store,
+        "CO",
+        enabled_roles={"summary.sessions"},
+        dashboard_id="sds-co",
+        range_key="last_7_days",
+    )
+    report = run_regression(
+        store,
+        "CO",
+        enabled_roles={"summary.sessions"},
+        dashboard_id="sds-co",
+        range_key="last_7_days",
+    )
+
+    widget = store.read_country_dataset(
+        "CO",
+        "range_key=last_7_days/derived/summary_widgets",
+    )[0]
+    card = report.cards[0]
+    assert build.regression_status == "passed"
+    assert widget["chart_payload"] is None
+    assert card.status == "passed"
+    assert card.web_value == 6504
+    assert card.local_value == 6504
+
+
+def test_local_dashboard_reads_partial_supported_dashboard_after_regression(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(qm_data_dir=tmp_path)
+    store = ParquetStore(settings)
+    config_store = QuantumConfigStore(settings)
+    config_store.write(
+        QuantumConfigUpdate(
+            country=Country.CO,
+            countries=[
+                QuantumCountryConfig(
+                    country=Country.CO,
+                    base_url="https://bbvaco.quantummetric.com",
+                    dashboards=[
+                        QuantumDashboardConfig(
+                            dashboard_id="sds-co",
+                            name="SDS",
+                            team_id="team-co",
+                            is_default=True,
+                            validated=True,
+                            validation_status="ok",
+                            widgets=[
+                                QuantumWidgetConfig(
+                                    role="summary.sessions",
+                                    title="Sesiones",
+                                    widget_id="sessions-widget",
+                                    widget_type="CHART",
+                                    tab="summary",
+                                    tab_index=0,
+                                    enabled=True,
+                                    supported=True,
+                                )
+                            ],
+                        )
+                    ],
+                )
+            ],
+        )
+    )
+    aggregate_sessions_call = {
+        **_summary_metric_shape_call(["session", "id"]),
+        "dashboard_id": "sds-co",
+        "dashboard_name": "SDS",
+        "team_id": "team-co",
+        "range_key": "last_7_days",
+        "range_start": "2026-07-01T06:00:00Z",
+        "range_end": "2026-07-07T08:59:59Z",
+        "response_json": json.dumps({"rows": [{"metrics": [6504]}]}),
+    }
+    store.merge_raw_calls("CO", [aggregate_sessions_call])
+    build_derived_datasets(
+        store,
+        "CO",
+        enabled_roles={"summary.sessions"},
+        dashboard_id="sds-co",
+        dashboard_name="SDS",
+        range_key="last_7_days",
+    )
+    run_regression(
+        store,
+        "CO",
+        enabled_roles={"summary.sessions"},
+        dashboard_id="sds-co",
+        range_key="last_7_days",
+    )
+
+    service = LocalDashboardService(store, config_store)
+    status = service.status("CO", range_key="last_7_days")
+    summary = service.summary("CO", range_key="last_7_days")
+
+    assert status["mandatory_cards"] == 1
+    assert status["summary_ready"] is True
+    assert status["errors_ready"] is True
+    assert summary["status"] == "ok"
+    assert summary["widgets"][0]["role"] == "summary.sessions"
+    assert summary["widgets"][0]["value"] == 6504
 
 
 def test_summary_detail_parser_keeps_flat_rows_when_web_has_no_hierarchy() -> None:

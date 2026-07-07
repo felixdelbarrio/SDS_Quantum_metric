@@ -1,5 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QuantumPage } from "./QuantumPage";
 import { useAppStore } from "../../shared/state/appStore";
@@ -110,6 +116,97 @@ describe("QuantumPage configuration", () => {
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Guardar/i })).toBeDisabled();
   });
+
+  it("ejecuta test pais refresh y validacion mostrando feedback", async () => {
+    const fetchMock = mockFetch();
+    renderConfig();
+
+    fireEvent.click(await screen.findByRole("button", { name: /Test pais/i }));
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining("/api/quantum/test-connection?country=MX"),
+        expect.objectContaining({ method: "POST" }),
+      ),
+    );
+    expect(await screen.findByText("Pais validado.")).toBeInTheDocument();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Actualizar dashboards/i }),
+    );
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining("/api/quantum/countries/MX/dashboards/refresh"),
+        expect.objectContaining({ method: "POST" }),
+      ),
+    );
+    expect(
+      await screen.findByText("Dashboards actualizados: 2."),
+    ).toBeInTheDocument();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Validar dashboard/i }),
+    );
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "/api/quantum/countries/MX/dashboards/dash-default/structure/discover",
+        ),
+        expect.objectContaining({ method: "POST" }),
+      ),
+    );
+    expect(await screen.findByText("Estructura validada.")).toBeInTheDocument();
+  });
+
+  it("envia base url de un pais nuevo antes de guardar la configuracion", async () => {
+    const config = {
+      ...defaultQuantumConfig(),
+      countries: [defaultQuantumConfig().countries[0]],
+    };
+    const fetchMock = mockFetch(config);
+    renderConfig();
+
+    fireEvent.change(await screen.findByLabelText("Pais seleccionado"), {
+      target: { value: "CO" },
+    });
+    fireEvent.change(await screen.findByLabelText(/Base URL/i), {
+      target: { value: "https://bbvaco.quantummetric.com" },
+    });
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Actualizar dashboards/i }),
+    );
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining("/api/quantum/countries/CO/dashboards/refresh"),
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            base_url: "https://bbvaco.quantummetric.com",
+          }),
+        }),
+      ),
+    );
+
+    fireEvent.change(await screen.findByLabelText("Pais seleccionado"), {
+      target: { value: "CO" },
+    });
+    fireEvent.change(await screen.findByLabelText(/Base URL/i), {
+      target: { value: "https://bbvaco.quantummetric.com" },
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: /Test pais/i }));
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining("/api/quantum/test-connection?country=CO"),
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            base_url: "https://bbvaco.quantummetric.com",
+          }),
+        }),
+      ),
+    );
+  });
 });
 
 function renderConfig() {
@@ -124,19 +221,59 @@ function renderConfig() {
 }
 
 function mockFetch(body: unknown = defaultQuantumConfig()) {
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-    const url = String(input);
-    if (url.endsWith("/api/config/quantum")) {
-      return json(body);
-    }
-    if (url.includes("/api/quantum/test-connection")) {
-      return json({ status: "ok" });
-    }
-    if (url.includes("/api/quantum/countries/")) {
+  const fetchMock = vi
+    .spyOn(globalThis, "fetch")
+    .mockImplementation(async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/api/config/quantum")) {
+        return json(body);
+      }
+      if (method === "GET" && url.includes("/api/quantum/countries/")) {
+        const country = url.match(/countries\/([A-Z]{2})\/dashboards/)?.[1];
+        return json(dashboardResourcesFor(body, country));
+      }
+      if (url.includes("/api/quantum/test-connection")) {
+        return json({ status: "ok" });
+      }
+      if (url.endsWith("/dashboards/refresh")) {
+        const country = url.match(/countries\/([A-Z]{2})\/dashboards/)?.[1];
+        return json(dashboardResourcesFor(body, country));
+      }
+      if (url.endsWith("/structure/discover")) {
+        return json({ tabs: [], widgets: [] });
+      }
+      if (url.includes("/api/quantum/countries/")) {
+        return json({});
+      }
       return json({});
-    }
-    return json({});
-  });
+    });
+  return fetchMock;
+}
+
+function dashboardResourcesFor(body: unknown, country?: string | null) {
+  const config = body as ReturnType<typeof defaultQuantumConfig>;
+  const row = config.countries?.find((item) => item.country === country);
+  const dashboards = row?.dashboards ?? [];
+  return {
+    country: country ?? "MX",
+    total_count: dashboards.length,
+    from_cache: true,
+    fetched_at: "2026-07-07T00:00:00Z",
+    source: "dashboard_resources_cache",
+    dashboards: dashboards.map((dashboard, order) => ({
+      dashboard_id: dashboard.dashboard_id,
+      name: dashboard.name,
+      type: "DASHBOARD",
+      starred: dashboard.is_default,
+      country: row?.country ?? "MX",
+      team_id: dashboard.team_id,
+      source: dashboard.is_manual ? "manual" : "quantum_graphql",
+      order,
+      discovered_at: dashboard.discovered_at ?? null,
+      stale: false,
+    })),
+  };
 }
 
 function defaultQuantumConfig() {
@@ -164,6 +301,8 @@ function defaultQuantumConfig() {
             validated: true,
             validation_status: "ok",
             source: "quantum_web",
+            discovered_at: null,
+            last_structure_at: null,
             tabs: [
               {
                 tab_index: 0,
@@ -215,6 +354,8 @@ function defaultQuantumConfig() {
             validated: true,
             validation_status: "ok",
             source: "quantum_api",
+            discovered_at: null,
+            last_structure_at: null,
             tabs: [],
             widgets: [],
           },
@@ -239,6 +380,8 @@ function defaultQuantumConfig() {
             validated: true,
             validation_status: "ok",
             source: "manual",
+            discovered_at: null,
+            last_structure_at: null,
             tabs: [],
             widgets: [],
           },

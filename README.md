@@ -124,6 +124,8 @@ recarga Home: el dashboard debe seguir funcionando sobre Parquet local.
 - API de dashboards por pais en `docs/to-be/dashboard-list-api-contract.md`.
 - Resources GraphQL en `docs/to-be/graphql-dashboard-resources-contract.md`.
 - Configuracion Iteracion 14 en `docs/to-be/iteration-14-wow-configuration.md`.
+- RCA Iteracion 15 en `docs/as-is/iteration-15-critical-rca.md`.
+- Hardening Iteracion 15 en `docs/to-be/iteration-15-critical-fix-design.md`.
 - Dashboards manuales en `docs/to-be/manual-dashboard-contract.md`.
 - Tabs/widgets reales en `docs/to-be/dashboard-tabs-widgets-contract.md`.
 - Contrato de dashboards en `docs/to-be/dashboard-discovery-contract.md`.

@@ -1,0 +1,112 @@
+{
+  "country": "MX",
+  "base_url": "https://bbvamx.quantummetric.com",
+  "dashboard_id": "8e53eb82-587c-4b92-a0fa-0f6283677e28",
+  "dashboard_name": "Dashboard General MX",
+  "team_id": "1da677de-9313-4b49-9110-81a6b756ca7e",
+  "range_key": "last_7_days",
+  "ingestion_id": "5c4d03fe-c72f-40ab-b2e7-507605fb6104",
+  "status": "PASSED",
+  "capture": {
+    "status": "completed",
+    "planned_chunks": 1,
+    "completed_chunks": 1,
+    "calls_captured": 79,
+    "rows_captured": 151,
+    "mandatory_cards_total": 9,
+    "mandatory_cards_captured": 9,
+    "derived_datasets": 7,
+    "regression_status": "passed"
+  },
+  "dashboard_availability": {
+    "summary_status": "ok",
+    "errors_status": "ok",
+    "summary_ready": true,
+    "errors_ready": true
+  },
+  "widgets_compared": [
+    {
+      "tab": "summary",
+      "role": "summary.page_views",
+      "title": "Paginas vistas",
+      "web_value": 7609172.0,
+      "local_value": 7609172.0,
+      "status": "passed",
+      "difference": 0.0
+    },
+    {
+      "tab": "summary",
+      "role": "summary.sessions",
+      "title": "Sesiones",
+      "web_value": 1554152.0,
+      "local_value": 1554152.0,
+      "status": "passed",
+      "difference": 0.0
+    },
+    {
+      "tab": "summary",
+      "role": "summary.converted_sessions",
+      "title": "Sesiones con conversion",
+      "web_value": 281172.0,
+      "local_value": 281172.0,
+      "status": "passed",
+      "difference": 0.0
+    },
+    {
+      "tab": "summary",
+      "role": "summary.avg_session_duration",
+      "title": "Tiempo medio de sesion",
+      "web_value": 98.52,
+      "local_value": 98.52,
+      "status": "passed",
+      "difference": 0.0
+    },
+    {
+      "tab": "summary",
+      "role": "summary.detail_by_app_name_os",
+      "title": "Detalle por APP Name y Sistema operativo",
+      "web_visible_rows": 10,
+      "local_rows": 12,
+      "status": "passed",
+      "difference": null
+    },
+    {
+      "tab": "errors",
+      "role": "errors.error_sessions_percentage_evolution",
+      "title": "Evolutivo - % Sesiones con Error",
+      "web_value": 96.0,
+      "local_value": 96.0,
+      "status": "passed",
+      "difference": 0.0
+    },
+    {
+      "tab": "errors",
+      "role": "errors.top_errors_by_error_name",
+      "title": "Top 20 Errores por nombre del error",
+      "web_visible_rows": 10,
+      "local_rows": 12,
+      "status": "passed",
+      "difference": null
+    },
+    {
+      "tab": "errors",
+      "role": "errors.error_sessions_by_app_name_comparison",
+      "title": "Comparativa de sesiones con error por App Name",
+      "web_value": 1823200.0,
+      "local_value": 1823200.0,
+      "status": "passed",
+      "difference": 0.0
+    },
+    {
+      "tab": "errors",
+      "role": "errors.error_session_percentage_by_app_name",
+      "title": "% Sesiones con Error por App Name",
+      "web_visible_rows": 10,
+      "local_rows": 12,
+      "status": "passed",
+      "difference": null
+    }
+  ],
+  "first_divergence": null,
+  "message": "All enabled and supported default MX widgets matched Quantum Web for last_7_days."
+}

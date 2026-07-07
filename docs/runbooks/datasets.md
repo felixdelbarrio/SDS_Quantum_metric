@@ -15,3 +15,5 @@ Endpoints utiles:
 - `GET /api/datasets/{country}/dashboards`
 - `GET /api/datasets/{country}/entities?dashboard_id=...`
 - `GET /api/datasets/{country}/entities/{entity}?dashboard_id=...&widget_id=...`
+
+Para auditar Iteracion 15, filtrar siempre por `country`, `dashboard_id`, `widget_id` y `range_key` antes de comparar Colombia y Mexico.

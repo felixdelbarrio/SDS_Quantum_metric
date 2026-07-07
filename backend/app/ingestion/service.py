@@ -15,6 +15,7 @@ from backend.app.ingestion.policy import IngestionRange, build_ingestion_range
 from backend.app.ingestion.progress import update_progress
 from backend.app.observability.sanitizer import sanitize_error
 from backend.app.quantum.config_store import QuantumConfigStore
+from backend.app.quantum.schemas import QuantumDashboardConfig
 from backend.app.quantum_dashboard.builder import build_derived_datasets
 from backend.app.quantum_dashboard.capture import capture_quantum_dashboard_cards
 from backend.app.quantum_dashboard.card_mapper import map_card_role
@@ -23,6 +24,25 @@ from backend.app.quantum_dashboard.models import DerivedBuildResult, RegressionR
 from backend.app.quantum_dashboard.periods import parse_date, zoneinfo_for
 from backend.app.quantum_dashboard.regression import REGRESSION_REPORT_PATH, run_regression
 from backend.app.storage.parquet_store import ParquetStore, RawCallMergeResult
+
+INGESTION_TERMINAL_STATUSES = {
+    "completed",
+    "completed_with_warnings",
+    "failed",
+    "failed_no_session",
+    "failed_dashboard_not_found",
+    "failed_no_widgets",
+    "failed_no_analytics_responses",
+    "failed_regression",
+    "cancelled",
+    "cancelled_by_user",
+}
+
+
+class IngestionFailure(RuntimeError):
+    def __init__(self, status: str, message: str) -> None:
+        super().__init__(message)
+        self.status = status
 
 
 class IngestionService:
@@ -68,14 +88,8 @@ class IngestionService:
         job = self.jobs.get(ingestion_id)
         if task and not task.done():
             task.cancel()
-        if job and job.status not in {
-            "completed",
-            "completed_with_warnings",
-            "failed",
-            "failed_regression",
-            "cancelled",
-        }:
-            job.status = "cancelled"
+        if job and job.status not in INGESTION_TERMINAL_STATUSES:
+            job.status = "cancelled_by_user"
             job.finished_at = datetime.now(UTC)
         return job
 
@@ -84,6 +98,7 @@ class IngestionService:
         job.status = "planning_range"
         job.endpoint_current = "/analytics + /analytics/historical"
         config = self.config_store.read()
+        dashboard: QuantumDashboardConfig | None = None
         try:
             explicit_range = _explicit_range_from_request(request)
             day_chunks = [] if explicit_range else _chunks_for_requested_days(request.days)
@@ -121,33 +136,40 @@ class IngestionService:
             country_config = config.required_country_config(request.country)
             dashboard = country_config.default_dashboard()
             if not dashboard or not dashboard.dashboard_id:
-                raise RuntimeError(
+                raise IngestionFailure(
+                    "failed_dashboard_not_found",
                     f"No hay dashboard default configurado para {request.country.value}. "
-                    "Ve a Configuracion y selecciona un dashboard default para el pais."
+                    "Ve a Configuracion y selecciona un dashboard default para el pais.",
                 )
             if not dashboard.validated:
-                raise RuntimeError(
+                raise IngestionFailure(
+                    "failed_dashboard_not_found",
                     f"El dashboard default de {request.country.value} no esta validado. "
-                    "Ve a Configuracion y actualiza dashboards."
+                    "Ve a Configuracion y valida el dashboard.",
                 )
             enabled_roles = set(country_config.enabled_widget_roles())
             if not enabled_roles:
-                raise RuntimeError(
+                raise IngestionFailure(
+                    "failed_no_widgets",
                     f"No hay widgets habilitados para {request.country.value}. "
-                    "Ve a Configuracion y habilita al menos un widget."
+                    "Ve a Configuracion y habilita al menos un widget soportado.",
                 )
             discovery = discover_dashboard_from_config(
                 settings=self.settings,
                 country_config=country_config,
             )
             if not discovery.dashboard_id:
-                raise RuntimeError(
-                    f"Country {request.country.value} needs a resolvable dashboard ID."
+                raise IngestionFailure(
+                    "failed_dashboard_not_found",
+                    f"Country {request.country.value} needs a resolvable dashboard ID.",
                 )
             if config.session_mode == "manual":
                 manual_cookie = secret_store.get_manual_cookie()
                 if not manual_cookie:
-                    raise RuntimeError("Manual session mode needs a cookie in memory.")
+                    raise IngestionFailure(
+                        "failed_no_session",
+                        "Manual session mode needs a cookie in memory.",
+                    )
                 cookies = self.cookie_provider.from_manual_header(
                     manual_cookie, str(discovery.base_url)
                 )
@@ -261,21 +283,29 @@ class IngestionService:
                     timezone=ingestion_range.timezone,
                     capture_mode=ingestion_range.capture_mode,
                 )
-                captured = await asyncio.to_thread(
-                    capture_quantum_dashboard_cards,
-                    settings=self.settings,
-                    cookies=cookies,
-                    country=request.country.value,
-                    base_url=discovery.base_url,
-                    dashboard_id=discovery.dashboard_id,
-                    team_id=discovery.team_id,
-                    summary_tab=discovery.summary_tab,
-                    errors_tab=discovery.errors_tab,
-                    ingestion_id=job.ingestion_id,
-                    ingestion_range=chunk_range,
-                    session_mode=capture_session_mode,
-                    progress_callback=progress_callback,
-                )
+                try:
+                    captured = await asyncio.to_thread(
+                        capture_quantum_dashboard_cards,
+                        settings=self.settings,
+                        cookies=cookies,
+                        country=request.country.value,
+                        base_url=discovery.base_url,
+                        dashboard_id=discovery.dashboard_id,
+                        team_id=discovery.team_id,
+                        summary_tab=discovery.summary_tab,
+                        errors_tab=discovery.errors_tab,
+                        ingestion_id=job.ingestion_id,
+                        ingestion_range=chunk_range,
+                        session_mode=capture_session_mode,
+                        progress_callback=progress_callback,
+                    )
+                except RuntimeError as exc:
+                    if "No Quantum analytics responses" in str(exc):
+                        raise IngestionFailure(
+                            "failed_no_analytics_responses",
+                            str(exc),
+                        ) from exc
+                    raise
                 captured = _filter_enabled_rows(captured, enabled_roles)
                 captured = [
                     {
@@ -291,11 +321,12 @@ class IngestionService:
                     for row in captured
                 ]
                 if not captured:
-                    raise RuntimeError(
+                    raise IngestionFailure(
+                        "failed_no_analytics_responses",
                         "No Quantum analytics responses were captured for "
                         f"{request.country.value} {chunk.label}. "
                         "Check that the selected Quantum session is authenticated and "
-                        "that the dashboard emits /analytics responses for this range."
+                        "that the dashboard emits /analytics responses for this range.",
                     )
                 chunk_rows = sum(int(row.get("row_count") or 0) for row in captured)
                 merge, build, report = _publish_completed_chunk(
@@ -422,8 +453,31 @@ class IngestionService:
                 job.status = "completed"
             update_progress(job, status=job.status, completed_chunks=job.planned_chunks)
         except asyncio.CancelledError:
-            job.status = "cancelled"
-            job.errors.append("Ingestion cancelled.")
+            job.status = "cancelled_by_user"
+            job.errors.append("Ingestion cancelled by user.")
+        except IngestionFailure as exc:
+            job.status = exc.status  # type: ignore[assignment]
+            failure = sanitize_error(exc)
+            job.errors.append(str(exc))
+            job.details.update(
+                {
+                    "failure": str(exc),
+                    "failure_sanitized": failure,
+                    "failure_stage": exc.status,
+                    "endpoint_current": job.endpoint_current,
+                    "current_chunk_index": job.current_chunk_index,
+                    "current_chunk_start": job.current_chunk_start,
+                    "current_chunk_end": job.current_chunk_end,
+                    "country": request.country.value,
+                    "dashboard_id": dashboard.dashboard_id if dashboard else None,
+                    "dashboard_name": dashboard.name if dashboard else None,
+                    "range_key": ingestion_range.range_key
+                    if "ingestion_range" in locals()
+                    else request.range_key,
+                }
+            )
+            if job.current_chunk_index is not None:
+                _set_chunk_status(job, job.current_chunk_index, "failed")
         except Exception as exc:
             job.status = "failed"
             failure = sanitize_error(exc)

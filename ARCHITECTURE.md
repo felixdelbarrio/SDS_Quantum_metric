@@ -33,7 +33,7 @@ Playwright ni clientes HTTP externos.
 - `dashboard_resources.py`: contrato paginado `resourcesList`, cache offline por pais y parsing de recursos dashboard.
 - `dashboard_structure.py`: normalizacion de tabs, widgets, card IDs y tipos por dashboard.
 - `manual_dashboard.py`: parseo y validacion de dashboards manuales por URL o dashboard ID.
-- `capture.py`: captura guiada de tabs Resumen y Errores.
+- `capture.py`: captura guiada de tabs configuradas, con rango `ts` explicito y fallo solo si todas quedan sin analytics.
 - `card_mapper.py`: asociacion de llamadas Quantum a roles visuales.
 - `parsers.py`: estrategias por rol visual, con `chart_payload` cuando la respuesta trae puntos.
 - `builder.py`: raw calls -> visual contracts -> web snapshots -> derived Parquet -> chart payloads.
@@ -48,12 +48,12 @@ Playwright ni clientes HTTP externos.
 1. El usuario lanza una ingesta desde la seccion Ingesta.
 2. Se abre un contexto Playwright efimero con cookies en memoria.
 3. Se resuelve el dashboard default del pais desde configuracion.
-4. Se navega `Resumen` y `Errores`.
+4. Se navegan las tabs configuradas con `ts=<range_key>` cuando aplica.
 5. Se capturan respuestas reales de `/analytics` y `/analytics/historical`.
 6. Se guardan raw calls normalizadas, particiones diarias y manifests en Parquet dentro de la ruta persistente.
 7. Se generan contratos visuales, snapshots web, datasets derivados y `derived/chart_payloads`.
 8. Se ejecuta regresion Web vs Local solo para widgets soportados y habilitados.
-9. La ingesta solo termina `completed` si la regresion pasa.
+9. La ingesta solo termina `completed` si la regresion pasa; fallos de sesion, dashboard, widgets, analytics y cancelacion usan estados accionables.
 
 La politica de rango usa `QUANTUM_INGESTION_DEPTH_DAYS` como Profundidad por defecto del boton `Ingestar`, mas `QUANTUM_INCREMENTAL_REPROCESS_DAYS` y `QUANTUM_INGESTION_CHUNK_DAYS`. El planner divide ventanas largas en chunks y el rewriter aplica el rango activo a payloads Quantum antes de persistir.
 Cuando la UI solicita Today, Yesterday o Last 7 Days, la ingesta crea un contrato explicito con

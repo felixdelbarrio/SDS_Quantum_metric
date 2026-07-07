@@ -7,7 +7,7 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any, Literal, Protocol, cast
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from backend.app.config.settings import get_settings
 from backend.app.quantum.schemas import Country
@@ -50,6 +50,17 @@ class DashboardResourcesResult(BaseModel):
     from_cache: bool = False
     fetched_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     warning: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_dashboard_alias(cls, value: object) -> object:
+        if isinstance(value, dict) and "resources" not in value and "dashboards" in value:
+            return {**value, "resources": value["dashboards"]}
+        return value
+
+    @property
+    def dashboards(self) -> list[QuantumDashboardResource]:
+        return self.resources
 
 
 class DashboardResourcesError(RuntimeError):

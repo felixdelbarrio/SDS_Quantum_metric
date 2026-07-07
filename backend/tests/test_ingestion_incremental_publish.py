@@ -175,7 +175,7 @@ async def test_ingestion_fails_when_capture_returns_no_analytics_calls(
 
     await service._run(job, IngestionCreate(country=Country.MX))
 
-    assert job.status == "failed"
+    assert job.status == "failed_no_analytics_responses"
     assert any("No Quantum analytics responses" in error for error in job.errors)
     assert job.calls_captured == 0
 

@@ -74,10 +74,17 @@ def dashboard_tab_url(
     dashboard_id: str,
     team_id: str | None,
     tab: int,
+    range_key: str | None = None,
 ) -> str:
     parsed = urlparse(base_url)
     origin = urlunparse((parsed.scheme, parsed.netloc, "", "", "", ""))
-    query = urlencode({"tab": tab, **({"teamID": team_id} if team_id else {})})
+    query = urlencode(
+        {
+            "tab": tab,
+            **({"teamID": team_id} if team_id else {}),
+            **({"ts": range_key} if range_key else {}),
+        }
+    )
     return f"{origin.rstrip()}/#/dashboard/{dashboard_id}?{query}"
 
 

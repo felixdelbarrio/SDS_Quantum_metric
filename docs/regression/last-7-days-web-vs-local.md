@@ -4,45 +4,29 @@
 
 PASSED
 
-## Dashboard context
+## Dashboard Context
 
 - Country: MX
 - Dashboard ID: 8e53eb82-587c-4b92-a0fa-0f6283677e28
+- Dashboard name: Dashboard General MX
 - Team ID: 1da677de-9313-4b49-9110-81a6b756ca7e
 - Timezone: CST
 - Range: Last 7 Days
-- Segment: none
-- Dimension: none
+- Ingestion ID: 5c4d03fe-c72f-40ab-b2e7-507605fb6104
 
-## Widget comparison
+## Widget Comparison
 
 | Tab | Widget | Web | Local | Status | Difference |
 |---|---|---:|---:|---|---:|
-| summary | summary.page_views | captured snapshot | derived parquet | passed | 0 |
-| summary | summary.sessions | captured snapshot | derived parquet | passed | 0 |
-| summary | summary.converted_sessions | captured snapshot | derived parquet | passed | 0 |
-| summary | summary.avg_session_duration | captured snapshot | derived parquet | passed | 0 |
-| errors | errors.error_sessions_percentage_evolution | captured snapshot | derived parquet | passed | 0 |
-| errors | errors.error_sessions_by_app_name_comparison | captured snapshot | derived parquet | passed | 0 |
-
-## Chart comparison
-
-| Widget | Series | X axis | Y axis | Points | Bands | Legends | Status |
-|---|---|---|---|---|---|---|---|
-| summary.page_views | matched | matched | matched | matched | matched | matched | passed |
-| summary.sessions | matched | matched | matched | matched | matched | matched | passed |
-| summary.converted_sessions | matched | matched | matched | matched | matched | matched | passed |
-| summary.avg_session_duration | matched | matched | matched | matched | matched | matched | passed |
-| errors.error_sessions_percentage_evolution | matched | matched | matched | matched | matched | matched | passed |
-| errors.error_sessions_by_app_name_comparison | matched | matched | matched | matched | matched | matched | passed |
-
-## Table comparison
-
-| Table | Columns | Rows | Values | Deltas | Colors | Status |
-|---|---|---|---|---|---|---|
-| summary.detail_by_app_name_os | matched | matched | matched | matched | matched | passed |
-| errors.top_errors_by_error_name | matched | matched | matched | matched | matched | passed |
-| errors.error_session_percentage_by_app_name | matched | matched | matched | matched | matched | passed |
+| summary | summary.page_views | 7609172.0 | 7609172.0 | passed | 0.0 |
+| summary | summary.sessions | 1554152.0 | 1554152.0 | passed | 0.0 |
+| summary | summary.converted_sessions | 281172.0 | 281172.0 | passed | 0.0 |
+| summary | summary.avg_session_duration | 98.52 | 98.52 | passed | 0.0 |
+| summary | summary.detail_by_app_name_os | 10 visible rows | 12 local rows | passed | - |
+| errors | errors.error_sessions_percentage_evolution | 96.0 | 96.0 | passed | 0.0 |
+| errors | errors.top_errors_by_error_name | 10 visible rows | 12 local rows | passed | - |
+| errors | errors.error_sessions_by_app_name_comparison | 1823200.0 | 1823200.0 | passed | 0.0 |
+| errors | errors.error_session_percentage_by_app_name | 10 visible rows | 12 local rows | passed | - |
 
 ## Failures
 

@@ -30,7 +30,15 @@ class ManualDashboardRequest(BaseModel):
     url: str = ""
     dashboard_id: str = ""
     team_id: str | None = None
+    base_url: str | None = None
     name: str = Field(default="")
+
+
+def parse_dashboard_url_or_id(value: str) -> ManualDashboardInput:
+    raw_value = value.strip()
+    if raw_value and "/" not in raw_value and "?" not in raw_value and "#" not in raw_value:
+        return ManualDashboardInput(dashboard_id=raw_value)
+    return parse_dashboard_url(raw_value)
 
 
 def parse_dashboard_url(url: str) -> ManualDashboardInput:
@@ -57,15 +65,19 @@ def manual_dashboard_input_from_request(
     *,
     fallback_base_url: str,
 ) -> ManualDashboardInput:
-    parsed = parse_dashboard_url(request.url) if request.url.strip() else None
+    parsed = parse_dashboard_url_or_id(request.url) if request.url.strip() else None
     raw_url_or_id = request.url.strip()
-    pasted_dashboard_id = raw_url_or_id if raw_url_or_id and "/" not in raw_url_or_id else ""
+    pasted_dashboard_id = (
+        raw_url_or_id
+        if raw_url_or_id and "/" not in raw_url_or_id and "?" not in raw_url_or_id
+        else ""
+    )
     return ManualDashboardInput(
         dashboard_id=(
             request.dashboard_id or (parsed.dashboard_id if parsed else "") or pasted_dashboard_id
         ).strip(),
         team_id=request.team_id or (parsed.team_id if parsed else None),
-        base_url=(parsed.base_url if parsed else None) or fallback_base_url,
+        base_url=request.base_url or (parsed.base_url if parsed else None) or fallback_base_url,
         name=request.name.strip(),
         range_key=parsed.range_key if parsed else None,
     )
