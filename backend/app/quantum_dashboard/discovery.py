@@ -59,13 +59,50 @@ def discover_dashboard_from_config(
         team_id=team_id or None,
         summary_tab=summary_tab,
         errors_tab=errors_tab,
-        tabs=[
-            {"name": "Resumen", "tab": summary_tab, "role": "summary"},
-            {"name": "Errores", "tab": errors_tab, "role": "errors"},
-        ],
+        tabs=_dashboard_tabs(dashboard, summary_tab, errors_tab),
         source=source,
         message=message,
     )
+
+
+def _dashboard_tabs(
+    dashboard: object,
+    summary_tab: int,
+    errors_tab: int,
+) -> list[dict[str, object]]:
+    tabs = getattr(dashboard, "tabs", None)
+    if tabs:
+        return [
+            {
+                "name": tab.name,
+                "tab_name": tab.name,
+                "tab": tab.normalized_role or _slug(tab.name),
+                "tab_index": tab.tab_index,
+                "tab_id": tab.tab_id,
+                "role": tab.normalized_role,
+            }
+            for tab in tabs
+        ]
+    return [
+        {
+            "name": "Resumen",
+            "tab_name": "Resumen",
+            "tab": "summary",
+            "tab_index": summary_tab,
+            "role": "summary",
+        },
+        {
+            "name": "Errores",
+            "tab_name": "Errores",
+            "tab": "errors",
+            "tab_index": errors_tab,
+            "role": "errors",
+        },
+    ]
+
+
+def _slug(value: str) -> str:
+    return value.strip().casefold().replace("_", " ")
 
 
 def dashboard_tab_url(

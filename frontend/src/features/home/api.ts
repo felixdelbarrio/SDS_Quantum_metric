@@ -4,6 +4,7 @@ import {
   CountryCode,
   DashboardCoverage,
   DetailTableResponse,
+  DynamicDashboardResponse,
   ErrorTableResponse,
   ErrorsDashboardResponse,
   SortDirection,
@@ -46,6 +47,12 @@ export function ingestRange(
     end_date: range.endDate,
     reason: range.reason ?? "user_requested",
   });
+}
+
+export function getDashboard(params: DashboardParams) {
+  return apiGet<DynamicDashboardResponse>(
+    `/local-dashboard/dashboard?${toQuery(params)}`,
+  );
 }
 
 export function getSummary(params: DashboardParams) {

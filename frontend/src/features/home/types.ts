@@ -25,6 +25,7 @@ export type CountriesResponse = {
 
 export type DashboardCoverage = {
   country: CountryCode;
+  dashboard_id?: string | null;
   start: string | null;
   end: string | null;
   range_key?: string;
@@ -124,6 +125,9 @@ export type ChartPayload = {
 export type KpiWidget = {
   id: string;
   role?: string;
+  widget_id?: string | null;
+  tab_name?: string | null;
+  tab_index?: number | null;
   range_key?: string | null;
   title: string;
   value?: number | null;
@@ -140,6 +144,31 @@ export type KpiWidget = {
   semantic_intent?: "good" | "bad" | "neutral" | null;
   missing_source_field?: string | null;
   period?: DashboardPeriod | null;
+};
+
+export type DynamicDashboardTab = {
+  tab: string;
+  tab_name: string;
+  tab_index: number;
+  tab_id?: string | null;
+  widgets: KpiWidget[];
+};
+
+export type DynamicDashboardResponse = {
+  status: AnalyticsStatus;
+  country: CountryCode;
+  source: "parquet";
+  last_ingestion_at?: string | null;
+  dashboard_id?: string | null;
+  dashboard_name?: string | null;
+  dashboard_title?: string | null;
+  description?: string | null;
+  tabs: DynamicDashboardTab[];
+  reason?: string | null;
+  required_dataset?: string | null;
+  available_datasets: string[];
+  period?: DashboardPeriod;
+  regression?: DashboardRegression | null;
 };
 
 export type SummaryDashboardResponse = {

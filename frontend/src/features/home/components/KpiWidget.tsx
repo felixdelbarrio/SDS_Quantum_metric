@@ -15,9 +15,10 @@ export function KpiWidget({ widget }: Props) {
   const hasValue = widget.value !== null && widget.value !== undefined;
   const isTable = widget.chart_type === "table";
   const tableRows = widget.table_rows ?? [];
-  const tableColumns = widget.table_columns?.length
+  const rawTableColumns = widget.table_columns?.length
     ? widget.table_columns
     : inferColumns(tableRows);
+  const tableColumns = visibleTableColumns(rawTableColumns, tableRows);
 
   return (
     <article
@@ -55,7 +56,11 @@ export function KpiWidget({ widget }: Props) {
         </button>
       </div>
       {isTable ? (
-        <GenericTablePreview columns={tableColumns} rows={tableRows} />
+        <GenericTablePreview
+          columns={tableColumns}
+          rows={tableRows}
+          title={widget.title}
+        />
       ) : hasValue ? (
         <>
           {widget.breakdown.length ? (
@@ -103,9 +108,11 @@ export function KpiWidget({ widget }: Props) {
 function GenericTablePreview({
   columns,
   rows,
+  title,
 }: {
   columns: string[];
   rows: Array<Record<string, unknown>>;
+  title: string;
 }) {
   if (!rows.length || !columns.length) {
     return (
@@ -118,7 +125,7 @@ function GenericTablePreview({
         <thead>
           <tr>
             {columns.slice(0, 4).map((column) => (
-              <th key={column}>{labelForColumn(column)}</th>
+              <th key={column}>{labelForColumn(column, title)}</th>
             ))}
           </tr>
         </thead>
@@ -141,7 +148,28 @@ function inferColumns(rows: Array<Record<string, unknown>>) {
   return Object.keys(rows[0]).filter((key) => key !== "row_index");
 }
 
-function labelForColumn(value: string) {
+function visibleTableColumns(
+  columns: string[],
+  rows: Array<Record<string, unknown>>,
+) {
+  if (!rows.length) return columns;
+  return columns.filter((column) => {
+    if (!column.startsWith("dimension_")) return true;
+    return !rows.every(
+      (row) =>
+        row.name !== undefined &&
+        row.name !== null &&
+        String(row[column] ?? "") === String(row.name),
+    );
+  });
+}
+
+function labelForColumn(value: string, title: string) {
+  const normalizedTitle = title.toLowerCase();
+  if (normalizedTitle.includes("error")) {
+    if (value === "name") return "Error Name";
+    if (value === "metric_1") return "Error Count";
+  }
   return value
     .replace(/^dimension_/, "Dimension ")
     .replace(/^metric_/, "Metric ")
@@ -157,6 +185,7 @@ function formatCell(value: unknown) {
 }
 
 function domainLabel(widget: KpiWidgetType) {
+  if (widget.tab_name) return widget.tab_name;
   return widget.role?.startsWith("errors.") || widget.id.includes("error")
     ? "Errores"
     : "Resumen";

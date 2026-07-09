@@ -65,6 +65,45 @@ def test_capture_dashboard_cards_keeps_valid_tab_when_other_tab_is_empty(
     assert session.urls[-1].endswith("tab=1&teamID=team-co&ts=last_7_days")
 
 
+def test_capture_dashboard_cards_uses_real_configured_tabs(tmp_path: Path) -> None:
+    session = _TabCaptureSession([[_raw_row("overview-card")], [_raw_row("easy-card")]])
+
+    rows = capture_quantum_dashboard_cards(
+        settings=Settings(qm_data_dir=tmp_path),
+        cookies=[],
+        country="CO",
+        base_url="https://bbvaco.quantummetric.com",
+        dashboard_id="dash-co",
+        team_id="team-co",
+        summary_tab=0,
+        errors_tab=1,
+        tabs=[
+            {
+                "tab": "overview-general",
+                "tab_name": "Overview general",
+                "tab_index": 0,
+            },
+            {
+                "tab": "easy-dashboard-example",
+                "tab_name": "Easy Dashboard Example",
+                "tab_index": 1,
+            },
+        ],
+        ingestion_id="ingestion",
+        ingestion_range=None,
+        capture_session=cast(Any, session),
+    )
+
+    assert [row["card_id"] for row in rows] == ["overview-card", "easy-card"]
+    assert [row["tab"] for row in rows] == ["overview-general", "easy-dashboard-example"]
+    assert [row["tab_name"] for row in rows] == [
+        "Overview general",
+        "Easy Dashboard Example",
+    ]
+    assert session.urls[0].endswith("tab=0&teamID=team-co")
+    assert session.urls[1].endswith("tab=1&teamID=team-co")
+
+
 def test_capture_dashboard_cards_fails_only_when_all_tabs_are_empty(tmp_path: Path) -> None:
     session = _TabCaptureSession([[], []])
 

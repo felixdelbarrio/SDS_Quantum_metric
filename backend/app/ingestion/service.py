@@ -21,6 +21,7 @@ from backend.app.quantum_dashboard.capture import capture_quantum_dashboard_card
 from backend.app.quantum_dashboard.discovery import discover_dashboard_from_config
 from backend.app.quantum_dashboard.models import DerivedBuildResult, RegressionReport
 from backend.app.quantum_dashboard.periods import parse_date, zoneinfo_for
+from backend.app.quantum_dashboard.range_query import resolve_range
 from backend.app.quantum_dashboard.regression import REGRESSION_REPORT_PATH, run_regression
 from backend.app.quantum_dashboard.widget_roles import (
     descriptors_from_widgets,
@@ -38,6 +39,7 @@ INGESTION_TERMINAL_STATUSES = {
     "failed_dashboard_not_found",
     "failed_no_widgets",
     "failed_no_analytics_responses",
+    "failed_coverage_incomplete",
     "failed_regression",
     "cancelled",
     "cancelled_by_user",
@@ -48,6 +50,13 @@ class IngestionFailure(RuntimeError):
     def __init__(self, status: str, message: str) -> None:
         super().__init__(message)
         self.status = status
+
+
+class IngestionAlreadyRunning(RuntimeError):
+    def __init__(self, scope: str, ingestion_id: str) -> None:
+        super().__init__(f"Ingestion already running for scope {scope}.")
+        self.scope = scope
+        self.ingestion_id = ingestion_id
 
 
 class IngestionService:
@@ -64,16 +73,26 @@ class IngestionService:
         self.cookie_provider = cookie_provider
         self.jobs: dict[str, IngestionJob] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
+        self._active_scopes: dict[str, str] = {}
 
     def start(self, request: IngestionCreate) -> IngestionJob:
+        scope = self._scope_for_request(request)
+        active_ingestion_id = self._active_scopes.get(scope)
+        if active_ingestion_id:
+            active_job = self.jobs.get(active_ingestion_id)
+            if active_job and active_job.status not in INGESTION_TERMINAL_STATUSES:
+                raise IngestionAlreadyRunning(scope, active_ingestion_id)
+            self._active_scopes.pop(scope, None)
         ingestion_id = str(uuid.uuid4())
         job = IngestionJob(
             ingestion_id=ingestion_id,
             country=request.country.value,
             status="pending",
             started_at=datetime.now(UTC),
+            details={"scope": scope},
         )
         self.jobs[ingestion_id] = job
+        self._active_scopes[scope] = ingestion_id
         self._tasks[ingestion_id] = asyncio.create_task(self._run(job, request))
         return job
 
@@ -263,17 +282,12 @@ class IngestionService:
                     chunk_count: int = chunk_count,
                     chunk_label: str = chunk_label,
                 ) -> None:
-                    tab_label = "Resumen" if tab_name == "summary" else "Errores"
                     update_progress(
                         job,
-                        status=(
-                            "capturing_summary_tab"
-                            if tab_name == "summary"
-                            else "capturing_errors_tab"
-                        ),
-                        current_tab=tab_label,
+                        status="capturing_web",
+                        current_tab=tab_name,
                         message=(
-                            f"Capturando {tab_label} para chunk "
+                            f"Capturando {tab_name} para chunk "
                             f"{chunk_index}/{chunk_count} {chunk_label}."
                         ),
                     )
@@ -299,6 +313,7 @@ class IngestionService:
                         team_id=discovery.team_id,
                         summary_tab=discovery.summary_tab,
                         errors_tab=discovery.errors_tab,
+                        tabs=discovery.tabs,
                         ingestion_id=job.ingestion_id,
                         ingestion_range=chunk_range,
                         session_mode=capture_session_mode,
@@ -453,8 +468,20 @@ class IngestionService:
                 "dashboard": discovery.model_dump(mode="json"),
                 "enabled_roles": sorted(enabled_roles),
             }
+            coverage = resolve_range(
+                self.parquet_store,
+                request.country.value,
+                range_key=ingestion_range.range_key,
+                start=request.start_date,
+                end=request.end_date,
+                timezone="CST",
+                last_regression_status=report.status,
+            )
+            job.details["coverage"] = coverage.model_dump(mode="json")
             if report.verdict == "FAILED":
                 job.status = "failed_regression"
+            elif coverage.missing_days:
+                job.status = "failed_coverage_incomplete"
             elif build.missing_roles:
                 job.status = "completed_with_warnings"
             else:
@@ -506,6 +533,24 @@ class IngestionService:
             job.finished_at = datetime.now(UTC)
             job.duration_seconds = round(time.perf_counter() - started, 2)
             self.parquet_store.append_manifest(job.model_dump(mode="json"))
+            scope = str(job.details.get("scope") or "")
+            if scope and self._active_scopes.get(scope) == job.ingestion_id:
+                self._active_scopes.pop(scope, None)
+
+    def _scope_for_request(self, request: IngestionCreate) -> str:
+        config = self.config_store.read()
+        country_config = config.country_config(request.country)
+        dashboard = country_config.default_dashboard() if country_config is not None else None
+        dashboard_id = dashboard.dashboard_id if dashboard is not None else ""
+        return "|".join(
+            (
+                request.country.value,
+                dashboard_id,
+                request.range_key or "default",
+                request.start_date or "",
+                request.end_date or "",
+            )
+        )
 
 
 def _is_chunk_covered(

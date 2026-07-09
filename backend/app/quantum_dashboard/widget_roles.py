@@ -6,7 +6,6 @@ from typing import Any
 from backend.app.quantum.schemas import QuantumDashboardConfig, QuantumWidgetConfig
 from backend.app.quantum_dashboard.card_mapper import map_card_role
 from backend.app.quantum_dashboard.generic_roles import (
-    dashboard_tab_for_widget,
     normalized_widget_type,
 )
 
@@ -152,11 +151,13 @@ def _descriptor(widget: QuantumWidgetConfig) -> WidgetRoleDescriptor:
 
 
 def _descriptor_tab(widget: QuantumWidgetConfig) -> str:
-    if widget.tab_index == 0:
-        return "summary"
-    if widget.tab_index == 1:
-        return "errors"
-    return dashboard_tab_for_widget(widget.tab, widget.tab_name, widget.title)
+    tab = _text(widget.tab)
+    if tab:
+        return tab
+    tab_name = _text(widget.tab_name)
+    if tab_name:
+        return tab_name
+    return f"tab-{widget.tab_index}"
 
 
 def _descriptor_for_call(

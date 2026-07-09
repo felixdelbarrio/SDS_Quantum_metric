@@ -15,6 +15,7 @@ from backend.app.quantum.schemas import (
     QuantumConfigUpdate,
     QuantumCountryConfig,
     QuantumDashboardConfig,
+    QuantumDashboardTabConfig,
     QuantumWidgetConfig,
 )
 from backend.app.quantum_dashboard.builder import DATASET_WEB_SNAPSHOTS, build_derived_datasets
@@ -63,8 +64,20 @@ def test_discovery_uses_env_defaults_as_fallback(tmp_path: Path) -> None:
     assert result.dashboard_id == "dash-default"
     assert result.team_id == "team-default"
     assert result.tabs == [
-        {"name": "Resumen", "tab": 0, "role": "summary"},
-        {"name": "Errores", "tab": 1, "role": "errors"},
+        {
+            "name": "Resumen",
+            "tab_name": "Resumen",
+            "tab": "summary",
+            "tab_index": 0,
+            "role": "summary",
+        },
+        {
+            "name": "Errores",
+            "tab_name": "Errores",
+            "tab": "errors",
+            "tab_index": 1,
+            "role": "errors",
+        },
     ]
 
 
@@ -208,11 +221,13 @@ def test_builder_persists_contracts_snapshots_derived_and_no_cookies(tmp_path: P
 
     assert result.regression_status == "passed"
     assert result.mandatory_cards_captured == 9
-    assert result.derived_datasets == 7
+    assert result.derived_datasets == 9
     contracts = store.read_country_dataset("MX", "visual_contracts")
     snapshots = store.read_country_dataset("MX", "web_snapshots")
     summary = store.read_country_dataset("MX", "derived/summary_widgets")
+    dashboard_widgets = store.read_country_dataset("MX", "derived/dashboard_widgets")
     chart_payloads = store.read_country_dataset("MX", "derived/chart_payloads")
+    widget_chart_payloads = store.read_country_dataset("MX", "derived/widget_chart_payloads")
     detail = store.read_country_dataset("MX", "derived/summary_detail_table")
     assert {row["visual_role"] for row in contracts} >= {
         "summary.page_views",
@@ -220,8 +235,10 @@ def test_builder_persists_contracts_snapshots_derived_and_no_cookies(tmp_path: P
     }
     assert snapshots[0]["card_role"]
     assert next(row for row in summary if row["id"] == "page_views")["value"] == 150
+    assert next(row for row in dashboard_widgets if row["id"] == "page_views")["value"] == 150
     assert next(row for row in summary if row["id"] == "page_views")["chart_payload"]["series"]
     assert chart_payloads
+    assert widget_chart_payloads
     assert detail[0]["app_name"] == "portabilidad nomina"
     assert all(not row.get("parent_row_id") for row in detail)
     assert all(not row.get("is_expandable") for row in detail)
@@ -670,6 +687,148 @@ def test_local_dashboard_status_cannot_pass_with_missing_enabled_generic_role(
     assert status["mandatory_cards"] == 2
     assert status["mandatory_cards_captured"] == 1
     assert status["missing_roles"] == ["generic.0.table.custom"]
+
+
+def test_dynamic_dashboard_uses_real_tabs_and_generic_widget_roles(tmp_path: Path) -> None:
+    settings = Settings(qm_data_dir=tmp_path)
+    store = ParquetStore(settings)
+    config_store = QuantumConfigStore(settings)
+    config_store.write(
+        QuantumConfigUpdate(
+            country=Country.CO,
+            countries=[
+                QuantumCountryConfig(
+                    country=Country.CO,
+                    base_url="https://bbvaco.quantummetric.com",
+                    dashboards=[
+                        QuantumDashboardConfig(
+                            dashboard_id="sds-co",
+                            name="SDS",
+                            team_id="team-co",
+                            is_default=True,
+                            validated=True,
+                            validation_status="ok",
+                            tabs=[
+                                QuantumDashboardTabConfig(
+                                    name="Overview general",
+                                    tab_index=0,
+                                    normalized_role="overview-general",
+                                ),
+                                QuantumDashboardTabConfig(
+                                    name="Easy Dashboard Example",
+                                    tab_index=1,
+                                    normalized_role="easy-dashboard-example",
+                                ),
+                            ],
+                            widgets=[
+                                QuantumWidgetConfig(
+                                    role="generic.0.chart.sds_score_general",
+                                    title="SDS Score General",
+                                    widget_id="sds-score-general",
+                                    widget_type="CHART",
+                                    tab="overview-general",
+                                    tab_name="Overview general",
+                                    tab_index=0,
+                                    enabled=True,
+                                    supported=True,
+                                ),
+                                QuantumWidgetConfig(
+                                    role="generic.1.table.top_navigation_errors",
+                                    title="Top Navigation Errors",
+                                    widget_id="top-navigation-errors",
+                                    widget_type="TABLE",
+                                    tab="easy-dashboard-example",
+                                    tab_name="Easy Dashboard Example",
+                                    tab_index=1,
+                                    enabled=True,
+                                    supported=True,
+                                ),
+                            ],
+                        )
+                    ],
+                )
+            ],
+        )
+    )
+    store.write_country_dataset(
+        "CO",
+        "range_key=last_7_days/derived/dashboard_widgets",
+        [
+            {
+                "country": "CO",
+                "dashboard_id": "sds-co",
+                "dashboard_name": "SDS",
+                "range_key": "last_7_days",
+                "card_role": "generic.0.chart.sds_score_general",
+                "id": "generic.0.chart.sds_score_general",
+                "widget_id": "sds-score-general",
+                "title": "SDS Score General",
+                "value": 8.7,
+                "unit": "count",
+                "chart_type": "line",
+                "tab": "overview-general",
+                "tab_name": "Overview general",
+                "tab_index": 0,
+                "breakdown": [],
+                "timeseries": [],
+                "chart_payload": None,
+                "table_columns": [],
+                "table_rows": [],
+            },
+            {
+                "country": "CO",
+                "dashboard_id": "sds-co",
+                "dashboard_name": "SDS",
+                "range_key": "last_7_days",
+                "card_role": "generic.1.table.top_navigation_errors",
+                "id": "generic.1.table.top_navigation_errors",
+                "widget_id": "top-navigation-errors",
+                "title": "Top Navigation Errors",
+                "value": 3,
+                "unit": "count",
+                "chart_type": "table",
+                "tab": "easy-dashboard-example",
+                "tab_name": "Easy Dashboard Example",
+                "tab_index": 1,
+                "breakdown": [],
+                "timeseries": [],
+                "chart_payload": None,
+                "table_columns": ["error_name", "error_count"],
+                "table_rows": [{"error_name": "Possible Frustration", "error_count": 746}],
+            },
+        ],
+    )
+    store.write_country_dataset(
+        "CO",
+        "range_key=last_7_days/regression/web_vs_local_results",
+        [
+            {
+                "country": "CO",
+                "dashboard_id": "sds-co",
+                "range_key": "last_7_days",
+                "status": "passed",
+                "verdict": "PASSED",
+                "generated_at": "2026-07-07T12:00:00Z",
+            }
+        ],
+    )
+
+    service = LocalDashboardService(store, config_store)
+    status = service.status("CO", range_key="last_7_days")
+    dashboard = service.dashboard("CO", range_key="last_7_days")
+
+    assert status["regression_status"] == "passed"
+    assert status["mandatory_cards"] == 2
+    assert status["mandatory_cards_captured"] == 2
+    assert status["missing_roles"] == []
+    assert [tab["tab_name"] for tab in dashboard["tabs"]] == [
+        "Overview general",
+        "Easy Dashboard Example",
+    ]
+    assert [len(tab["widgets"]) for tab in dashboard["tabs"]] == [1, 1]
+    assert dashboard["tabs"][1]["widgets"][0]["table_rows"] == [
+        {"error_name": "Possible Frustration", "error_count": 746}
+    ]
 
 
 def test_summary_detail_parser_keeps_flat_rows_when_web_has_no_hierarchy() -> None:

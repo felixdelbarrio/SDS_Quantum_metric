@@ -85,19 +85,23 @@ describe("HomePage local dashboard", () => {
     });
   });
 
-  it("muestra widgets y tabla de Resumen recibidos desde API", async () => {
+  it("muestra widgets y tablas recibidos desde tabs reales de la API", async () => {
     mockFetch();
     renderHome();
     const today = todayInMexico();
 
+    expect(
+      await screen.findByRole("tab", { name: "Overview general" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("tab", { name: "Resumen" }),
+    ).not.toBeInTheDocument();
     expect(await screen.findByText("Paginas vistas")).toBeInTheDocument();
     expect((await screen.findAllByText("150")).length).toBeGreaterThan(0);
-    expect(await screen.findAllByText("Jun 16, 2026 (CST)")).not.toHaveLength(
-      0,
-    );
     expect(
       requests.some(
         (request) =>
+          request.includes("/local-dashboard/dashboard") &&
           request.includes("range_key=last_7_days") &&
           request.includes(`start_date=${addDays(today, -6)}`) &&
           request.includes(`end_date=${today}`),
@@ -111,8 +115,8 @@ describe("HomePage local dashboard", () => {
         0,
       );
     });
-    expect(await screen.findByText("+1.5%")).toHaveClass("semantic-positive");
-    expect(await screen.findByText("-2.5%")).toHaveClass("semantic-negative");
+    expect(await screen.findByText("+1.50%")).toHaveClass("metric-delta-good");
+    expect(await screen.findByText("-2.50%")).toHaveClass("metric-delta-bad");
     expect(
       screen.queryByRole("button", { name: /Expandir fila/i }),
     ).not.toBeInTheDocument();
@@ -192,7 +196,7 @@ describe("HomePage local dashboard", () => {
       expect(
         requests.some(
           (request) =>
-            request.includes("/local-dashboard/summary") &&
+            request.includes("/local-dashboard/dashboard") &&
             request.includes("range_key=yesterday"),
         ),
       ).toBe(true);
@@ -204,64 +208,74 @@ describe("HomePage local dashboard", () => {
       expect(
         requests.some(
           (request) =>
-            request.includes("/local-dashboard/summary") &&
+            request.includes("/local-dashboard/dashboard") &&
             request.includes("range_key=last_7_days"),
         ),
       ).toBe(true);
     });
   });
 
-  it("search llama a API con query correcta", async () => {
+  it("renderiza tablas genericas sin pedir endpoints legacy de detalle", async () => {
     mockFetch();
     renderHome();
-    const search = await screen.findByLabelText("Buscar en detalle");
 
-    fireEvent.change(search, { target: { value: "porta" } });
+    fireEvent.click(
+      await screen.findByRole("tab", { name: "Easy Dashboard Example" }),
+    );
 
-    await waitFor(() => {
-      expect(requests.some((request) => request.includes("search=porta"))).toBe(
-        true,
-      );
-    });
+    expect(
+      await screen.findByText("Top Navigation Errors"),
+    ).toBeInTheDocument();
+    expect(await screen.findByText("Possible Frustration")).toBeInTheDocument();
+    expect(
+      requests.some((request) =>
+        request.includes("/local-dashboard/summary/table"),
+      ),
+    ).toBe(false);
+    expect(
+      requests.some((request) =>
+        request.includes("/local-dashboard/errors/top-errors"),
+      ),
+    ).toBe(false);
   });
 
-  it("sort por Page Views llama a API con sort correcto", async () => {
+  it("mantiene la Home sobre el endpoint dinamico de dashboard", async () => {
     mockFetch();
     renderHome();
-    const sortButton = await screen.findByRole("button", {
-      name: /^Page Views$/i,
-    });
 
-    fireEvent.click(sortButton);
+    expect(await screen.findByText("Dashboard General MX")).toBeInTheDocument();
 
-    await waitFor(() => {
-      expect(
-        requests.some(
-          (request) =>
-            request.includes("/local-dashboard/summary/table") &&
-            request.includes("sort=page_views"),
-        ),
-      ).toBe(true);
-    });
+    expect(
+      requests.some((request) =>
+        request.includes("/local-dashboard/dashboard"),
+      ),
+    ).toBe(true);
+    expect(
+      requests.some((request) => request.includes("/local-dashboard/summary?")),
+    ).toBe(false);
   });
 
-  it("tab Errores muestra widgets recibidos desde API", async () => {
+  it("tab real secundario muestra widgets recibidos desde API", async () => {
     mockFetch();
     renderHome();
 
-    fireEvent.click(await screen.findByRole("tab", { name: "Errores" }));
+    fireEvent.click(
+      await screen.findByRole("tab", { name: "Easy Dashboard Example" }),
+    );
 
     expect(
-      await screen.findByText("Evolutivo - % Sesiones con Error"),
+      await screen.findByText("Navigation Error Rate"),
     ).toBeInTheDocument();
     expect(
-      await screen.findByText("Top 20 Errores por nombre del error"),
+      await screen.findByText("Top Navigation Errors"),
     ).toBeInTheDocument();
     expect(
-      await screen.findByText("Comparativa de sesiones con error por App Name"),
-    ).toBeInTheDocument();
+      screen.queryByRole("tab", { name: "Errores" }),
+    ).not.toBeInTheDocument();
     expect(
-      await screen.findByText("% Sesiones con Error por App Name"),
+      await screen.findByText(
+        "Pago de Nominas por importar archivo Task Success Rate",
+      ),
     ).toBeInTheDocument();
   });
 
@@ -386,6 +400,9 @@ function responseFor(url: URL, options: MockOptions) {
   }
   if (url.pathname.endsWith("/api/ingestions/range")) {
     return { ingestion_id: "range-ingestion", status: "pending" };
+  }
+  if (url.pathname.endsWith("/local-dashboard/dashboard")) {
+    return options.empty ? emptyPayload(country) : dashboardPayload(country);
   }
   if (options.empty) return emptyPayload(country);
   if (url.pathname.endsWith("/local-dashboard/summary/table")) {
@@ -558,6 +575,142 @@ function responseFor(url: URL, options: MockOptions) {
   };
 }
 
+function dashboardPayload(country: string) {
+  return {
+    status: "ok",
+    country,
+    source: "parquet",
+    dashboard_title: `Dashboard General ${country}`,
+    dashboard_name: country === "MX" ? "Dashboard General MX" : "SDS",
+    description:
+      "Dashboard local generado desde la estructura real de Quantum.",
+    tabs: [
+      {
+        tab: "overview-general",
+        tab_name: "Overview general",
+        tab_index: 0,
+        widgets: [
+          {
+            id: "page_views",
+            role: "generic.0.chart.page_views",
+            title: "Paginas vistas",
+            value: 150,
+            unit: "count",
+            tab_name: "Overview general",
+            breakdown: [{ label: "Mobile", value: 150 }],
+            timeseries: [
+              { ts: "2026-06-16T00:00:00Z", value: 80 },
+              { ts: "2026-06-16T01:00:00Z", value: 70 },
+            ],
+            chart_payload: chartPayload("count"),
+            comparison: { label: "vs Historical Range", delta_percent: 1.5 },
+            semantic_intent: "good",
+            period: { label: "Jun 16, 2026 (CST)" },
+          },
+          {
+            id: "sessions",
+            role: "generic.0.chart.sessions",
+            title: "Sesiones",
+            value: 30,
+            unit: "count",
+            tab_name: "Overview general",
+            breakdown: [],
+            timeseries: [],
+            chart_payload: chartPayload("count"),
+            comparison: { label: "vs Historical Range", delta_percent: -2.5 },
+            semantic_intent: "bad",
+            period: { label: "Jun 16, 2026 (CST)" },
+          },
+          {
+            id: "detail_by_app_name_os",
+            role: "generic.0.table.detail_by_app_name_os",
+            title: "Detalle por App Name y Sistema operativo",
+            value: 1,
+            unit: "count",
+            chart_type: "table",
+            tab_name: "Overview general",
+            breakdown: [],
+            timeseries: [],
+            table_columns: [
+              "app_name",
+              "operating_system",
+              "page_views",
+              "sessions",
+            ],
+            table_rows: [
+              {
+                app_name: "portabilidad nomina",
+                operating_system: "iOS",
+                page_views: 100,
+                sessions: 20,
+              },
+            ],
+          },
+        ],
+      },
+      {
+        tab: "easy-dashboard-example",
+        tab_name: "Easy Dashboard Example",
+        tab_index: 1,
+        widgets: [
+          {
+            id: "navigation_error_rate",
+            role: "generic.1.chart.navigation_error_rate",
+            title: "Navigation Error Rate",
+            value: 2.87,
+            unit: "percent",
+            tab_name: "Easy Dashboard Example",
+            breakdown: [],
+            timeseries: [
+              { ts: "2026-06-16T00:00:00Z", value: 2.8 },
+              { ts: "2026-06-16T01:00:00Z", value: 2.9 },
+            ],
+            chart_payload: chartPayload("percent"),
+            comparison: { label: "vs Historical Range", delta_percent: 6 },
+            semantic_intent: "bad",
+          },
+          {
+            id: "task_success_rate",
+            role: "generic.1.chart.task_success_rate",
+            title: "Pago de Nominas por importar archivo Task Success Rate",
+            value: 60.3,
+            unit: "percent",
+            tab_name: "Easy Dashboard Example",
+            breakdown: [],
+            timeseries: [],
+            chart_payload: chartPayload("percent"),
+          },
+          {
+            id: "top_navigation_errors",
+            role: "generic.1.table.top_navigation_errors",
+            title: "Top Navigation Errors",
+            value: 3,
+            unit: "count",
+            chart_type: "table",
+            tab_name: "Easy Dashboard Example",
+            breakdown: [],
+            timeseries: [],
+            table_columns: ["error_name", "error_count", "delta_percent"],
+            table_rows: [
+              {
+                error_name: "Possible Frustration",
+                error_count: 746,
+                delta_percent: 22.09,
+              },
+              {
+                error_name: "Rage Click",
+                error_count: 207,
+                delta_percent: 15.64,
+              },
+            ],
+          },
+        ],
+      },
+    ],
+    available_datasets: ["country=MX/derived/dashboard_widgets"],
+  };
+}
+
 function chartPayload(unit: "count" | "percent") {
   return {
     chart_type: "line",
@@ -641,6 +794,7 @@ function emptyPayload(country: string) {
     reason: "No local Parquet rows available for requested country.",
     required_dataset: "raw_api_calls",
     available_datasets: [],
+    tabs: [],
     widgets: [],
     columns: [],
     rows: [],
