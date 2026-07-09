@@ -4,7 +4,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-type DashboardTab = Literal["summary", "errors"]
+type DashboardTab = str
 type ParseStrategy = Literal[
     "timeseries_metric_card_v1",
     "single_metric_breakdown_card_v1",

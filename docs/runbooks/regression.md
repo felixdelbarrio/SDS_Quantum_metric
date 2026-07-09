@@ -25,3 +25,9 @@ Para Iteracion 16:
 - Colombia SDS escribe `docs/regression/iteration-16-co-sds-last-7-days.*` y debe quedar `PASSED` 11/11.
 - Mexico default escribe `docs/regression/iteration-16-mx-default-last-7-days.*` y debe quedar `PASSED` 9/9.
 - La regresion de widgets genericos compara valores, filas visibles, dimensiones y metricas normalizadas.
+
+Para Iteracion 17:
+
+- Colombia SDS escribe `docs/regression/iteration-17-co-sds-last-7-days.*` y debe quedar `PASSED` 11/11 con tabs `Overview general` y `Easy Dashboard Example`.
+- Mexico default escribe `docs/regression/iteration-17-mx-default-last-7-days.*` y debe quedar `PASSED` 9/9 sin tabs duplicadas.
+- Home debe consumir `/api/local-dashboard/dashboard`; los endpoints summary/errors son compatibilidad, no el contrato principal.

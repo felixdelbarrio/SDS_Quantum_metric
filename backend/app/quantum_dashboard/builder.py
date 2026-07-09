@@ -46,6 +46,11 @@ DATASET_ERRORS_TOP_ERRORS = "derived/errors_top_errors_table"
 DATASET_ERRORS_APP_NAME = "derived/errors_app_name_table"
 DATASET_TIMESERIES = "derived/timeseries"
 DATASET_CHART_PAYLOADS = "derived/chart_payloads"
+DATASET_DASHBOARD_TABS = "derived/dashboard_tabs"
+DATASET_DASHBOARD_WIDGETS = "derived/dashboard_widgets"
+DATASET_WIDGET_CHART_PAYLOADS = "derived/widget_chart_payloads"
+DATASET_WIDGET_TABLE_PAYLOADS = "derived/widget_table_payloads"
+DATASET_WIDGET_REGRESSION = "derived/widget_regression"
 DATASET_REGRESSION_RESULTS = "regression/web_vs_local_results"
 DATASET_REGRESSION_DISCREPANCIES = "regression/discrepancies"
 REQUIRED_CHART_ROLES: set[VisualRole] = {
@@ -113,6 +118,8 @@ def build_derived_datasets(
     error_app_rows: list[dict[str, Any]] = []
     timeseries_rows: list[dict[str, Any]] = []
     chart_payload_rows: list[dict[str, Any]] = []
+    dashboard_widget_rows: list[dict[str, Any]] = []
+    widget_table_payload_rows: list[dict[str, Any]] = []
     parser_errors: list[dict[str, str]] = []
 
     for role, call in selected.items():
@@ -157,6 +164,8 @@ def build_derived_datasets(
             error_app_rows=error_app_rows,
             timeseries_rows=timeseries_rows,
             chart_payload_rows=chart_payload_rows,
+            dashboard_widget_rows=dashboard_widget_rows,
+            widget_table_payload_rows=widget_table_payload_rows,
         )
 
     validation_errors = _validate_required_chart_payloads(
@@ -205,6 +214,34 @@ def build_derived_datasets(
     _write_range_dataset(
         store, country, DATASET_CHART_PAYLOADS, chart_payload_rows, range_key=range_key
     )
+    _write_range_dataset(
+        store,
+        country,
+        DATASET_DASHBOARD_TABS,
+        _dashboard_tab_rows(contracts),
+        range_key=range_key,
+    )
+    _write_range_dataset(
+        store,
+        country,
+        DATASET_DASHBOARD_WIDGETS,
+        dashboard_widget_rows,
+        range_key=range_key,
+    )
+    _write_range_dataset(
+        store,
+        country,
+        DATASET_WIDGET_CHART_PAYLOADS,
+        chart_payload_rows,
+        range_key=range_key,
+    )
+    _write_range_dataset(
+        store,
+        country,
+        DATASET_WIDGET_TABLE_PAYLOADS,
+        widget_table_payload_rows,
+        range_key=range_key,
+    )
 
     expected_roles = sorted(enabled_role_set)
     missing = [role for role in expected_roles if role not in selected]
@@ -235,6 +272,8 @@ def build_derived_datasets(
                 error_app_rows,
                 timeseries_rows,
                 chart_payload_rows,
+                dashboard_widget_rows,
+                widget_table_payload_rows,
             )
         ),
         missing_roles=[str(role) for role in missing],
@@ -536,8 +575,8 @@ def _contract_from_call(
     card_id = _text(call.get("card_id") or metadata.get("cardId")) or f"mapped:{role}"
     tab = _text(call.get("tab"))
     tab_name = _text(call.get("tab_name"))
-    resolved_tab: DashboardTab = "errors" if tab == "errors" or spec.tab == "errors" else "summary"
-    tab_index = _int(call.get("tab_index"), 0 if resolved_tab == "summary" else 1)
+    resolved_tab: DashboardTab = _safe_tab_token(tab or spec.tab)
+    tab_index = _int(call.get("tab_index"), _tab_index_from_tab(resolved_tab))
     return CardContract(
         country=country,
         dashboard_id=dashboard_id or _text(call.get("dashboard_id") or metadata.get("dashboardId")),
@@ -552,7 +591,7 @@ def _contract_from_call(
         source_query_hash=_text(call.get("query_hash")) or hash_json(request_json),
         source_response_hash=_text(call.get("response_hash")) or hash_json(response_json),
         tab=resolved_tab,
-        tab_name=tab_name or ("Resumen" if resolved_tab == "summary" else "Errores"),
+        tab_name=tab_name or _tab_label(resolved_tab),
         tab_index=tab_index,
         widget_id=_text(call.get("widget_id")) or card_id,
         card_id=card_id,
@@ -645,15 +684,19 @@ def _append_derived_rows(
     error_app_rows: list[dict[str, Any]],
     timeseries_rows: list[dict[str, Any]],
     chart_payload_rows: list[dict[str, Any]],
+    dashboard_widget_rows: list[dict[str, Any]],
+    widget_table_payload_rows: list[dict[str, Any]],
 ) -> None:
     widget = result.data.get("widget")
     rows = result.data.get("rows")
+    columns = result.data.get("columns")
     if isinstance(widget, dict):
         row = _widget_row(contract, widget)
         if contract.tab == "summary":
             summary_widgets.append(row)
         else:
             errors_widgets.append(row)
+        dashboard_widget_rows.append(row)
         for point in _list_of_dicts(widget.get("timeseries")):
             timeseries_rows.append(
                 {
@@ -679,6 +722,68 @@ def _append_derived_rows(
         chart_payload = widget.get("chart_payload")
         if isinstance(chart_payload, dict):
             chart_payload_rows.append(_chart_payload_row(contract, widget, chart_payload))
+        table_rows = _list_of_dicts(widget.get("table_rows"))
+        if table_rows:
+            widget_table_payload_rows.append(
+                {
+                    "country": contract.country,
+                    "dashboard_id": contract.dashboard_id,
+                    "dashboard_name": contract.dashboard_name,
+                    "widget_id": contract.widget_id,
+                    "card_id": contract.card_id,
+                    "widget_type": contract.card_type,
+                    "tab": contract.tab,
+                    "tab_name": contract.tab_name,
+                    "tab_index": contract.tab_index,
+                    "range_key": contract.range_key,
+                    "card_role": role,
+                    "card_title": contract.card_title,
+                    "table_columns": widget.get("table_columns", []),
+                    "table_rows": table_rows,
+                    "source_query_hash": contract.source_query_hash,
+                    "source_response_hash": contract.source_response_hash,
+                    "period_label": contract.period_label,
+                }
+            )
+    elif isinstance(rows, list):
+        table_widget = {
+            "id": contract.visual_role,
+            "role": role,
+            "title": contract.card_title,
+            "value": len(rows),
+            "unit": "count",
+            "chart_type": "table",
+            "breakdown": [],
+            "timeseries": [],
+            "table_columns": [
+                str(column) for column in (columns if isinstance(columns, list) else [])
+            ],
+            "table_rows": _list_of_dicts(rows),
+            "period": contract.period.model_dump(mode="json"),
+        }
+        row = _widget_row(contract, table_widget)
+        dashboard_widget_rows.append(row)
+        widget_table_payload_rows.append(
+            {
+                "country": contract.country,
+                "dashboard_id": contract.dashboard_id,
+                "dashboard_name": contract.dashboard_name,
+                "widget_id": contract.widget_id,
+                "card_id": contract.card_id,
+                "widget_type": contract.card_type,
+                "tab": contract.tab,
+                "tab_name": contract.tab_name,
+                "tab_index": contract.tab_index,
+                "range_key": contract.range_key,
+                "card_role": role,
+                "card_title": contract.card_title,
+                "table_columns": table_widget["table_columns"],
+                "table_rows": table_widget["table_rows"],
+                "source_query_hash": contract.source_query_hash,
+                "source_response_hash": contract.source_response_hash,
+                "period_label": contract.period_label,
+            }
+        )
     if isinstance(rows, list):
         for index, item in enumerate(_list_of_dicts(rows)):
             row = {
@@ -890,6 +995,52 @@ def _dashboard_card_row(contract: CardContract) -> dict[str, Any]:
         "required": contract.required,
         "discovered_at": contract.discovered_at,
     }
+
+
+def _dashboard_tab_rows(contracts: list[CardContract]) -> list[dict[str, Any]]:
+    rows_by_key: dict[tuple[int, str], dict[str, Any]] = {}
+    for contract in contracts:
+        key = (int(contract.tab_index or 0), contract.tab_name)
+        rows_by_key.setdefault(
+            key,
+            {
+                "country": contract.country,
+                "dashboard_id": contract.dashboard_id,
+                "dashboard_name": contract.dashboard_name,
+                "team_id": contract.team_id,
+                "range_key": contract.range_key,
+                "tab": contract.tab,
+                "tab_name": contract.tab_name,
+                "tab_index": contract.tab_index or 0,
+            },
+        )
+    return [rows_by_key[key] for key in sorted(rows_by_key)]
+
+
+def _safe_tab_token(value: str | None) -> str:
+    text = _text(value)
+    if not text:
+        return "tab-0"
+    return text
+
+
+def _tab_label(tab: str) -> str:
+    if tab == "summary":
+        return "Resumen"
+    if tab == "errors":
+        return "Errores"
+    return tab
+
+
+def _tab_index_from_tab(tab: str) -> int:
+    if tab == "errors":
+        return 1
+    if tab.startswith("tab-"):
+        try:
+            return int(tab.split("-", 1)[1])
+        except ValueError:
+            return 0
+    return 0
 
 
 def range_dataset_path(dataset_path: str, range_key: str | None) -> str:

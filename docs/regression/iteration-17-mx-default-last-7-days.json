@@ -1,0 +1,32 @@
+{
+  "country": "MX",
+  "dashboard_id": "8e53eb82-587c-4b92-a0fa-0f6283677e28",
+  "dashboard_name": "Dashboard General MX",
+  "range_key": "last_7_days",
+  "status": "passed",
+  "verdict": "PASSED",
+  "executed": "2026-07-09",
+  "period": {
+    "start": "2026-07-01T06:00:00Z",
+    "end": "2026-07-07T08:59:59Z",
+    "timezone": "CST"
+  },
+  "tabs": [
+    {
+      "tab_name": "Resumen",
+      "widgets": [
+        {"role": "summary.page_views", "title": "Paginas vistas", "status": "passed", "local": 7609172.0},
+        {"role": "summary.sessions", "title": "Sesiones", "status": "passed", "local": 1554152.0},
+        {"role": "summary.converted_sessions", "title": "Sesiones con conversion", "status": "passed", "local": 281172.0},
+        {"role": "summary.avg_session_duration", "title": "Tiempo medio de sesion", "status": "passed", "local": 98.52}
+      ]
+    },
+    {
+      "tab_name": "Errores",
+      "widgets": [
+        {"role": "errors.error_sessions_percentage_evolution", "title": "Evolutivo - % Sesiones con Error", "status": "passed", "local": 96.0},
+        {"role": "errors.error_sessions_by_app_name_comparison", "title": "Comparativa de sesiones con error por App Name", "status": "passed", "local": 2515913.0}
+      ]
+    }
+  ]
+}

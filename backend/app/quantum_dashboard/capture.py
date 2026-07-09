@@ -9,6 +9,8 @@ from backend.app.ingestion.capture import QuantumAnalyticsCaptureSession, captur
 from backend.app.ingestion.policy import IngestionRange
 from backend.app.quantum_dashboard.discovery import dashboard_tab_url
 
+type DashboardCaptureTab = dict[str, int | str | None]
+
 
 def capture_quantum_dashboard_cards(
     *,
@@ -20,6 +22,7 @@ def capture_quantum_dashboard_cards(
     team_id: str | None,
     summary_tab: int,
     errors_tab: int,
+    tabs: list[DashboardCaptureTab] | None = None,
     ingestion_id: str,
     ingestion_range: IngestionRange | None,
     session_mode: str = "manual",
@@ -45,6 +48,7 @@ def capture_quantum_dashboard_cards(
                 team_id=team_id,
                 summary_tab=summary_tab,
                 errors_tab=errors_tab,
+                tabs=tabs,
                 ingestion_id=ingestion_id,
                 ingestion_range=ingestion_range,
                 capture_session=session,
@@ -54,9 +58,13 @@ def capture_quantum_dashboard_cards(
 
     rows: list[dict[str, Any]] = []
     tab_failures: list[str] = []
-    for tab_name, tab_index in (("summary", summary_tab), ("errors", errors_tab)):
+    configured_tabs = _capture_tabs(tabs, summary_tab, errors_tab)
+    for tab in configured_tabs:
+        tab_name = str(tab["tab"])
+        tab_index = int(str(tab["tab_index"] or 0))
+        tab_label = str(tab["tab_name"])
         if progress_callback is not None:
-            progress_callback(tab_name)
+            progress_callback(tab_label)
         dashboard_url = dashboard_tab_url(
             base_url=base_url,
             dashboard_id=dashboard_id,
@@ -64,7 +72,6 @@ def capture_quantum_dashboard_cards(
             tab=tab_index,
             range_key=ingestion_range.range_key if ingestion_range else None,
         )
-        tab_label = "Resumen" if tab_name == "summary" else "Errores"
         try:
             if capture_session:
                 captured = capture_session.capture(
@@ -91,6 +98,7 @@ def capture_quantum_dashboard_cards(
         for row in captured:
             row["tab"] = tab_name
             row["tab_name"] = tab_label
+            row["tab_index"] = tab_index
             row["endpoint"] = row.get("source_endpoint")
             row["method"] = row.get("http_method")
             row["captured_at"] = row.get("ingestion_ts")
@@ -103,3 +111,37 @@ def capture_quantum_dashboard_cards(
             f"No Quantum analytics responses were captured for any configured tab. {details}"
         )
     return rows
+
+
+def _capture_tabs(
+    tabs: list[DashboardCaptureTab] | None,
+    summary_tab: int,
+    errors_tab: int,
+) -> list[DashboardCaptureTab]:
+    if tabs:
+        normalized: list[DashboardCaptureTab] = []
+        seen: set[int] = set()
+        for tab in tabs:
+            raw_index = tab.get("tab_index")
+            if raw_index is None:
+                raw_index = tab.get("tab")
+            try:
+                tab_index = int(raw_index or 0)
+            except (TypeError, ValueError):
+                tab_index = 0
+            if tab_index in seen:
+                continue
+            seen.add(tab_index)
+            tab_name = str(tab.get("tab_name") or tab.get("name") or f"Tab {tab_index + 1}")
+            tab_token = str(tab.get("tab") or _slug(tab_name) or f"tab-{tab_index}")
+            normalized.append({"tab": tab_token, "tab_name": tab_name, "tab_index": tab_index})
+        if normalized:
+            return sorted(normalized, key=lambda item: int(item["tab_index"] or 0))
+    return [
+        {"tab": "summary", "tab_name": "Resumen", "tab_index": summary_tab},
+        {"tab": "errors", "tab_name": "Errores", "tab_index": errors_tab},
+    ]
+
+
+def _slug(value: str) -> str:
+    return value.strip().casefold().replace("_", " ")

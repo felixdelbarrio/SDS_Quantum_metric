@@ -48,6 +48,7 @@ def _progress_percent(job: IngestionJob) -> float:
     capture_floor = {
         "capturing_chunk": 5.0,
         "capturing_day": 5.0,
+        "capturing_web": 10.0,
         "capturing_summary_tab": 15.0,
         "capturing_errors_tab": 35.0,
     }.get(job.status, 0.0)

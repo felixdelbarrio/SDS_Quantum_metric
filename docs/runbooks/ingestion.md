@@ -23,9 +23,17 @@ Estados accionables de Iteracion 15:
 - `cancelled_by_user`: cancelacion explicita del usuario.
 
 Para rangos preset, la URL de captura incluye `ts=<range_key>`.
+La captura recorre las tabs reales configuradas del dashboard. No se debe asumir que la tab 0 se
+llama `Resumen` ni que la tab 1 se llama `Errores`.
 
 Desde Iteracion 16:
 
 - Las TABLE nativas que Quantum ya emite para `ts=<range_key>` no fuerzan reescritura temporal si eso rompe la query.
 - `navbarMetricsQuery` y `dashboardReplayQuery` se guardan como evidencia RAW, pero no cuentan como widgets.
 - La ingesta CO/SDS `last_7_days` debe terminar `completed` con 11/11 widgets y regresion `passed`.
+
+Desde Iteracion 17:
+
+- El mismo scope activo (pais + dashboard + rango + fechas/dias) devuelve `409 already_running`.
+- Si la regresion pasa pero falta cobertura del rango, el estado final es `failed_coverage_incomplete`.
+- El dashboard local se publica incrementalmente desde `derived/dashboard_widgets`, por lo que un dia completado puede verse en Home aunque el resto siga en proceso.

@@ -1,0 +1,37 @@
+{
+  "country": "CO",
+  "dashboard_id": "fccfa9f6-5d01-47cf-9ba6-b7bccd4d4f2b",
+  "dashboard_name": "SDS",
+  "range_key": "last_7_days",
+  "status": "passed",
+  "verdict": "PASSED",
+  "executed": "2026-07-09",
+  "period": {
+    "start": "2026-07-03T06:00:00Z",
+    "end": "2026-07-09T07:59:59Z",
+    "timezone": "CST"
+  },
+  "tabs": [
+    {
+      "tab_name": "Overview general",
+      "widgets": [
+        {"role": "generic.0.chart.3e37dc4a-15ae-45fc-85fa-f0154d7fb47b", "title": "SDS Score General", "status": "passed", "local": 9.0},
+        {"role": "generic.0.chart.9c7bc6e3-0d8e-477e-a981-ec018a32ade3", "title": "SDS Score - Tecnico", "status": "passed", "local": 8.01},
+        {"role": "generic.0.chart.63ff105b-3270-4db3-9616-36707bd96262", "title": "SDS - Usabilidad", "status": "passed", "local": 9.86},
+        {"role": "generic.0.chart.5ffbd00d-ec82-4f4e-bd58-f75abb60bceb", "title": "Pago Nominas - CR general >1 interaccion", "status": "passed", "local": 80.0},
+        {"role": "generic.0.table.44423800-fab0-49bf-86b7-c7a6e3343213", "title": "Tabla errores tecnico", "status": "passed", "local_rows": 3},
+        {"role": "generic.0.table.e4b59b59-a5a0-48da-8358-7b6ac7fb9291", "title": "Tabla errores usabilidad", "status": "passed", "local_rows": 3}
+      ]
+    },
+    {
+      "tab_name": "Easy Dashboard Example",
+      "widgets": [
+        {"role": "summary.sessions", "title": "Sesiones", "status": "passed", "local": 12771.0},
+        {"role": "generic.1.chart.7863650a-ae90-4af9-b352-a883f4cc83c4", "title": "Navigation Error Rate", "status": "passed", "local": 3.0},
+        {"role": "generic.1.chart.835f752e-6339-4083-8a83-c29c0196fbda", "title": "Experience Health Score - Pago de Nominas por importar archivo", "status": "passed", "local": 7.84},
+        {"role": "generic.1.chart.d611d982-e30f-467c-a7de-71c7abdbb000", "title": "Pago de Nominas por importar archivo Task Success Rate", "status": "passed", "local": 60.0},
+        {"role": "generic.1.table.d8d90988-dd9b-4831-b6bd-965fefdf2fce", "title": "Top Navigation Errors", "status": "passed", "local_rows": 3}
+      ]
+    }
+  ]
+}

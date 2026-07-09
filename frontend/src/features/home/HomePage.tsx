@@ -1,23 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
-import {
-  getCountries,
-  getCoverage,
-  getErrors,
-  getSummary,
-  ingestRange,
-} from "./api";
+import { getCountries, getCoverage, getDashboard, ingestRange } from "./api";
 import { DashboardHeader } from "./components/DashboardHeader";
 import { DateRange } from "./components/DashboardHeader";
 import { DashboardTabs } from "./components/DashboardTabs";
 import { EmptyAnalyticsState } from "./components/EmptyAnalyticsState";
-import { ErrorsTab } from "./components/ErrorsTab";
-import { SummaryTab } from "./components/SummaryTab";
-import { CountryCode, DashboardCoverage } from "./types";
+import {
+  CountryCode,
+  DashboardCoverage,
+  DynamicDashboardResponse,
+} from "./types";
+import { KpiWidget } from "./components/KpiWidget";
 import { COUNTRY_OPTIONS } from "../../shared/countries";
 import { useAppStore } from "../../shared/state/appStore";
-
-type DashboardTab = "summary" | "errors";
 
 const COUNTRY_CODES = COUNTRY_OPTIONS.map((country) => country.code);
 
@@ -26,7 +21,7 @@ export function HomePage() {
   const { activeCountry, hasCountryPreference, setActiveCountry } =
     useAppStore();
   const country = asCountryCode(activeCountry);
-  const [activeTab, setActiveTab] = useState<DashboardTab>("summary");
+  const [activeTab, setActiveTab] = useState<string>("");
   const [dateRange, setDateRange] = useState<DateRange>(() => {
     const today = todayInMexico();
     return {
@@ -70,17 +65,17 @@ export function HomePage() {
     setActiveCountry,
   ]);
 
-  const summary = useQuery({
+  const dashboard = useQuery({
     queryKey: [
       "dashboard",
-      "summary",
+      "dynamic",
       selectedCountry,
       dateRange.startDate,
       dateRange.endDate,
       dateRange.preset,
     ],
     queryFn: () =>
-      getSummary({
+      getDashboard({
         country: selectedCountry,
         startDate: dateRange.startDate,
         endDate: dateRange.endDate,
@@ -108,24 +103,13 @@ export function HomePage() {
     enabled: hasDashboardData,
   });
 
-  const errors = useQuery({
-    queryKey: [
-      "dashboard",
-      "errors",
-      selectedCountry,
-      dateRange.startDate,
-      dateRange.endDate,
-      dateRange.preset,
-    ],
-    queryFn: () =>
-      getErrors({
-        country: selectedCountry,
-        startDate: dateRange.startDate,
-        endDate: dateRange.endDate,
-        rangeKey: dateRange.preset,
-      }),
-    enabled: activeTab === "errors" && hasDashboardData,
-  });
+  useEffect(() => {
+    const firstTab = dashboard.data?.tabs?.[0]?.tab;
+    if (!firstTab) return;
+    if (!dashboard.data?.tabs.some((tab) => tab.tab === activeTab)) {
+      setActiveTab(firstTab);
+    }
+  }, [activeTab, dashboard.data?.tabs]);
 
   const rangeIngestionMutation = useMutation({
     mutationFn: () =>
@@ -176,31 +160,59 @@ export function HomePage() {
         dateRange={dateRange}
         coverage={coverage.data}
         dashboardName={
-          summary.data?.dashboard_name ?? selectedCountryMeta?.dashboard_name
+          dashboard.data?.dashboard_name ?? selectedCountryMeta?.dashboard_name
         }
+        dashboardTitle={dashboard.data?.dashboard_title}
+        dashboardDescription={dashboard.data?.description}
         missingIngestionPending={rangeIngestionMutation.isPending}
         onCountryChange={setActiveCountry}
         onDateRangeChange={setDateRange}
         onIngestMissingDays={() => rangeIngestionMutation.mutate()}
       />
 
-      <DashboardTabs active={activeTab} onChange={setActiveTab} />
+      <DashboardTabs
+        tabs={dashboard.data?.tabs ?? []}
+        active={activeTab || dashboard.data?.tabs?.[0]?.tab || ""}
+        onChange={setActiveTab}
+      />
 
-      {activeTab === "summary" ? (
-        <SummaryTab
-          country={selectedCountry}
-          dateRange={dateRange}
-          response={summary.data}
-          isLoading={summary.isLoading}
-        />
-      ) : (
-        <ErrorsTab
-          country={selectedCountry}
-          dateRange={dateRange}
-          response={errors.data}
-          isLoading={errors.isLoading}
-        />
-      )}
+      <DynamicDashboardTabPanel
+        activeTab={activeTab || dashboard.data?.tabs?.[0]?.tab || ""}
+        response={dashboard.data}
+        isLoading={dashboard.isLoading}
+      />
+    </div>
+  );
+}
+
+function DynamicDashboardTabPanel({
+  activeTab,
+  response,
+  isLoading,
+}: {
+  activeTab: string;
+  response?: DynamicDashboardResponse;
+  isLoading: boolean;
+}) {
+  if (isLoading) {
+    return <div className="analytics-loading">Cargando dashboard</div>;
+  }
+  const tabs = response?.tabs ?? [];
+  const tab = tabs.find((item) => item.tab === activeTab) ?? tabs[0];
+  if (!tab?.widgets.length) {
+    return (
+      <div className="dashboard-tab-panel">
+        <EmptyAnalyticsState reason={response?.reason} />
+      </div>
+    );
+  }
+  return (
+    <div className="dashboard-tab-panel">
+      <section className="dashboard-widget-grid">
+        {tab.widgets.map((widget) => (
+          <KpiWidget key={widget.role ?? widget.id} widget={widget} />
+        ))}
+      </section>
     </div>
   );
 }

@@ -16,6 +16,8 @@ type Props = {
   dateRange: DateRange;
   coverage?: DashboardCoverage | null;
   dashboardName?: string | null;
+  dashboardTitle?: string | null;
+  dashboardDescription?: string | null;
   missingIngestionPending: boolean;
   onCountryChange: (country: CountryCode) => void;
   onDateRangeChange: (range: DateRange) => void;
@@ -28,6 +30,8 @@ export function DashboardHeader({
   dateRange,
   coverage,
   dashboardName,
+  dashboardTitle,
+  dashboardDescription,
   missingIngestionPending,
   onCountryChange,
   onDateRangeChange,
@@ -43,8 +47,13 @@ export function DashboardHeader({
           <Star size={18} />
         </span>
         <div>
-          <h1>Dashboard General {country}</h1>
-          <p>Este dashboard es un resumen de sesiones y errores.</p>
+          <h1>
+            {dashboardTitle ?? dashboardName ?? `Dashboard General ${country}`}
+          </h1>
+          <p>
+            {dashboardDescription ??
+              "Dashboard local generado desde Quantum Web."}
+          </p>
           {dashboardName ? (
             <span className="dashboard-context">
               Dashboard: {dashboardName}
@@ -60,7 +69,7 @@ export function DashboardHeader({
                 disabled={!canIngestCoverage}
               >
                 {missingIngestionPending
-                  ? "Ingestando"
+                  ? "Ingestando periodo..."
                   : dateRange.preset === "today"
                     ? "Actualizar hoy"
                     : "Ingestar periodo"}

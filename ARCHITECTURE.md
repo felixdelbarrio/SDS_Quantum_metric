@@ -27,7 +27,7 @@ Playwright ni clientes HTTP externos.
 
 `backend/app/quantum_dashboard` implementa la capa canonica RAW -> contrato visual -> derivados:
 
-- `catalog.py`: catalogo obligatorio de nueve roles visuales para Resumen y Errores.
+- `catalog.py`: catalogo de roles visuales conocidos y soporte de roles genericos por tab.
 - `discovery.py`: resolucion interna de dashboard, team y tabs desde `.env`, config o URL.
 - `dashboard_discovery.py`: descubrimiento/cache de dashboards por pais desde payloads reales de Quantum Web.
 - `dashboard_resources.py`: contrato paginado `resourcesList`, cache offline por pais y parsing de recursos dashboard.
@@ -38,8 +38,8 @@ Playwright ni clientes HTTP externos.
 - `widget_support.py`: evaluacion centralizada de soporte por parser especifico o capacidad generica.
 - `widget_roles.py`: descriptores de widgets y resolucion por `widget_id`, `card_id` o secuencia cuando Quantum comparte IDs temporales.
 - `parsers.py`: estrategias por rol visual y parsers genericos, con `chart_payload` cuando la respuesta trae puntos.
-- `builder.py`: raw calls -> visual contracts -> web snapshots -> derived Parquet -> chart payloads.
-- `service.py`: endpoints `/api/local-dashboard/*` desde derivados.
+- `builder.py`: raw calls -> visual contracts -> web snapshots -> derived Parquet -> dashboard widgets -> chart/table payloads.
+- `service.py`: endpoints `/api/local-dashboard/*` desde derivados; `/dashboard` es el contrato principal dashboard-driven.
 - `regression.py`: comparacion Web vs Local de valores, ejes, leyendas, series y tablas.
 - `range_query.py`: resolucion de rangos y cobertura con severidad por preset.
 - `aggregation_rules.py`: reglas canonicas para decidir si un widget puede agregarse o requiere contrato Quantum del rango completo.
@@ -50,12 +50,12 @@ Playwright ni clientes HTTP externos.
 1. El usuario lanza una ingesta desde la seccion Ingesta.
 2. Se abre un contexto Playwright efimero con cookies en memoria.
 3. Se resuelve el dashboard default del pais desde configuracion.
-4. Se navegan las tabs configuradas con `ts=<range_key>` cuando aplica.
+4. Se navegan todas las tabs configuradas reales con `ts=<range_key>` cuando aplica.
 5. Se capturan respuestas reales de `/analytics` y `/analytics/historical`.
 6. Se guardan raw calls normalizadas, particiones diarias y manifests en Parquet dentro de la ruta persistente.
-7. Se generan contratos visuales, snapshots web, datasets derivados y `derived/chart_payloads`.
+7. Se generan contratos visuales, snapshots web, datasets legacy y datasets dashboard-driven (`derived/dashboard_tabs`, `derived/dashboard_widgets`, `derived/widget_chart_payloads`, `derived/widget_table_payloads`).
 8. Se ejecuta regresion Web vs Local solo para widgets soportados y habilitados.
-9. La ingesta solo termina `completed` si la regresion pasa; fallos de sesion, dashboard, widgets, analytics y cancelacion usan estados accionables.
+9. La ingesta solo termina `completed` si la regresion pasa y el rango queda cubierto; fallos de sesion, dashboard, widgets, analytics, cobertura y cancelacion usan estados accionables.
 
 La politica de rango usa `QUANTUM_INGESTION_DEPTH_DAYS` como Profundidad por defecto del boton `Ingestar`, mas `QUANTUM_INCREMENTAL_REPROCESS_DAYS` y `QUANTUM_INGESTION_CHUNK_DAYS`. El planner divide ventanas largas en chunks y el rewriter aplica el rango activo a payloads Quantum antes de persistir.
 Cuando la UI solicita Today, Yesterday o Last 7 Days, la ingesta crea un contrato explicito con
@@ -69,9 +69,9 @@ forzada provoca errores del endpoint; el resultado se compara igualmente por Web
 
 1. Home llama `/api/local-dashboard/countries` para elegir pais por defecto.
 2. El backend comprueba contratos, derivados, coverage diario y regresion.
-3. Summary y Errors se sirven desde `derived/*`.
-4. Search y sort operan sobre Parquet derivado local.
-5. Si falta una card obligatoria, falla regresion o faltan dias, se devuelve error accionable.
+3. Home llama `/api/local-dashboard/dashboard` y recibe tabs/widgets reales del dashboard default.
+4. Los endpoints legacy Summary/Errors siguen disponibles para compatibilidad y detalles.
+5. Si falta una card obligatoria, falla regresion o faltan dias, se devuelve error accionable sin dumps tecnicos largos.
 6. El contrato local no expone Dimension/Segment: no hay botones, endpoints publicos de seleccion ni campos `applied_*` en `/api/local-dashboard/*`.
 
 ## Contrato grafico
@@ -109,3 +109,11 @@ La app local excluye videos de sesiones: no hay rutas `/video`, componentes de r
 Colombia SDS y Mexico default usan el mismo pipeline Web -> RAW -> derivados -> Home -> regresion.
 Los widgets `generic.*` permiten reproducir dashboards personalizados sin hardcodear titulos. La
 regresion 2026-07-07 queda documentada en `docs/regression/iteration-16-*.md`.
+
+## Iteracion 17
+
+Home y la API local pasan a ser dashboard-driven. Colombia SDS usa las tabs reales
+`Overview general` y `Easy Dashboard Example`; Mexico default conserva sus tabs configuradas sin
+duplicados legacy. Los datasets `derived/dashboard_*` son la fuente principal para widgets
+genericos y la ingesta bloquea scopes duplicados. La regresion 2026-07-09 queda documentada en
+`docs/regression/iteration-17-*.md`.

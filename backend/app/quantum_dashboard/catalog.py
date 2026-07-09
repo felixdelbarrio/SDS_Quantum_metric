@@ -123,7 +123,7 @@ def spec_for_role(role: str | None) -> DashboardCardSpec | None:
             strategy = "generic_metric_card_v1"
             card_type = "CHART"
         return DashboardCardSpec(
-            tab="summary",
+            tab=_generic_tab_from_role(role),
             role=role,
             title=role,
             card_type=card_type,
@@ -136,9 +136,24 @@ def spec_for_role(role: str | None) -> DashboardCardSpec | None:
 
 
 def required_roles(tab: DashboardTab | None = None) -> list[VisualRole]:
-    return [card.role for card in MANDATORY_CARDS if tab is None or card.tab == tab]
+    return [
+        card.role
+        for card in MANDATORY_CARDS
+        if tab is None or _canonical_tab(card.tab) == _canonical_tab(tab)
+    ]
 
 
 def role_tab(role: VisualRole) -> DashboardTab:
     spec = spec_for_role(role)
     return spec.tab if spec is not None else "summary"
+
+
+def _generic_tab_from_role(role: str) -> str:
+    parts = role.split(".")
+    if len(parts) >= 2 and parts[1].isdigit():
+        return f"tab-{parts[1]}"
+    return "generic"
+
+
+def _canonical_tab(tab: str | None) -> str:
+    return str(tab or "").strip().casefold()
