@@ -541,6 +541,8 @@ class ParquetStore:
         country: str,
         start: str | date | datetime | None,
         end: str | date | datetime | None,
+        *,
+        timezone: str = "CST",
     ) -> dict[str, Any]:
         start_day = parse_date(start)
         end_day = parse_date(end)
@@ -563,7 +565,9 @@ class ParquetStore:
         requested_days = _days_between(start_day, end_day)
         covered = self._manifest_covered_days(country)
         if not covered:
-            covered = self._covered_days_from_source_ranges(country, requested_days)
+            covered = self._covered_days_from_source_ranges(
+                country, requested_days, timezone=timezone
+            )
         covered_days = [day for day in requested_days if day in covered]
         missing_days = [day for day in requested_days if day not in covered]
         return {
@@ -685,12 +689,12 @@ class ParquetStore:
         return days
 
     def _covered_days_from_source_ranges(
-        self, country: str, requested_days: list[date]
+        self, country: str, requested_days: list[date], *, timezone: str = "CST"
     ) -> set[date]:
         ranges = self.covered_source_ranges(country)
         covered: set[date] = set()
         for day in requested_days:
-            start, end = _day_bounds(day)
+            start, end = _day_bounds(day, timezone=timezone)
             if any(range_start <= start and range_end >= end for range_start, range_end in ranges):
                 covered.add(day)
         return covered
@@ -821,7 +825,8 @@ def _row_source_day(row: dict[str, Any]) -> date | None:
     source = _row_range_start(row) or _parse_source_ts(row.get("ingestion_ts"))
     if source is None:
         return None
-    return source.astimezone(zoneinfo_for("CST")).date()
+    timezone = str(row.get("range_timezone") or row.get("source_timezone") or "UTC")
+    return source.astimezone(zoneinfo_for(timezone)).date()
 
 
 def _row_range_start(row: dict[str, Any]) -> datetime | None:
@@ -841,8 +846,8 @@ def _days_between(start: date, end: date) -> list[date]:
     return [start + timedelta(days=index) for index in range(total_days + 1)]
 
 
-def _day_bounds(day: date) -> tuple[datetime, datetime]:
-    zone = zoneinfo_for("CST")
+def _day_bounds(day: date, *, timezone: str = "CST") -> tuple[datetime, datetime]:
+    zone = zoneinfo_for(timezone)
     start = datetime.combine(day, time.min, tzinfo=zone).astimezone(UTC)
     end = datetime.combine(day, time.max.replace(microsecond=0), tzinfo=zone).astimezone(UTC)
     return start, end

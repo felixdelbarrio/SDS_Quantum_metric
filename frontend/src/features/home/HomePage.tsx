@@ -10,9 +10,10 @@ import {
   DashboardCoverage,
   DynamicDashboardResponse,
 } from "./types";
-import { KpiWidget } from "./components/KpiWidget";
+import { DashboardSectionGrid } from "./components/DashboardSectionGrid";
 import { COUNTRY_OPTIONS } from "../../shared/countries";
 import { useAppStore } from "../../shared/state/appStore";
+import { timezoneForCountry, todayInTimezone } from "./timezone";
 
 const COUNTRY_CODES = COUNTRY_OPTIONS.map((country) => country.code);
 
@@ -23,7 +24,7 @@ export function HomePage() {
   const country = asCountryCode(activeCountry);
   const [activeTab, setActiveTab] = useState<string>("");
   const [dateRange, setDateRange] = useState<DateRange>(() => {
-    const today = todayInMexico();
+    const today = todayInTimezone(timezoneForCountry(country));
     return {
       preset: "last_7_days",
       startDate: addDays(today, -6),
@@ -49,6 +50,11 @@ export function HomePage() {
   const selectedCountryMeta = countries.data?.countries.find(
     (item) => item.code === selectedCountry,
   );
+  const dashboardTimezone =
+    selectedCountryMeta?.timezone ?? timezoneForCountry(selectedCountry);
+  useEffect(() => {
+    setDateRange((current) => dateRangeForTimezone(current, dashboardTimezone));
+  }, [dashboardTimezone]);
   useEffect(() => {
     if (!countries.data?.countries.length) return;
     if (
@@ -156,6 +162,7 @@ export function HomePage() {
     <div className="dashboard-page">
       <DashboardHeader
         country={selectedCountry}
+        timezone={dashboardTimezone}
         countries={countries.data.countries}
         dateRange={dateRange}
         coverage={coverage.data}
@@ -199,7 +206,8 @@ function DynamicDashboardTabPanel({
   }
   const tabs = response?.tabs ?? [];
   const tab = tabs.find((item) => item.tab === activeTab) ?? tabs[0];
-  if (!tab?.widgets.length) {
+  const sections = tab?.sections ?? [];
+  if (!sections.some((section) => section.widgets.length)) {
     return (
       <div className="dashboard-tab-panel">
         <EmptyAnalyticsState reason={response?.reason} />
@@ -208,32 +216,34 @@ function DynamicDashboardTabPanel({
   }
   return (
     <div className="dashboard-tab-panel">
-      <section className="dashboard-widget-grid">
-        {tab.widgets.map((widget) => (
-          <KpiWidget key={widget.role ?? widget.id} widget={widget} />
-        ))}
-      </section>
+      {sections.map((section, sectionIndex) => (
+        <DashboardSectionGrid
+          key={section.section_id ?? `section-${sectionIndex}`}
+          section={section}
+          sectionIndex={sectionIndex}
+        />
+      ))}
     </div>
   );
-}
-
-function todayInMexico() {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/Mexico_City",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(new Date());
-  const value = Object.fromEntries(
-    parts.map((part) => [part.type, part.value]),
-  );
-  return `${value.year}-${value.month}-${value.day}`;
 }
 
 function addDays(value: string, days: number) {
   const date = new Date(`${value}T00:00:00Z`);
   date.setUTCDate(date.getUTCDate() + days);
   return date.toISOString().slice(0, 10);
+}
+
+function dateRangeForTimezone(current: DateRange, timezone: string): DateRange {
+  if (current.preset === "custom") return current;
+  const today = todayInTimezone(timezone);
+  if (current.preset === "today") {
+    return { ...current, startDate: today, endDate: today };
+  }
+  if (current.preset === "yesterday") {
+    const yesterday = addDays(today, -1);
+    return { ...current, startDate: yesterday, endDate: yesterday };
+  }
+  return { ...current, startDate: addDays(today, -6), endDate: today };
 }
 
 function asCountryCode(value: string): CountryCode {

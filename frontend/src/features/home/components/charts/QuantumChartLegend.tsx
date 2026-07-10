@@ -7,7 +7,10 @@ type Props = {
 export function QuantumChartLegend({ payload }: Props) {
   const legends = payload.legends.length
     ? payload.legends
-    : payload.series.map((series) => ({ id: series.id, label: series.label }));
+    : payload.series.map((series) => ({
+        id: series.series_id ?? series.id,
+        label: series.label,
+      }));
 
   return (
     <div className="quantum-chart-legend" aria-label="Leyenda">

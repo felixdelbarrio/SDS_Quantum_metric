@@ -2,10 +2,20 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from typing import Any
+from typing import Literal
+
+from pydantic import BaseModel, Field
 
 GENERIC_ROLE_PREFIX = "generic."
 GENERIC_WIDGET_TYPES = {"CHART", "TABLE", "DONUT", "KPI"}
+
+
+class DashboardTabResolution(BaseModel):
+    status: Literal["resolved", "unassigned", "ambiguous"]
+    tab: str | None = None
+    tab_id: str | None = None
+    tab_index: int | None = None
+    evidence: list[str] = Field(default_factory=list)
 
 
 def is_generic_role(role: str | None) -> bool:
@@ -51,42 +61,40 @@ def generic_kind_from_role(role: str | None) -> str | None:
     return parts[2].upper() if len(parts) >= 4 else None
 
 
-def dashboard_tab_for_widget(tab: str | None, tab_name: str | None, title: str | None) -> str:
-    explicit_tab = _canonical(tab or "")
-    if "summary" in explicit_tab or "resumen" in explicit_tab:
-        return "summary"
-    if "error" in explicit_tab or "errores" in explicit_tab:
-        return "errors"
-
-    haystack = _canonical(" ".join(str(item or "") for item in (tab_name, title)))
-    if "summary" in haystack or "resumen" in haystack:
-        return "summary"
-    if "error" in haystack or "errores" in haystack:
-        return "errors"
-    return "summary"
-
-
-def infer_generic_unit(title: str | None, value: Any = None) -> str:
-    canonical = _canonical(title or "")
-    if any(
-        token in canonical
-        for token in (
-            "%",
-            " percent ",
-            "percentage",
-            "porcentaje",
-            " rate",
-            "ratio",
-            "success",
-            "conversion",
-            " cr ",
+def dashboard_tab_for_widget(
+    tab: str | None,
+    tab_name: str | None,
+    title: str | None = None,
+    *,
+    tab_id: str | None = None,
+    tab_index: int | None = None,
+) -> DashboardTabResolution:
+    del title
+    explicit_tab = _safe_text(tab)
+    explicit_name = _safe_text(tab_name)
+    if explicit_tab and explicit_name:
+        return DashboardTabResolution(
+            status="resolved",
+            tab=explicit_tab,
+            tab_id=_safe_text(tab_id),
+            tab_index=tab_index,
+            evidence=["explicit_tab", "explicit_tab_name"],
         )
-    ):
-        return "percent"
-    numeric = _number(value)
-    if numeric is not None and 0 <= abs(numeric) <= 1 and "score" not in canonical:
-        return "percent"
-    return "count"
+    if explicit_tab or explicit_name or tab_id is not None or tab_index is not None:
+        return DashboardTabResolution(
+            status="resolved",
+            tab=explicit_tab or explicit_name or f"tab-{tab_index or 0}",
+            tab_id=_safe_text(tab_id),
+            tab_index=tab_index,
+            evidence=["partial_explicit_tab_contract"],
+        )
+    return DashboardTabResolution(
+        status="unassigned",
+        tab="unassigned",
+        tab_id=None,
+        tab_index=None,
+        evidence=["missing_tab_contract"],
+    )
 
 
 def _safe_token(value: str) -> str:
@@ -95,12 +103,8 @@ def _safe_token(value: str) -> str:
     return token.strip("_") or "unknown"
 
 
-def _canonical(value: str) -> str:
-    normalized = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode()
-    return f" {normalized.replace('_', ' ').casefold()} "
-
-
-def _number(value: Any) -> float | None:
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        return float(value)
-    return None
+def _safe_text(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None

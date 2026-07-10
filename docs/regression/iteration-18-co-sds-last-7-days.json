@@ -1,0 +1,10 @@
+{
+  "iteration": 18,
+  "country": "CO",
+  "dashboard_id": "fccfa9f6-5d01-47cf-9ba6-b7bccd4d4f2b",
+  "team_id": "24feba5b-307d-40ed-83de-478111f8938e",
+  "range_key": "last_7_days",
+  "verdict": "BLOCKED",
+  "reason": "Corporate Quantum authentication required; no authenticated browser session was available.",
+  "widgets": []
+}

@@ -16,7 +16,7 @@ def format_period_label(
     zone = zoneinfo_for(timezone)
     start_local = start.astimezone(zone)
     end_local = end.astimezone(zone)
-    normalized_preset = _infer_preset(start_local, end_local, preset)
+    normalized_preset = _infer_preset(start_local, end_local, preset, timezone)
     range_text = _format_range(start_local, end_local, timezone)
     if normalized_preset == "today":
         return f"Today ({range_text})"
@@ -145,10 +145,10 @@ def zoneinfo_for(timezone: str | None) -> ZoneInfo:
         return MEXICO_ZONE
 
 
-def _infer_preset(start: datetime, end: datetime, preset: str | None) -> str:
+def _infer_preset(start: datetime, end: datetime, preset: str | None, timezone: str) -> str:
     if preset:
         return preset
-    return infer_preset_for_dates(start.date(), end.date(), timezone="America/Mexico_City")
+    return infer_preset_for_dates(start.date(), end.date(), timezone=timezone)
 
 
 def _format_datetime(value: datetime) -> str:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from backend.app.analytics.normalizer import (
     canonicalize_key,
@@ -24,8 +24,25 @@ from backend.app.quantum_dashboard.chart_axes import (
     readable_x_ticks,
     readable_y_ticks,
 )
-from backend.app.quantum_dashboard.generic_roles import infer_generic_unit, is_generic_role
-from backend.app.quantum_dashboard.models import ParserResult, VisualRole
+from backend.app.quantum_dashboard.contracts import (
+    ChartLegendContract,
+    ChartType,
+    ContractResolution,
+    DisplayNumberContract,
+    DisplayUnit,
+    HistoricalComparisonContract,
+    QuantumBandContract,
+    QuantumChartContract,
+    QuantumSeriesContract,
+    QuantumTableColumnContract,
+    QuantumTableContract,
+    SemanticIntent,
+    SeriesKind,
+    SortDirection,
+    TableDataType,
+)
+from backend.app.quantum_dashboard.generic_roles import is_generic_role
+from backend.app.quantum_dashboard.models import ChartAxis, ParserResult, VisualRole
 from backend.app.quantum_dashboard.periods import parse_datetime, zoneinfo_for
 
 METRIC_ALIASES: dict[VisualRole, tuple[str, ...]] = {
@@ -142,60 +159,262 @@ def _parse_generic_card(
     return _parse_generic_metric(call, role, response_json)
 
 
+def resolve_primary_value_from_contract(
+    call: dict[str, Any],
+    response_json: dict[str, Any],
+) -> ContractResolution:
+    visual = _visual_contract(call)
+    explicit_candidates = [
+        visual.get("value"),
+        visual.get("display"),
+        call.get("value_contract"),
+        response_json.get("value_contract"),
+        response_json.get("display"),
+        response_json.get("primary_value"),
+    ]
+    resolved: list[DisplayNumberContract] = []
+    for candidate in explicit_candidates:
+        if not isinstance(candidate, dict):
+            continue
+        parsed = _display_contract_from_mapping(candidate, call)
+        if parsed is not None:
+            resolved.append(parsed)
+    resolved = _dedupe_display_contracts(resolved)
+    if len(resolved) == 1:
+        return ContractResolution(
+            status="resolved",
+            value=resolved[0],
+            evidence=["explicit_display_contract"],
+        )
+    if len(resolved) > 1:
+        return ContractResolution(
+            status="ambiguous",
+            evidence=["multiple_explicit_display_contracts"],
+            error="Quantum exposed conflicting primary value contracts.",
+        )
+
+    explicit_values = [
+        _to_number(response_json.get(key))
+        for key in ("visible_value", "main_value", "display_value", "total", "value")
+    ]
+    numeric_values = _dedupe_numbers([value for value in explicit_values if value is not None])
+    evidence = "explicit_response_aggregate"
+    if not numeric_values:
+        aggregate = _single_aggregate_metric(response_json)
+        numeric_values = [] if aggregate is None else [aggregate]
+        evidence = "single_metric_aggregate_response"
+    if len(numeric_values) > 1:
+        return ContractResolution(
+            status="ambiguous",
+            evidence=["conflicting_explicit_aggregate_values"],
+            error="Quantum exposed more than one possible primary value.",
+        )
+    if not numeric_values:
+        return ContractResolution(
+            status="missing",
+            evidence=["no_explicit_primary_value"],
+            error="No explicit aggregate or visible primary value was captured.",
+        )
+    unit: DisplayUnit = _explicit_unit(call, visual)
+    value = numeric_values[0]
+    return ContractResolution(
+        status="resolved",
+        value=DisplayNumberContract(
+            raw_value=value,
+            display_value=value,
+            unit=unit,
+            scale=1,
+            precision=_explicit_precision(call, visual, value),
+            prefix=_text_value(visual.get("prefix")),
+            suffix=_text_value(visual.get("suffix")),
+            formatter=_text_value(visual.get("formatter")),
+            formatted=_text_value(visual.get("formatted")),
+        ),
+        evidence=[evidence],
+    )
+
+
+def resolve_display_precision(
+    call: dict[str, Any], response_json: dict[str, Any]
+) -> ContractResolution:
+    primary = resolve_primary_value_from_contract(call, response_json)
+    if primary.status != "resolved" or not isinstance(primary.value, DisplayNumberContract):
+        return ContractResolution(
+            status=primary.status,
+            evidence=primary.evidence,
+            error=primary.error,
+        )
+    return ContractResolution(
+        status="resolved",
+        value=primary.value.precision,
+        evidence=[*primary.evidence, "display_precision_from_contract"],
+    )
+
+
+def resolve_historical_comparison(
+    call: dict[str, Any],
+    response_json: dict[str, Any],
+) -> ContractResolution:
+    visual = _visual_contract(call)
+    candidates = [visual.get("comparison"), response_json.get("comparison")]
+    parsed: list[HistoricalComparisonContract] = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        label = _text_value(candidate.get("label"))
+        if not label:
+            continue
+        raw_delta = _first_number(candidate, "raw_delta", "delta", "delta_percent")
+        display_delta = _first_number(
+            candidate, "display_delta", "delta_percent", "display_value", "delta"
+        )
+        formatted = _text_value(candidate.get("formatted") or candidate.get("display"))
+        precision = _int_value(candidate.get("precision"))
+        if precision is None:
+            precision = _precision_from_formatted(formatted)
+        if precision is None:
+            precision = _precision_from_number(display_delta)
+        raw_intent = str(candidate.get("semantic_intent") or "neutral").strip().lower()
+        intent: SemanticIntent = cast(SemanticIntent, raw_intent)
+        if intent not in {"positive", "negative", "neutral"}:
+            intent = "neutral"
+        parsed.append(
+            HistoricalComparisonContract(
+                label=label,
+                raw_delta=raw_delta,
+                display_delta=display_delta,
+                precision=precision,
+                formatted=formatted,
+                semantic_intent=intent,
+            )
+        )
+    unique = {item.model_dump_json(): item for item in parsed}
+    if len(unique) == 1:
+        return ContractResolution(
+            status="resolved",
+            value=next(iter(unique.values())),
+            evidence=["explicit_historical_comparison"],
+        )
+    if len(unique) > 1:
+        return ContractResolution(
+            status="ambiguous",
+            evidence=["conflicting_historical_comparisons"],
+            error="Quantum exposed conflicting historical comparisons.",
+        )
+    return ContractResolution(status="missing", evidence=["comparison_not_captured"])
+
+
+def resolve_chart_contract(
+    call: dict[str, Any],
+    response_json: dict[str, Any],
+) -> ContractResolution:
+    visual = _visual_contract(call)
+    candidate = (
+        visual.get("chart") or response_json.get("chart_contract") or response_json.get("chart")
+    )
+    if not isinstance(candidate, dict):
+        return ContractResolution(status="missing", evidence=["chart_contract_not_captured"])
+    try:
+        chart = _chart_contract_from_mapping(candidate, call)
+    except (TypeError, ValueError) as exc:
+        return ContractResolution(
+            status="invalid",
+            evidence=["invalid_explicit_chart_contract"],
+            error=str(exc),
+        )
+    return ContractResolution(
+        status="resolved",
+        value=chart,
+        evidence=["explicit_chart_contract"],
+    )
+
+
+def resolve_table_contract(
+    call: dict[str, Any],
+    response_json: dict[str, Any],
+    parsed_rows: list[dict[str, Any]],
+) -> ContractResolution:
+    visual = _visual_contract(call)
+    candidate = visual.get("table") or response_json.get("table_contract")
+    columns_value = candidate.get("columns") if isinstance(candidate, dict) else None
+    if columns_value is None:
+        columns_value = response_json.get("columns") or response_json.get("columnNames")
+    if not isinstance(columns_value, list) or not columns_value:
+        return ContractResolution(
+            status="missing",
+            evidence=["table_columns_not_captured"],
+            error="Quantum table headers were not captured with the response.",
+        )
+    try:
+        columns = [_table_column_from_value(column) for column in columns_value]
+    except ValueError as exc:
+        return ContractResolution(
+            status="invalid",
+            evidence=["invalid_table_column_contract"],
+            error=str(exc),
+        )
+    table_mapping = candidate if isinstance(candidate, dict) else {}
+    rows = table_mapping.get("rows")
+    if not isinstance(rows, list):
+        rows = parsed_rows
+    return ContractResolution(
+        status="resolved",
+        value=QuantumTableContract(
+            columns=columns,
+            rows=[row for row in rows if isinstance(row, dict)],
+            default_sort_column=_text_value(table_mapping.get("default_sort_column")),
+            default_sort_direction=_sort_direction(table_mapping.get("default_sort_direction")),
+            period_label=_text_value(table_mapping.get("period_label") or call.get("period_label"))
+            or "",
+            timezone=_text_value(table_mapping.get("timezone") or call.get("range_timezone"))
+            or "UTC",
+        ),
+        evidence=["explicit_table_column_contract"],
+    )
+
+
 def _parse_generic_metric(
     call: dict[str, Any],
     role: VisualRole,
     response_json: dict[str, Any],
 ) -> ParserResult:
     title = _generic_title(call, role)
-    rows = _rows(response_json)
-    value = _number_from_object(
-        response_json,
-        ("visible_value", "main_value", "total", "value", "count", "sessions"),
-    )
-    if value is None:
-        values = _generic_row_metric_values(rows)
-        if values:
-            unit_hint = infer_generic_unit(title, values[0])
-            value = _aggregate_values(values, average=unit_hint == "percent")
-    timeseries = _generic_timeseries(response_json)
-    if value is None and timeseries:
-        unit_hint = infer_generic_unit(title, timeseries[0].get("value"))
-        value = _aggregate_values(
-            [point["value"] for point in timeseries],
-            average=unit_hint == "percent",
+    value_resolution = resolve_primary_value_from_contract(call, response_json)
+    if value_resolution.status != "resolved" or not isinstance(
+        value_resolution.value, DisplayNumberContract
+    ):
+        error_code = {
+            "ambiguous": "failed_ambiguous_primary_value",
+            "invalid": "failed_invalid_contract",
+        }.get(value_resolution.status, "failed_missing_primary_value")
+        return _error(
+            role,
+            error_code,
+            value_resolution.error or f"No explicit primary value contract found for {role}.",
         )
-    if value is None:
-        result_values = _values_from_results(response_json)
-        if result_values:
-            unit_hint = infer_generic_unit(title, result_values[0])
-            value = _aggregate_values(result_values, average=unit_hint == "percent")
-    if value is None:
-        return _error(role, "metric_not_found", f"No generic value found for role {role}.")
-    unit = infer_generic_unit(title, value)
-    if unit == "percent":
-        value = _as_percent(value) or value
-        for point in timeseries:
-            parsed = _to_number(point.get("value"))
-            if parsed is not None:
-                point["value"] = _as_percent(parsed) or parsed
-    widget = {
+    display = value_resolution.value
+    comparison_resolution = resolve_historical_comparison(call, response_json)
+    comparison = (
+        comparison_resolution.value
+        if isinstance(comparison_resolution.value, HistoricalComparisonContract)
+        else None
+    )
+    chart_resolution = resolve_chart_contract(call, response_json)
+    chart = (
+        chart_resolution.value if isinstance(chart_resolution.value, QuantumChartContract) else None
+    )
+    widget: dict[str, Any] = {
         "id": role,
         "role": role,
         "title": title,
-        "value": value,
-        "unit": unit,
-        "chart_type": "line",
+        "value": display.display_value,
+        "display": display.model_dump(mode="json"),
+        "unit": display.unit,
+        "chart_type": chart.chart_type if chart else "kpi",
         "breakdown": [],
-        "timeseries": timeseries,
-        "comparison": _comparison(response_json),
-        "chart_payload": _line_chart_payload(
-            response_json=response_json,
-            role=role,
-            title=title,
-            unit=unit,
-            points=timeseries,
-        ),
+        "timeseries": _timeseries_from_chart(chart),
+        "comparison": comparison.model_dump(mode="json") if comparison else None,
+        "chart_payload": _legacy_chart_payload(chart) if chart else None,
         "missing_source_field": None,
     }
     return ParserResult(role=role, status="ok", data={"widget": widget})
@@ -211,19 +430,32 @@ def _parse_generic_table(
         parsed = _generic_table_row(row, index)
         if parsed:
             parsed_rows.append(parsed)
-    columns = _generic_table_columns(response_json, parsed_rows)
+    table_resolution = resolve_table_contract(call, response_json, parsed_rows)
+    if table_resolution.status != "resolved" or not isinstance(
+        table_resolution.value, QuantumTableContract
+    ):
+        return _error(
+            role,
+            "failed_invalid_contract"
+            if table_resolution.status == "invalid"
+            else "failed_missing_table_contract",
+            table_resolution.error or "Quantum table column contract is missing.",
+        )
+    table = table_resolution.value
+    columns = [column.model_dump(mode="json") for column in table.columns]
     widget = {
         "id": role,
         "role": role,
         "title": _generic_title(call, role),
-        "value": len(parsed_rows),
+        "value": None,
         "unit": "count",
         "chart_type": "table",
         "breakdown": [],
         "timeseries": [],
         "table_columns": columns,
-        "table_rows": parsed_rows,
-        "comparison": _comparison(response_json),
+        "table_rows": table.rows,
+        "table_contract": table.model_dump(mode="json"),
+        "comparison": None,
     }
     return ParserResult(
         role=role,
@@ -237,32 +469,43 @@ def _parse_generic_donut(
     role: VisualRole,
     response_json: dict[str, Any],
 ) -> ParserResult:
-    series = _series(response_json)
-    if not series:
-        for row in _rows(response_json):
-            label = _dimension_label(row, 0)
-            value = _first_metric_value(row)
-            if value is not None:
-                series.append({"name": label, "value": value, "percent": 0.0})
-    if not series:
-        return _error(role, "row_shape_unknown", "Generic donut has no parseable series.")
-    series = _group_web_donut_series(series)
-    total = _number_from_object(response_json, ("total", "visible_value")) or round(
-        sum(float(point.get("value") or 0) for point in series),
-        2,
-    )
+    value_resolution = resolve_primary_value_from_contract(call, response_json)
+    chart_resolution = resolve_chart_contract(call, response_json)
+    if value_resolution.status != "resolved" or not isinstance(
+        value_resolution.value, DisplayNumberContract
+    ):
+        return _error(
+            role,
+            "failed_ambiguous_primary_value"
+            if value_resolution.status == "ambiguous"
+            else "failed_missing_primary_value",
+            value_resolution.error or "Generic donut needs an explicit total contract.",
+        )
+    if chart_resolution.status != "resolved" or not isinstance(
+        chart_resolution.value, QuantumChartContract
+    ):
+        return _error(
+            role,
+            "failed_invalid_chart_contract"
+            if chart_resolution.status == "invalid"
+            else "failed_missing_chart_contract",
+            chart_resolution.error or "Generic donut needs an explicit chart contract.",
+        )
+    display = value_resolution.value
+    chart = chart_resolution.value
     title = _generic_title(call, role)
-    widget = {
+    widget: dict[str, Any] = {
         "id": role,
         "role": role,
         "title": title,
         "chart_type": "donut",
-        "total": total,
-        "value": total,
-        "unit": "count",
-        "series": series,
-        "chart_payload": _donut_chart_payload(series, role, title),
-        "comparison": _comparison(response_json),
+        "total": display.display_value,
+        "value": display.display_value,
+        "display": display.model_dump(mode="json"),
+        "unit": display.unit,
+        "series": [],
+        "chart_payload": _legacy_chart_payload(chart),
+        "comparison": None,
     }
     return ParserResult(role=role, status="ok", data={"widget": widget})
 
@@ -275,37 +518,29 @@ def _parse_metric_widget(
     spec = ROLE_SPECS[role]
     metric_aliases = METRIC_ALIASES[role]
     rows = _rows(response_json)
-    value = _number_from_object(
-        response_json,
-        (*metric_aliases, "visible_value", "main_value", "total", "value"),
+    value_resolution = resolve_primary_value_from_contract(
+        {**call, "unit": call.get("unit") or spec.unit}, response_json
     )
-    if value is None:
-        row_values = [_number_from_row(row, metric_aliases) or _metric_at(row, 0) for row in rows]
-        values = [item for item in row_values if item is not None]
-        if values:
-            value = _aggregate_values(values, average=spec.unit in {"seconds", "percent"})
+    if value_resolution.status != "resolved" or not isinstance(
+        value_resolution.value, DisplayNumberContract
+    ):
+        return _error(
+            role,
+            "failed_ambiguous_primary_value"
+            if value_resolution.status == "ambiguous"
+            else "failed_missing_primary_value",
+            value_resolution.error or f"No explicit aggregate value found for {role}.",
+        )
+    display = value_resolution.value
     timeseries = _timeseries(response_json, metric_aliases)
-    if value is None and timeseries:
-        values = [point["value"] for point in timeseries]
-        value = _aggregate_values(values, average=spec.unit in {"seconds", "percent"})
-    if value is None:
-        result_values = _values_from_results(response_json)
-        if result_values:
-            value = _aggregate_values(
-                result_values,
-                average=spec.unit in {"seconds", "percent"},
-            )
-    if value is None:
-        return _error(role, "metric_not_found", f"No value found for role {role}.")
-    if spec.unit == "percent":
-        value = _as_percent(value) or value
 
     widget = {
         "id": spec.local_id,
         "role": role,
         "title": spec.title,
-        "value": value,
-        "unit": spec.unit or "count",
+        "value": display.display_value,
+        "display": display.model_dump(mode="json"),
+        "unit": display.unit,
         "breakdown": _breakdowns(response_json, rows, metric_aliases),
         "timeseries": timeseries,
         "comparison": _comparison(response_json),
@@ -410,7 +645,7 @@ def _parse_top_errors(role: VisualRole, response_json: dict[str, Any]) -> Parser
             ),
         }
         if parsed["error_sessions"] is None:
-            parsed["error_session_percent"] = _as_percent(_metric_at(row, 0))
+            parsed["error_session_percent"] = _metric_at(row, 0)
             parsed["error_sessions"] = _metric_at(row, 1)
         if parsed["error_name"] is None:
             parsed["error_name"] = parsed["name"]
@@ -459,7 +694,7 @@ def _parse_error_percentage(role: VisualRole, response_json: dict[str, Any]) -> 
             ),
         }
         if parsed["error_session_percent"] is None:
-            parsed["error_session_percent"] = _as_percent(_metric_at(row, 0))
+            parsed["error_session_percent"] = _metric_at(row, 0)
         if parsed["sessions_with_error"] is None:
             parsed["sessions_with_error"] = _metric_at(row, 1)
         if parsed["app_name"] is None:
@@ -528,49 +763,6 @@ def _generic_title(call: dict[str, Any], role: str) -> str:
     return str(call.get("card_title") or call.get("title") or role)
 
 
-def _generic_row_metric_values(rows: list[Any]) -> list[float]:
-    values: list[float] = []
-    for row in rows:
-        value = _first_metric_value(row)
-        if value is not None:
-            values.append(value)
-    return values
-
-
-def _first_metric_value(row: Any) -> float | None:
-    if isinstance(row, dict):
-        metrics = row.get("metrics")
-        if isinstance(metrics, list):
-            for metric in metrics:
-                value = _to_number(metric[-1] if isinstance(metric, list) and metric else metric)
-                if value is not None:
-                    return value
-        value = _to_number(metrics)
-        if value is not None:
-            return value
-        flat = flatten_row(row)
-        for key in ("value", "count", "sessions", "metric", "metrics"):
-            value = _number_from_row(flat, (key,))
-            if value is not None:
-                return value
-    return None
-
-
-def _generic_timeseries(response_json: dict[str, Any]) -> list[dict[str, Any]]:
-    points = _timeseries(response_json, ("value", "count", "sessions", "metric", "metrics"))
-    if points:
-        return points
-    parsed: list[dict[str, Any]] = []
-    for row in _rows(response_json):
-        if not isinstance(row, dict):
-            continue
-        ts = _dimension_at(row, 0)
-        value = _first_metric_value(row)
-        if ts and value is not None:
-            parsed.append({"ts": ts, "value": value})
-    return parsed
-
-
 def _generic_table_row(row: Any, index: int) -> dict[str, Any]:
     if not isinstance(row, dict):
         return {}
@@ -599,33 +791,6 @@ def _generic_table_row(row: Any, index: int) -> dict[str, Any]:
     if "name" not in parsed:
         parsed["name"] = _string_from_row(flat, ("name", "error name", "app name")) or "Null"
     return parsed
-
-
-def _generic_table_columns(
-    response_json: dict[str, Any],
-    rows: list[dict[str, Any]],
-) -> list[str]:
-    response_columns = response_json.get("columns") or response_json.get("columnNames")
-    columns: list[str] = []
-    if isinstance(response_columns, list):
-        for column in response_columns:
-            if isinstance(column, str):
-                columns.append(canonicalize_key(column))
-            elif isinstance(column, dict):
-                value = column.get("key") or column.get("name") or column.get("label")
-                if value:
-                    columns.append(canonicalize_key(str(value)))
-    if not columns and rows:
-        preferred = ["name"]
-        metric_keys = sorted({key for row in rows for key in row if key.startswith("metric_")})
-        dimension_keys = sorted(
-            {key for row in rows for key in row if key.startswith("dimension_")}
-        )
-        columns = [key for key in [*preferred, *dimension_keys, *metric_keys] if key in rows[0]]
-    if not rows:
-        return columns
-    extras = [key for key in rows[0] if key not in columns and key != "row_index"]
-    return [*columns, *extras]
 
 
 def _values_from_results(response_json: dict[str, Any]) -> list[float]:
@@ -858,21 +1023,327 @@ def _to_number(value: Any) -> float | None:
         return None
 
 
+def _visual_contract(call: dict[str, Any]) -> dict[str, Any]:
+    value = call.get("visual_contract") or call.get("widget_contract")
+    if isinstance(value, dict):
+        return value
+    return parse_json_object(value)
+
+
+def _display_contract_from_mapping(
+    candidate: dict[str, Any],
+    call: dict[str, Any],
+) -> DisplayNumberContract | None:
+    raw_value = _first_number(candidate, "raw_value", "raw", "value")
+    display_value = _first_number(candidate, "display_value", "display", "value")
+    formatted = _text_value(candidate.get("formatted"))
+    if raw_value is None and display_value is None and formatted is None:
+        return None
+    scale = _to_number(candidate.get("scale")) or 1
+    if display_value is None and raw_value is not None:
+        display_value = raw_value * scale
+    if raw_value is None and display_value is not None:
+        raw_value = display_value / scale
+    unit = _normalize_unit(candidate.get("unit"), candidate.get("suffix"))
+    if unit is None:
+        unit = _explicit_unit(call, _visual_contract(call))
+    precision = _int_value(candidate.get("precision"))
+    if precision is None:
+        precision = _precision_from_formatted(formatted)
+    if precision is None:
+        precision = _precision_from_number(display_value)
+    return DisplayNumberContract(
+        raw_value=raw_value,
+        display_value=display_value,
+        unit=unit,
+        scale=scale,
+        precision=precision,
+        prefix=_text_value(candidate.get("prefix")),
+        suffix=_text_value(candidate.get("suffix")),
+        formatter=_text_value(candidate.get("formatter")),
+        formatted=formatted,
+    )
+
+
+def _chart_contract_from_mapping(
+    candidate: dict[str, Any], call: dict[str, Any]
+) -> QuantumChartContract:
+    raw_chart_type = str(candidate.get("chart_type") or candidate.get("type") or "").lower()
+    chart_type: ChartType = cast(ChartType, raw_chart_type)
+    if chart_type not in {"line", "bar", "area", "stacked_bar", "donut", "mixed"}:
+        raise ValueError("Quantum chart_type is missing or unsupported.")
+    series_values = candidate.get("series")
+    if not isinstance(series_values, list):
+        raise ValueError("Quantum chart series contract is missing.")
+    series: list[QuantumSeriesContract] = []
+    for index, value in enumerate(series_values):
+        if not isinstance(value, dict):
+            raise ValueError("Quantum chart series entry is invalid.")
+        series_id = _text_value(value.get("series_id") or value.get("id"))
+        label = _text_value(value.get("label") or value.get("name"))
+        raw_kind = str(value.get("kind") or "").lower()
+        kind: SeriesKind = cast(SeriesKind, raw_kind)
+        if (
+            not series_id
+            or not label
+            or kind
+            not in {
+                "line",
+                "bar",
+                "area",
+                "baseline",
+                "band",
+                "anomaly",
+            }
+        ):
+            raise ValueError("Quantum chart series identity, label or kind is incomplete.")
+        points = value.get("points")
+        series.append(
+            QuantumSeriesContract(
+                series_id=series_id,
+                label=label,
+                kind=kind,
+                order=_int_value(value.get("order")) or index,
+                points=points if isinstance(points, list) else [],
+                visible=value.get("visible") is not False,
+                style=_text_value(value.get("style")),
+            )
+        )
+    bands: list[QuantumBandContract] = []
+    for index, value in enumerate(candidate.get("bands") or []):
+        if not isinstance(value, dict):
+            raise ValueError("Quantum chart band entry is invalid.")
+        band_id = _text_value(value.get("band_id") or value.get("id")) or f"band-{index}"
+        label = _text_value(value.get("label") or value.get("name"))
+        raw_band_kind = str(value.get("kind") or value.get("purpose") or "custom").lower()
+        if not label or raw_band_kind not in {
+            "historical_range",
+            "anomaly",
+            "confidence",
+            "custom",
+        }:
+            raise ValueError("Quantum chart band identity is incomplete.")
+        bands.append(
+            QuantumBandContract(
+                band_id=band_id,
+                label=label,
+                kind=cast(Any, raw_band_kind),
+                start=_text_value(value.get("start") or value.get("start_ts")),
+                end=_text_value(value.get("end") or value.get("end_ts")),
+                lower_points=value.get("lower_points") or [],
+                upper_points=value.get("upper_points") or [],
+                pattern=_text_value(value.get("pattern")),
+            )
+        )
+    legends: list[ChartLegendContract] = []
+    for index, value in enumerate(candidate.get("legends") or []):
+        if not isinstance(value, dict):
+            raise ValueError("Quantum chart legend entry is invalid.")
+        legend_id = _text_value(value.get("id"))
+        label = _text_value(value.get("label"))
+        raw_legend_kind = str(value.get("kind") or "").lower() or None
+        if not legend_id or not label:
+            raise ValueError("Quantum chart legend identity is incomplete.")
+        legends.append(
+            ChartLegendContract(
+                id=legend_id,
+                label=label,
+                order=_int_value(value.get("order")) or index,
+                kind=cast(SeriesKind | None, raw_legend_kind),
+                visible=value.get("visible") is not False,
+            )
+        )
+    return QuantumChartContract(
+        chart_type=chart_type,
+        x_axis=ChartAxis.model_validate(candidate.get("x_axis") or {"ticks": []}),
+        y_axis=ChartAxis.model_validate(candidate.get("y_axis") or {"ticks": []}),
+        series=series,
+        bands=bands,
+        legends=legends,
+        period_label=_text_value(candidate.get("period_label") or call.get("period_label")) or "",
+        timezone=_text_value(candidate.get("timezone") or call.get("range_timezone")) or "UTC",
+        granularity=_text_value(candidate.get("granularity")) or "captured",
+    )
+
+
+def _table_column_from_value(value: Any) -> QuantumTableColumnContract:
+    if isinstance(value, str):
+        key = canonicalize_key(value)
+        return QuantumTableColumnContract(key=key, label=value, data_type="text")
+    if not isinstance(value, dict):
+        raise ValueError("Quantum table column entry is invalid.")
+    key_text = _text_value(value.get("key") or value.get("name"))
+    label = _text_value(value.get("label") or value.get("title"))
+    if not key_text or not label:
+        raise ValueError("Quantum table column key or label is missing.")
+    raw_data_type = str(value.get("data_type") or value.get("type") or "text").lower()
+    if raw_data_type not in {"text", "number", "percent", "datetime"}:
+        raw_data_type = "text"
+    data_type: TableDataType = cast(TableDataType, raw_data_type)
+    return QuantumTableColumnContract(
+        key=key_text,
+        label=label,
+        data_type=data_type,
+        precision=_int_value(value.get("precision")),
+        sortable=bool(value.get("sortable")),
+        default_sort=_sort_direction(value.get("default_sort")),
+    )
+
+
+def _legacy_chart_payload(chart: QuantumChartContract) -> dict[str, Any]:
+    return {
+        "chart_type": chart.chart_type,
+        "x_axis": chart.x_axis.model_dump(mode="json"),
+        "y_axis": chart.y_axis.model_dump(mode="json"),
+        "series": [
+            {
+                "id": item.series_id,
+                "label": item.label,
+                "kind": item.kind,
+                "order": item.order,
+                "points": [point.model_dump(mode="json") for point in item.points],
+                "visible": item.visible,
+                "style": item.style,
+            }
+            for item in chart.series
+        ],
+        "bands": [
+            {
+                "id": item.band_id,
+                "label": item.label,
+                "kind": item.kind,
+                "start_ts": item.start,
+                "end_ts": item.end,
+                "lower_points": [point.model_dump(mode="json") for point in item.lower_points],
+                "upper_points": [point.model_dump(mode="json") for point in item.upper_points],
+                "pattern": item.pattern,
+                "purpose": item.kind,
+            }
+            for item in chart.bands
+        ],
+        "legends": [item.model_dump(mode="json") for item in chart.legends],
+        "period_label": chart.period_label,
+        "granularity": chart.granularity,
+        "timezone": chart.timezone,
+    }
+
+
+def _timeseries_from_chart(chart: QuantumChartContract | None) -> list[dict[str, Any]]:
+    if chart is None:
+        return []
+    return [
+        {**point.model_dump(mode="json"), "series": series.label}
+        for series in chart.series
+        for point in series.points
+    ]
+
+
+def _single_aggregate_metric(response_json: dict[str, Any]) -> float | None:
+    rows = response_json.get("rows")
+    if isinstance(rows, list) and len(rows) == 1 and isinstance(rows[0], dict):
+        dimensions = rows[0].get("dimensions")
+        metrics = rows[0].get("metrics")
+        if dimensions in (None, []) and isinstance(metrics, list) and len(metrics) == 1:
+            value = metrics[0]
+            if isinstance(value, list) and len(value) == 1:
+                value = value[0]
+            return _to_number(value)
+    results = response_json.get("results")
+    if isinstance(results, list) and len(results) == 1 and isinstance(results[0], list):
+        dimensions = results[0][0] if results[0] else None
+        metrics = results[0][1] if len(results[0]) > 1 else None
+        if dimensions in (None, []) and isinstance(metrics, list) and len(metrics) == 1:
+            value = metrics[0]
+            if isinstance(value, list) and len(value) == 1:
+                value = value[0]
+            return _to_number(value)
+    return None
+
+
+def _explicit_unit(call: dict[str, Any], visual: dict[str, Any]) -> DisplayUnit:
+    return _normalize_unit(call.get("unit") or visual.get("unit"), visual.get("suffix")) or "count"
+
+
+def _normalize_unit(value: Any, suffix: Any = None) -> DisplayUnit | None:
+    raw = str(value or "").strip().lower()
+    aliases = {
+        "number": "count",
+        "integer": "count",
+        "duration": "seconds",
+        "second": "seconds",
+        "%": "percent",
+    }
+    raw = aliases.get(raw, raw)
+    if raw in {"count", "score", "percent", "seconds", "text"}:
+        return cast(DisplayUnit, raw)
+    if _text_value(suffix) == "%":
+        return "percent"
+    return None
+
+
+def _explicit_precision(call: dict[str, Any], visual: dict[str, Any], value: float) -> int:
+    precision = _int_value(call.get("precision") or visual.get("precision"))
+    return precision if precision is not None else _precision_from_number(value)
+
+
+def _precision_from_formatted(value: str | None) -> int | None:
+    if not value:
+        return None
+    numeric = value.strip().replace("%", "").replace(",", "")
+    if "." not in numeric:
+        return 0 if any(character.isdigit() for character in numeric) else None
+    decimals = numeric.rsplit(".", 1)[1]
+    return len("".join(character for character in decimals if character.isdigit()))
+
+
+def _precision_from_number(value: float | None) -> int:
+    if value is None:
+        return 0
+    text = format(value, ".12f").rstrip("0").rstrip(".")
+    return len(text.rsplit(".", 1)[1]) if "." in text else 0
+
+
+def _first_number(value: dict[str, Any], *keys: str) -> float | None:
+    for key in keys:
+        parsed = _to_number(value.get(key))
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _int_value(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _text_value(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _sort_direction(value: Any) -> SortDirection | None:
+    text = str(value or "").strip().lower()
+    return cast(SortDirection, text) if text in {"asc", "desc"} else None
+
+
+def _dedupe_numbers(values: list[float]) -> list[float]:
+    return list(dict.fromkeys(values))
+
+
+def _dedupe_display_contracts(
+    values: list[DisplayNumberContract],
+) -> list[DisplayNumberContract]:
+    by_payload = {value.model_dump_json(): value for value in values}
+    return list(by_payload.values())
+
+
 def _sort_number(value: object) -> float:
     parsed = _to_number(value)
     return parsed if parsed is not None else -1.0
-
-
-def _as_percent(value: float | None) -> float | None:
-    if value is None:
-        return None
-    return round(value * 100, 2) if abs(value) <= 1 else value
-
-
-def _aggregate_values(values: list[float], *, average: bool) -> float:
-    if average:
-        return round(sum(values) / len(values), 2)
-    return round(sum(values), 2)
 
 
 def _line_chart_payload(

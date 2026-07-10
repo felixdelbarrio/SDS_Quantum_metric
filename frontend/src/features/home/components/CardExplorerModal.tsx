@@ -100,7 +100,7 @@ export function CardExplorerModal({ widget, open, onClose }: Props) {
           </div>
         ) : (
           <QuantumChart
-            payload={widget.chart_payload}
+            payload={"chart" in widget ? widget.chart : widget.chart_payload}
             mode="expanded"
             displayMode={view}
             title={widget.title}
@@ -116,7 +116,7 @@ export function CardExplorerModal({ widget, open, onClose }: Props) {
 }
 
 function pointsFromWidget(widget: KpiWidget | ErrorComparisonWidget) {
-  const payload = widget.chart_payload;
+  const payload = "chart" in widget ? widget.chart : widget.chart_payload;
   if (!payload) return [];
   return payload.series.flatMap((series) =>
     series.points.map((point) => ({

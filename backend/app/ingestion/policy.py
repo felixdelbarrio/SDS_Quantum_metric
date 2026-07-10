@@ -82,7 +82,7 @@ def apply_ingestion_range(
         end=ingestion_range.end,
         label=f"{_iso(ingestion_range.start)} -> {_iso(ingestion_range.end)}",
     )
-    result = rewrite_query_time_range(payload, chunk)
+    result = rewrite_query_time_range(payload, chunk, timezone=ingestion_range.timezone)
     if result.changed:
         return result.payload, True
     rewritten = deepcopy(payload)

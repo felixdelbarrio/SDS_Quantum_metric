@@ -24,6 +24,7 @@ from backend.app.quantum_dashboard.builder import (
     DATASET_SUMMARY_WIDGETS,
     DATASET_VISUAL_CONTRACTS,
     DATASET_WIDGET_CHART_PAYLOADS,
+    DATASET_WIDGET_CONTRACTS,
     DATASET_WIDGET_TABLE_PAYLOADS,
     build_derived_datasets,
     range_dataset_path,
@@ -108,6 +109,7 @@ class LocalDashboardService:
                     "last_ingestion_at": status["last_ingestion_at"],
                     "dashboard_id": status.get("dashboard_id"),
                     "dashboard_name": status.get("dashboard_name"),
+                    "timezone": self._dashboard_timezone(country, status.get("dashboard_id")),
                 }
             )
         configured = str(self.store.settings.qm_country or Country.MX.value)
@@ -133,17 +135,15 @@ class LocalDashboardService:
         )
         all_raw_calls = self._raw_calls(country, resolved_dashboard_id)
         raw_calls = self._raw_calls_for_range(country, range_key, resolved_dashboard_id)
-        contracts = self._read_dataset(
-            country, DATASET_VISUAL_CONTRACTS, range_key, resolved_dashboard_id
-        )
-        contract_roles = {str(row.get("visual_role")) for row in contracts}
+        contracts = [
+            row
+            for row in self._read_dataset(
+                country, DATASET_WIDGET_CONTRACTS, range_key, resolved_dashboard_id
+            )
+            if row.get("parse_status") == "resolved"
+        ]
+        contract_roles = {str(row.get("card_role") or row.get("visual_role")) for row in contracts}
         contract_roles = {role for role in contract_roles if role in enabled_roles}
-        if not contract_roles:
-            contract_roles = {
-                str(row.get("card_role"))
-                for row in self._dashboard_widget_rows(country, range_key, resolved_dashboard_id)
-                if str(row.get("card_role")) in enabled_roles
-            }
         regression = self._latest_regression(country, range_key, resolved_dashboard_id)
         summary_roles = self._enabled_roles_for_tab("summary", enabled_roles, enabled_widgets)
         errors_roles = self._enabled_roles_for_tab("errors", enabled_roles, enabled_widgets)
@@ -272,7 +272,7 @@ class LocalDashboardService:
                 "dashboard_name": status.get("dashboard_name"),
                 "dashboard_title": status.get("dashboard_name") or f"Dashboard General {country}",
                 "description": "Dashboard local generado desde la estructura real de Quantum.",
-                "tabs": [{**tab, "widgets": []} for tab in configured_tabs],
+                "tabs": [{**tab, "sections": []} for tab in configured_tabs],
                 "reason": "No hay ingesta local para el rango de fechas seleccionado.",
                 "period": period,
                 "regression": self._regression_metadata(status),
@@ -280,14 +280,18 @@ class LocalDashboardService:
             }
 
         enabled_roles = self._enabled_roles(country, resolved_dashboard_id)
-        configured_widget_order = self._configured_widget_order(country, resolved_dashboard_id)
         tabs_by_index: dict[int, dict[str, Any]] = {}
-        widgets_by_index: dict[int, list[dict[str, Any]]] = {}
+        sections_by_tab: dict[int, dict[str, dict[str, Any]]] = {}
         for tab in configured_tabs:
             tabs_by_index[int(tab["tab_index"])] = tab
 
-        for row in self._dashboard_widget_rows(country, range_key, resolved_dashboard_id):
-            role = str(row.get("card_role") or "")
+        contract_rows = self._read_dataset(
+            country, DATASET_WIDGET_CONTRACTS, range_key, resolved_dashboard_id
+        )
+        for row in contract_rows:
+            if row.get("parse_status") != "resolved":
+                continue
+            role = str(row.get("card_role") or row.get("visual_role") or "")
             if enabled_roles and role not in enabled_roles:
                 continue
             tab_index = int(row.get("tab_index") or 0)
@@ -301,24 +305,39 @@ class LocalDashboardService:
                     "tab_id": None,
                 },
             )
-            widget = _widget_from_row(row)
-            widget["widget_order"] = _resolved_widget_order(row, configured_widget_order)
-            widgets_by_index.setdefault(tab_index, []).append(widget)
+            section_id = _text(row.get("section_id")) or "unsectioned"
+            section_name = _text(row.get("section_name")) or ""
+            section_index = _int_or_none(row.get("section_index"))
+            section = sections_by_tab.setdefault(tab_index, {}).setdefault(
+                section_id,
+                {
+                    "section_id": None if section_id == "unsectioned" else section_id,
+                    "section_name": section_name or None,
+                    "section_index": section_index,
+                    "widgets": [],
+                },
+            )
+            section["widgets"].append(_widget_from_contract_row(row))
 
-        tabs = [
-            {
-                **tabs_by_index[index],
-                "widgets": sorted(
-                    widgets_by_index.get(index, []),
+        tabs: list[dict[str, Any]] = []
+        for index in sorted(tabs_by_index):
+            sections = list(sections_by_tab.get(index, {}).values())
+            sections.sort(
+                key=lambda section: (
+                    _sort_order(section.get("section_index")),
+                    str(section.get("section_name") or ""),
+                )
+            )
+            for section in sections:
+                section["widgets"].sort(
                     key=lambda widget: (
                         _sort_order(widget.get("widget_order")),
-                        str(widget.get("title") or widget.get("id") or ""),
-                    ),
-                ),
-            }
-            for index in sorted(tabs_by_index)
-        ]
-        has_widgets = any(tab["widgets"] for tab in tabs)
+                        _sort_order(widget.get("layout_y")),
+                        _sort_order(widget.get("layout_x")),
+                    )
+                )
+            tabs.append({**tabs_by_index[index], "sections": sections})
+        has_widgets = any(section["widgets"] for tab in tabs for section in tab.get("sections", []))
         return {
             "status": "ok" if has_widgets else "empty",
             "country": country,
@@ -750,11 +769,12 @@ class LocalDashboardService:
         range_key: str,
         dashboard_id: str | None = None,
     ) -> bool:
-        for dataset in (DATASET_DASHBOARD_WIDGETS, DATASET_SUMMARY_WIDGETS, DATASET_ERRORS_WIDGETS):
-            rows = self._read_dataset(country, dataset, range_key, dashboard_id)
-            if any(str(row.get("card_role")) == role for row in rows):
-                return True
-        return False
+        rows = self._read_dataset(country, DATASET_WIDGET_CONTRACTS, range_key, dashboard_id)
+        return any(
+            str(row.get("card_role") or row.get("visual_role")) == role
+            and row.get("parse_status") == "resolved"
+            for row in rows
+        )
 
     def _derived_dataset_count(self, country: str, range_key: str) -> int:
         return sum(
@@ -770,6 +790,7 @@ class LocalDashboardService:
                 DATASET_DASHBOARD_WIDGETS,
                 DATASET_WIDGET_CHART_PAYLOADS,
                 DATASET_WIDGET_TABLE_PAYLOADS,
+                DATASET_WIDGET_CONTRACTS,
             )
         )
 
@@ -832,6 +853,7 @@ class LocalDashboardService:
         dashboard_id: str | None = None,
     ) -> dict[str, str | None]:
         for dataset in (
+            DATASET_WIDGET_CONTRACTS,
             DATASET_VISUAL_CONTRACTS,
             DATASET_DASHBOARD_WIDGETS,
             DATASET_SUMMARY_WIDGETS,
@@ -844,6 +866,26 @@ class LocalDashboardService:
             if period["start"] or period["end"]:
                 return period
         return _period_response(None, None, None)
+
+    def _dashboard_timezone(self, country: str, dashboard_id: str | None = None) -> str:
+        if self.config_store is not None:
+            try:
+                country_config = self.config_store.read().country_config(country)
+                if country_config is not None:
+                    dashboard = next(
+                        (
+                            item
+                            for item in country_config.dashboards
+                            if dashboard_id and item.dashboard_id == dashboard_id
+                        ),
+                        country_config.default_dashboard(),
+                    )
+                    if dashboard is not None and dashboard.timezone:
+                        return dashboard.timezone
+                    return country_config.timezone
+            except Exception as exc:
+                LOGGER.debug("Could not resolve dashboard timezone: %s", sanitize_error(exc))
+        return "UTC"
 
     def _available_dataset_names(self, country: str) -> list[str]:
         root = self.store.settings.parquet_dir / f"country={country}"
@@ -1145,6 +1187,35 @@ def _sort_order(value: Any) -> int:
     return parsed if parsed is not None else 999_999
 
 
+def _widget_from_contract_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema_version": row.get("schema_version"),
+        "id": row.get("widget_id"),
+        "widget_id": row.get("widget_id"),
+        "card_id": row.get("card_id"),
+        "role": row.get("card_role") or row.get("visual_role"),
+        "title": row.get("widget_title") or row.get("card_title"),
+        "widget_type": row.get("widget_type"),
+        "widget_order": row.get("widget_order"),
+        "layout_x": row.get("layout_x"),
+        "layout_y": row.get("layout_y"),
+        "layout_width": row.get("layout_width"),
+        "layout_height": row.get("layout_height"),
+        "display": row.get("value") if isinstance(row.get("value"), dict) else None,
+        "comparison": row.get("comparison") if isinstance(row.get("comparison"), dict) else None,
+        "chart": row.get("chart") if isinstance(row.get("chart"), dict) else None,
+        "table": row.get("table") if isinstance(row.get("table"), dict) else None,
+        "range_key": row.get("range_key"),
+        "period": {
+            "start": row.get("effective_start"),
+            "end": row.get("effective_end"),
+            "timezone": row.get("timezone"),
+            "label": row.get("period_label"),
+        },
+        "parse_status": row.get("parse_status"),
+    }
+
+
 def _widget_from_row(row: dict[str, Any]) -> dict[str, Any]:
     period = {
         "start": _text(row.get("period_start")),
@@ -1336,13 +1407,26 @@ def _first_period(rows: list[dict[str, Any]], preset: str | None = None) -> dict
                 if parsed_end is not None:
                     candidates.append((parsed_end, response))
                 continue
-        start = _text(row.get("range_start") or row.get("period_start") or row.get("start"))
-        end = _text(row.get("range_end") or row.get("period_end") or row.get("end"))
+        start = _text(
+            row.get("effective_start")
+            or row.get("range_start")
+            or row.get("period_start")
+            or row.get("start")
+        )
+        end = _text(
+            row.get("effective_end")
+            or row.get("range_end")
+            or row.get("period_end")
+            or row.get("end")
+        )
         timezone = _text(
             row.get("range_timezone") or row.get("period_timezone") or row.get("timezone")
         )
         if start or end:
             response = _period_response(start, end, timezone, row_preset)
+            exact_label = _text(row.get("period_label"))
+            if exact_label:
+                response["label"] = exact_label
             parsed_end = parse_datetime(end or start, timezone or "CST")
             if parsed_end is not None:
                 candidates.append((parsed_end, response))

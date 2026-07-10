@@ -669,6 +669,31 @@ textarea:focus-visible {
   gap: var(--space-4);
 }
 
+.dashboard-section {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.dashboard-section > h2 {
+  margin: 0;
+  color: var(--color-text);
+  font-size: 18px;
+}
+
+.dashboard-widget-layout-grid {
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+}
+
+.dashboard-widget-layout-item {
+  min-width: 0;
+  grid-column: span var(--widget-column-span, 4);
+  grid-row: span var(--widget-row-span, 1);
+}
+
+.dashboard-widget-layout-item > .dashboard-card {
+  height: 100%;
+}
+
 .dashboard-card {
   position: relative;
   overflow: hidden;
@@ -692,6 +717,18 @@ textarea:focus-visible {
   min-height: 390px;
   align-content: start;
   gap: var(--space-3);
+}
+
+.kpi-card.compact-kpi {
+  min-height: 170px;
+}
+
+.kpi-card.chart-card {
+  min-height: 390px;
+}
+
+.kpi-card.table-card {
+  min-height: 320px;
 }
 
 .generic-widget-table {
@@ -850,6 +887,39 @@ textarea:focus-visible {
 .quantum-chart-bands rect {
   fill: var(--chart-band);
   opacity: var(--chart-band-opacity);
+}
+
+.quantum-chart-band-anomaly {
+  fill: url("#quantum-anomaly-pattern");
+  opacity: 1;
+}
+
+.quantum-chart-band-pattern-hatched {
+  stroke: var(--color-danger);
+  stroke-dasharray: 3 2;
+}
+
+.quantum-chart-series-kind-baseline {
+  stroke-dasharray: 6 4;
+}
+
+.quantum-chart-series-kind-anomaly {
+  stroke: var(--color-danger);
+}
+
+.quantum-anomaly-pattern-bg {
+  fill: var(--surface-dashboard-elevated);
+}
+
+.quantum-anomaly-pattern-stroke {
+  stroke: var(--color-danger);
+  stroke-width: 3;
+}
+
+.quantum-chart-series-kind-area,
+.quantum-chart-series-kind-band {
+  fill: var(--chart-band);
+  fill-opacity: var(--chart-band-opacity);
 }
 
 .quantum-chart-series {
