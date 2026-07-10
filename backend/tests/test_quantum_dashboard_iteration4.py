@@ -722,13 +722,26 @@ def test_dynamic_dashboard_uses_real_tabs_and_generic_widget_roles(tmp_path: Pat
                             ],
                             widgets=[
                                 QuantumWidgetConfig(
-                                    role="generic.0.chart.sds_score_general",
-                                    title="SDS Score General",
-                                    widget_id="sds-score-general",
+                                    role="generic.0.chart.zeta",
+                                    title="Zeta Widget",
+                                    widget_id="zeta-widget",
                                     widget_type="CHART",
                                     tab="overview-general",
                                     tab_name="Overview general",
                                     tab_index=0,
+                                    widget_order=0,
+                                    enabled=True,
+                                    supported=True,
+                                ),
+                                QuantumWidgetConfig(
+                                    role="generic.0.chart.alpha",
+                                    title="Alpha Widget",
+                                    widget_id="alpha-widget",
+                                    widget_type="CHART",
+                                    tab="overview-general",
+                                    tab_name="Overview general",
+                                    tab_index=0,
+                                    widget_order=1,
                                     enabled=True,
                                     supported=True,
                                 ),
@@ -740,6 +753,7 @@ def test_dynamic_dashboard_uses_real_tabs_and_generic_widget_roles(tmp_path: Pat
                                     tab="easy-dashboard-example",
                                     tab_name="Easy Dashboard Example",
                                     tab_index=1,
+                                    widget_order=0,
                                     enabled=True,
                                     supported=True,
                                 ),
@@ -759,11 +773,34 @@ def test_dynamic_dashboard_uses_real_tabs_and_generic_widget_roles(tmp_path: Pat
                 "dashboard_id": "sds-co",
                 "dashboard_name": "SDS",
                 "range_key": "last_7_days",
-                "card_role": "generic.0.chart.sds_score_general",
-                "id": "generic.0.chart.sds_score_general",
-                "widget_id": "sds-score-general",
-                "title": "SDS Score General",
+                "card_role": "generic.0.chart.alpha",
+                "id": "generic.0.chart.alpha",
+                "widget_id": "alpha-widget",
+                "widget_order": 1,
+                "title": "Alpha Widget",
                 "value": 8.7,
+                "unit": "count",
+                "chart_type": "line",
+                "tab": "overview-general",
+                "tab_name": "Overview general",
+                "tab_index": 0,
+                "breakdown": [],
+                "timeseries": [],
+                "chart_payload": None,
+                "table_columns": [],
+                "table_rows": [],
+            },
+            {
+                "country": "CO",
+                "dashboard_id": "sds-co",
+                "dashboard_name": "SDS",
+                "range_key": "last_7_days",
+                "card_role": "generic.0.chart.zeta",
+                "id": "generic.0.chart.zeta",
+                "widget_id": "zeta-widget",
+                "widget_order": 0,
+                "title": "Zeta Widget",
+                "value": 9.1,
                 "unit": "count",
                 "chart_type": "line",
                 "tab": "overview-general",
@@ -783,6 +820,7 @@ def test_dynamic_dashboard_uses_real_tabs_and_generic_widget_roles(tmp_path: Pat
                 "card_role": "generic.1.table.top_navigation_errors",
                 "id": "generic.1.table.top_navigation_errors",
                 "widget_id": "top-navigation-errors",
+                "widget_order": 0,
                 "title": "Top Navigation Errors",
                 "value": 3,
                 "unit": "count",
@@ -818,17 +856,212 @@ def test_dynamic_dashboard_uses_real_tabs_and_generic_widget_roles(tmp_path: Pat
     dashboard = service.dashboard("CO", range_key="last_7_days")
 
     assert status["regression_status"] == "passed"
-    assert status["mandatory_cards"] == 2
-    assert status["mandatory_cards_captured"] == 2
+    assert status["mandatory_cards"] == 3
+    assert status["mandatory_cards_captured"] == 3
     assert status["missing_roles"] == []
     assert [tab["tab_name"] for tab in dashboard["tabs"]] == [
         "Overview general",
         "Easy Dashboard Example",
     ]
-    assert [len(tab["widgets"]) for tab in dashboard["tabs"]] == [1, 1]
+    assert [len(tab["widgets"]) for tab in dashboard["tabs"]] == [2, 1]
+    assert [widget["title"] for widget in dashboard["tabs"][0]["widgets"]] == [
+        "Zeta Widget",
+        "Alpha Widget",
+    ]
     assert dashboard["tabs"][1]["widgets"][0]["table_rows"] == [
         {"error_name": "Possible Frustration", "error_count": 746}
     ]
+
+
+def test_generic_empty_table_is_valid_dashboard_widget(tmp_path: Path) -> None:
+    settings = Settings(qm_data_dir=tmp_path)
+    store = ParquetStore(settings)
+    role = "generic.0.table.empty_table"
+    widget = QuantumWidgetConfig(
+        role=role,
+        title="Tabla vacia",
+        widget_id="empty-table",
+        card_id="table-card",
+        widget_type="TABLE",
+        tab="overview-general",
+        tab_name="Overview general",
+        tab_index=0,
+        widget_order=3,
+        enabled=True,
+        required=True,
+        supported=True,
+    )
+    raw_call = {
+        "ingestion_id": "ingestion-empty-table",
+        "country": "CO",
+        "source_endpoint": "/analytics",
+        "endpoint": "/analytics",
+        "http_method": "POST",
+        "method": "POST",
+        "status_code": 200,
+        "dashboard_id": "sds-co",
+        "dashboard_name": "SDS",
+        "widget_id": "empty-table",
+        "card_id": "table-card",
+        "card_title": "Tabla vacia",
+        "card_type": "TABLE",
+        "widget_type": "TABLE",
+        "view_name": "table",
+        "metric_ids": '["metric-empty"]',
+        "request_json": json.dumps(
+            {
+                "metadata": {
+                    "dashboardId": "sds-co",
+                    "widgetId": "empty-table",
+                    "cardId": "table-card",
+                    "cardTitle": "Tabla vacia",
+                    "cardType": "TABLE",
+                    "viewName": "table",
+                }
+            }
+        ),
+        "response_json": json.dumps({"rows": [], "stats": {"rows": 0}}),
+        "row_count": 0,
+        "range_key": "default",
+        "range_start": "2026-07-09T05:00:00Z",
+        "range_end": "2026-07-10T04:59:59Z",
+        "range_timezone": "CST",
+        "source_ts_start": "2026-07-09T05:00:00Z",
+        "source_ts_end": "2026-07-10T04:59:59Z",
+        "source_timezone": "CST",
+        "query_hash": "query-empty",
+        "response_hash": "response-empty",
+    }
+
+    build = build_derived_datasets(
+        store,
+        "CO",
+        raw_calls=[raw_call],
+        ingestion_id="ingestion-empty-table",
+        enabled_roles={role},
+        dashboard_id="sds-co",
+        dashboard_name="SDS",
+        range_key="default",
+        widget_configs=[widget],
+    )
+    report = run_regression(
+        store,
+        "CO",
+        ingestion_id="ingestion-empty-table",
+        enabled_roles={role},
+        dashboard_id="sds-co",
+        range_key="default",
+    )
+    dashboard_widgets = store.read_country_dataset(
+        "CO", "range_key=default/derived/dashboard_widgets"
+    )
+    table_payloads = store.read_country_dataset(
+        "CO", "range_key=default/derived/widget_table_payloads"
+    )
+
+    assert build.regression_status == "passed"
+    assert build.parser_errors == []
+    assert build.missing_roles == []
+    assert report.verdict == "PASSED"
+    assert report.cards[0].status == "passed"
+    assert dashboard_widgets[0]["value"] == 0
+    assert dashboard_widgets[0]["table_rows"] == []
+    assert dashboard_widgets[0]["widget_order"] == 3
+    assert table_payloads[0]["table_rows"] == []
+
+
+def test_generic_chart_value_prefers_core_metrics_over_timeseries(tmp_path: Path) -> None:
+    settings = Settings(qm_data_dir=tmp_path)
+    store = ParquetStore(settings)
+    role = "generic.1.chart.experience_health"
+    widget = QuantumWidgetConfig(
+        role=role,
+        title="Experience Health Score",
+        widget_id="experience-health",
+        card_id="experience-card",
+        widget_type="CHART",
+        tab="easy-dashboard-example",
+        tab_name="Easy Dashboard Example",
+        tab_index=1,
+        widget_order=0,
+        enabled=True,
+        required=True,
+        supported=True,
+    )
+
+    def raw_call(view_name: str, response: dict[str, Any], row_count: int) -> dict[str, Any]:
+        return {
+            "ingestion_id": "ingestion-chart",
+            "country": "CO",
+            "source_endpoint": "/analytics",
+            "endpoint": "/analytics",
+            "http_method": "POST",
+            "method": "POST",
+            "status_code": 200,
+            "dashboard_id": "sds-co",
+            "dashboard_name": "SDS",
+            "widget_id": "experience-health",
+            "card_id": "experience-card",
+            "card_title": "Experience Health Score",
+            "card_type": "CHART",
+            "widget_type": "CHART",
+            "view_name": view_name,
+            "metric_ids": '["metric-experience"]',
+            "request_json": json.dumps(
+                {
+                    "metadata": {
+                        "dashboardId": "sds-co",
+                        "widgetId": "experience-health",
+                        "cardId": "experience-card",
+                        "cardTitle": "Experience Health Score",
+                        "cardType": "CHART",
+                        "viewName": view_name,
+                    }
+                }
+            ),
+            "response_json": json.dumps(response),
+            "row_count": row_count,
+            "range_key": "default",
+            "range_start": "2026-07-09T05:00:00Z",
+            "range_end": "2026-07-10T04:59:59Z",
+            "range_timezone": "CST",
+            "source_ts_start": "2026-07-09T05:00:00Z",
+            "source_ts_end": "2026-07-10T04:59:59Z",
+            "source_timezone": "CST",
+            "query_hash": f"query-{view_name}",
+            "response_hash": f"response-{view_name}",
+        }
+
+    build = build_derived_datasets(
+        store,
+        "CO",
+        raw_calls=[
+            raw_call("coreMetrics", {"rows": [{"dimensions": [], "metrics": [7.35]}]}, 1),
+            raw_call(
+                "timeSeriesQuery",
+                {
+                    "rows": [
+                        {"dimensions": [1783644600], "metrics": [5]},
+                        {"dimensions": [1783646580], "metrics": [2.5]},
+                    ]
+                },
+                2,
+            ),
+        ],
+        ingestion_id="ingestion-chart",
+        enabled_roles={role},
+        dashboard_id="sds-co",
+        dashboard_name="SDS",
+        range_key="default",
+        widget_configs=[widget],
+    )
+    dashboard_widgets = store.read_country_dataset(
+        "CO", "range_key=default/derived/dashboard_widgets"
+    )
+
+    assert build.regression_status == "passed"
+    assert dashboard_widgets[0]["value"] == 7.35
+    assert dashboard_widgets[0]["chart_payload"]["series"][0]["points"]
 
 
 def test_summary_detail_parser_keeps_flat_rows_when_web_has_no_hierarchy() -> None:

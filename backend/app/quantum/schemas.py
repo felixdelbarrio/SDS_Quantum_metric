@@ -95,6 +95,7 @@ class QuantumWidgetConfig(BaseModel):
     tab: str = "summary"
     tab_name: str = "Resumen"
     tab_index: int = Field(default=0, ge=0)
+    widget_order: int | None = Field(default=None, ge=0)
     enabled: bool = True
     required: bool = False
     supported: bool = True
@@ -163,6 +164,13 @@ class QuantumDashboardConfig(BaseModel):
             self.name = ""
         if not self.tabs and self.widgets:
             self.tabs = _tabs_from_widgets(self.widgets)
+        if self.widgets:
+            self.widgets = [
+                widget
+                if widget.widget_order is not None
+                else widget.model_copy(update={"widget_order": index})
+                for index, widget in enumerate(self.widgets)
+            ]
         return self
 
     def enabled_widget_roles(self) -> list[str]:

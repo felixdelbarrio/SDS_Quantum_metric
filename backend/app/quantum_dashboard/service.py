@@ -280,6 +280,7 @@ class LocalDashboardService:
             }
 
         enabled_roles = self._enabled_roles(country, resolved_dashboard_id)
+        configured_widget_order = self._configured_widget_order(country, resolved_dashboard_id)
         tabs_by_index: dict[int, dict[str, Any]] = {}
         widgets_by_index: dict[int, list[dict[str, Any]]] = {}
         for tab in configured_tabs:
@@ -300,14 +301,19 @@ class LocalDashboardService:
                     "tab_id": None,
                 },
             )
-            widgets_by_index.setdefault(tab_index, []).append(_widget_from_row(row))
+            widget = _widget_from_row(row)
+            widget["widget_order"] = _resolved_widget_order(row, configured_widget_order)
+            widgets_by_index.setdefault(tab_index, []).append(widget)
 
         tabs = [
             {
                 **tabs_by_index[index],
                 "widgets": sorted(
                     widgets_by_index.get(index, []),
-                    key=lambda widget: str(widget.get("title") or widget.get("id") or ""),
+                    key=lambda widget: (
+                        _sort_order(widget.get("widget_order")),
+                        str(widget.get("title") or widget.get("id") or ""),
+                    ),
                 ),
             }
             for index in sorted(tabs_by_index)
@@ -903,6 +909,41 @@ class LocalDashboardService:
             for row in rows
         ]
 
+    def _configured_widget_order(
+        self,
+        country: str,
+        dashboard_id: str | None = None,
+    ) -> dict[str, int]:
+        if self.config_store is None:
+            return {}
+        try:
+            country_config = self.config_store.read().country_config(country)
+            dashboard = None
+            if country_config is not None and dashboard_id:
+                dashboard = next(
+                    (
+                        item
+                        for item in country_config.dashboards
+                        if item.dashboard_id == dashboard_id
+                    ),
+                    None,
+                )
+            if country_config is not None and dashboard is None:
+                dashboard = country_config.default_dashboard()
+            if dashboard is None:
+                return {}
+            order: dict[str, int] = {}
+            for index, widget in enumerate(dashboard.widgets):
+                resolved = widget.widget_order if widget.widget_order is not None else index
+                for key in (widget.role, widget.widget_id, widget.card_id, widget.title):
+                    text = _text(key)
+                    if text:
+                        order.setdefault(text, resolved)
+            return order
+        except Exception as exc:
+            LOGGER.debug("Could not read configured widget order: %s", sanitize_error(exc))
+            return {}
+
     def _dashboard_widget_rows(
         self,
         country: str,
@@ -1088,6 +1129,22 @@ def _slug(value: str) -> str:
     return value.strip().casefold().replace("_", " ")
 
 
+def _resolved_widget_order(row: dict[str, Any], configured_order: dict[str, int]) -> int | None:
+    direct = _int_or_none(row.get("widget_order"))
+    if direct is not None:
+        return direct
+    for key in ("card_role", "widget_id", "card_id", "title", "card_title"):
+        value = _text(row.get(key))
+        if value and value in configured_order:
+            return configured_order[value]
+    return None
+
+
+def _sort_order(value: Any) -> int:
+    parsed = _int_or_none(value)
+    return parsed if parsed is not None else 999_999
+
+
 def _widget_from_row(row: dict[str, Any]) -> dict[str, Any]:
     period = {
         "start": _text(row.get("period_start")),
@@ -1110,8 +1167,9 @@ def _widget_from_row(row: dict[str, Any]) -> dict[str, Any]:
             "widget_id": row.get("widget_id"),
             "tab_name": row.get("tab_name"),
             "tab_index": row.get("tab_index"),
+            "widget_order": row.get("widget_order"),
             "range_key": row.get("range_key"),
-            "title": row.get("title") or row.get("card_title"),
+            "title": row.get("card_title") or row.get("title"),
             "chart_type": "donut",
             "value": row.get("total"),
             "unit": "count",
@@ -1133,8 +1191,9 @@ def _widget_from_row(row: dict[str, Any]) -> dict[str, Any]:
         "widget_id": row.get("widget_id"),
         "tab_name": row.get("tab_name"),
         "tab_index": row.get("tab_index"),
+        "widget_order": row.get("widget_order"),
         "range_key": row.get("range_key"),
-        "title": row.get("title") or row.get("card_title"),
+        "title": row.get("card_title") or row.get("title"),
         "chart_type": row.get("chart_type"),
         "value": row.get("value"),
         "unit": row.get("unit") or "count",
@@ -1390,6 +1449,13 @@ def _text(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _int_or_none(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _safe_range_key(range_key: str | None) -> str:

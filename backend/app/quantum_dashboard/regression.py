@@ -6,6 +6,7 @@ from typing import Any
 
 from backend.app.config.settings import Settings, get_settings
 from backend.app.quantum_dashboard.builder import (
+    DATASET_DASHBOARD_WIDGETS,
     DATASET_ERRORS_APP_NAME,
     DATASET_ERRORS_TOP_ERRORS,
     DATASET_ERRORS_WIDGETS,
@@ -271,6 +272,10 @@ def _local_payload(
 ) -> dict[str, Any] | None:
     if is_generic_role(role):
         rows = [
+            *_filter_dashboard_rows(
+                _read_dataset(store, country, DATASET_DASHBOARD_WIDGETS, range_key),
+                dashboard_id,
+            ),
             *_filter_dashboard_rows(
                 _read_dataset(store, country, DATASET_SUMMARY_WIDGETS, range_key),
                 dashboard_id,

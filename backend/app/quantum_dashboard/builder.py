@@ -510,6 +510,19 @@ def _call_score(role: VisualRole, call: dict[str, Any]) -> int:
             score += 800
         if view_name == "coreMetrics":
             score += 100
+    elif is_generic_role(role):
+        if view_name == "coreMetrics":
+            score += 5000
+        if view_name == "coreMetricsComparisonSegment":
+            score += 4500
+        if view_name == "dimensionQuery":
+            score += 4000
+        if view_name == "dimensionQueryComparisonSegment":
+            score += 3500
+        if "timeSeriesQuery" in view_name:
+            score += 500
+        if view_name.endswith(":historical"):
+            score -= 250
     elif role in {
         "summary.detail_by_app_name_os",
         "errors.top_errors_by_error_name",
@@ -594,6 +607,7 @@ def _contract_from_call(
         tab_name=tab_name or _tab_label(resolved_tab),
         tab_index=tab_index,
         widget_id=_text(call.get("widget_id")) or card_id,
+        widget_order=_int_or_none(call.get("widget_order")),
         card_id=card_id,
         card_title=_text(call.get("card_title")) or card_title_for_role(role, call),
         card_type=_text(call.get("card_type") or metadata.get("cardType")) or spec.card_type,
@@ -708,6 +722,7 @@ def _append_derived_rows(
                     "widget_type": contract.card_type,
                     "tab_name": contract.tab_name,
                     "tab_index": contract.tab_index,
+                    "widget_order": contract.widget_order,
                     "range_key": contract.range_key,
                     "range_start": contract.range_start,
                     "range_end": contract.range_end,
@@ -723,7 +738,7 @@ def _append_derived_rows(
         if isinstance(chart_payload, dict):
             chart_payload_rows.append(_chart_payload_row(contract, widget, chart_payload))
         table_rows = _list_of_dicts(widget.get("table_rows"))
-        if table_rows:
+        if widget.get("chart_type") == "table" or table_rows:
             widget_table_payload_rows.append(
                 {
                     "country": contract.country,
@@ -735,6 +750,7 @@ def _append_derived_rows(
                     "tab": contract.tab,
                     "tab_name": contract.tab_name,
                     "tab_index": contract.tab_index,
+                    "widget_order": contract.widget_order,
                     "range_key": contract.range_key,
                     "card_role": role,
                     "card_title": contract.card_title,
@@ -774,6 +790,7 @@ def _append_derived_rows(
                 "tab": contract.tab,
                 "tab_name": contract.tab_name,
                 "tab_index": contract.tab_index,
+                "widget_order": contract.widget_order,
                 "range_key": contract.range_key,
                 "card_role": role,
                 "card_title": contract.card_title,
@@ -796,6 +813,7 @@ def _append_derived_rows(
                 "widget_type": contract.card_type,
                 "tab_name": contract.tab_name,
                 "tab_index": contract.tab_index,
+                "widget_order": contract.widget_order,
                 "range_key": contract.range_key,
                 "range_start": contract.range_start,
                 "range_end": contract.range_end,
@@ -826,6 +844,9 @@ def _widget_row(contract: CardContract, widget: dict[str, Any]) -> dict[str, Any
     chart_payload = widget.get("chart_payload")
     if isinstance(chart_payload, dict):
         chart_payload = dict(chart_payload)
+        y_axis = chart_payload.get("y_axis")
+        if isinstance(y_axis, dict):
+            y_axis["label"] = contract.card_title or y_axis.get("label")
         chart_payload["period_label"] = chart_payload.get("period_label") or period_label
         chart_payload["timezone"] = (
             chart_payload.get("timezone")
@@ -844,6 +865,7 @@ def _widget_row(contract: CardContract, widget: dict[str, Any]) -> dict[str, Any
         "widget_type": contract.card_type,
         "tab_name": contract.tab_name,
         "tab_index": contract.tab_index,
+        "widget_order": contract.widget_order,
         "range_key": contract.range_key,
         "range_start": contract.range_start,
         "range_end": contract.range_end,
@@ -855,7 +877,7 @@ def _widget_row(contract: CardContract, widget: dict[str, Any]) -> dict[str, Any
         "card_role": contract.visual_role,
         "card_title": contract.card_title,
         "id": widget.get("id"),
-        "title": widget.get("title"),
+        "title": contract.card_title or widget.get("title"),
         "value": widget.get("value"),
         "unit": widget.get("unit"),
         "chart_type": widget.get("chart_type"),
@@ -886,6 +908,9 @@ def _chart_payload_row(
     raw_widget_period = widget.get("period")
     widget_period: dict[str, Any] = raw_widget_period if isinstance(raw_widget_period, dict) else {}
     payload = dict(chart_payload)
+    y_axis = payload.get("y_axis")
+    if isinstance(y_axis, dict):
+        y_axis["label"] = contract.card_title or y_axis.get("label")
     payload["period_label"] = payload.get("period_label") or _period_label(
         widget_period.get("start") or contract.period.start,
         widget_period.get("end") or contract.period.end,
@@ -906,6 +931,7 @@ def _chart_payload_row(
         "tab": contract.tab,
         "tab_name": contract.tab_name,
         "tab_index": contract.tab_index,
+        "widget_order": contract.widget_order,
         "card_id": contract.card_id,
         "widget_type": contract.card_type,
         "card_role": contract.visual_role,
@@ -987,6 +1013,7 @@ def _dashboard_card_row(contract: CardContract) -> dict[str, Any]:
         "tab": contract.tab,
         "tab_name": contract.tab_name,
         "tab_index": contract.tab_index,
+        "widget_order": contract.widget_order,
         "card_id": contract.card_id,
         "card_title": contract.card_title,
         "card_role": contract.visual_role,
@@ -1273,6 +1300,13 @@ def _int(value: Any, default: int) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _int_or_none(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _period_label(start: Any, end: Any, timezone: Any) -> str | None:
