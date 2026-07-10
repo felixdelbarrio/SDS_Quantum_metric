@@ -20,6 +20,7 @@ class WidgetRoleDescriptor:
     tab: str
     tab_name: str
     tab_index: int
+    widget_order: int | None
     enabled: bool
     supported: bool
     required: bool
@@ -92,6 +93,7 @@ def enrich_call_with_descriptor(
         enriched["tab"] = descriptor.tab
         enriched["tab_name"] = descriptor.tab_name
         enriched["tab_index"] = descriptor.tab_index
+        enriched["widget_order"] = descriptor.widget_order
     return enriched
 
 
@@ -144,6 +146,7 @@ def _descriptor(widget: QuantumWidgetConfig) -> WidgetRoleDescriptor:
         tab=tab,
         tab_name=widget.tab_name or widget.tab or tab,
         tab_index=widget.tab_index,
+        widget_order=widget.widget_order,
         enabled=widget.enabled,
         supported=widget.supported,
         required=widget.required,

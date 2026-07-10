@@ -128,6 +128,7 @@ export type KpiWidget = {
   widget_id?: string | null;
   tab_name?: string | null;
   tab_index?: number | null;
+  widget_order?: number | null;
   range_key?: string | null;
   title: string;
   value?: number | null;

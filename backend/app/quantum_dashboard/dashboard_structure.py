@@ -75,6 +75,7 @@ class QuantumDashboardWidget(BaseModel):
     tab_id: str | None = None
     tab_name: str
     tab_index: int
+    widget_order: int | None = None
     visual_role: str | None = None
     widget_type: WidgetKind = "unknown"
     enabled: bool = True
@@ -201,6 +202,7 @@ def structure_from_dashboard_config(
                 widget_type=widget.widget_type,
                 visual_role=widget.role or None,
             ).supported,
+            widget_order=widget.widget_order,
             source=widget.source,
         )
         for widget in dashboard.widgets
@@ -344,6 +346,9 @@ def widget_configs_from_structure(
                 tab=_normalized_tab(structure.tabs, widget.tab_index, widget.tab_name),
                 tab_name=widget.tab_name,
                 tab_index=widget.tab_index,
+                widget_order=(
+                    widget.widget_order if widget.widget_order is not None else len(configs)
+                ),
                 enabled=enabled_by_key.get(key, widget.enabled and supported),
                 required=supported,
                 supported=supported,
@@ -415,12 +420,13 @@ def _extract_structure(
 
     layout_cards = _ordered_layout_cards(value)
     if layout_cards:
-        for layout_key, layout_card in layout_cards:
+        for widget_order, (layout_key, layout_card) in enumerate(layout_cards):
             widget = _widget_from_candidate(
                 layout_card,
                 source,
                 current_tab,
                 fallback_widget_id=layout_key,
+                widget_order=widget_order,
             )
             if widget is not None:
                 widgets.append(widget)
@@ -467,6 +473,7 @@ def _widget_from_candidate(
     tab_context: QuantumDashboardTab | None,
     *,
     fallback_widget_id: str | None = None,
+    widget_order: int | None = None,
 ) -> QuantumDashboardWidget | None:
     if any(key in item for key in ("tabs", "cards")) and not any(
         key in item for key in ("adHocData", "card", "cardId", "card_id", "widgetId", "widget_id")
@@ -515,6 +522,14 @@ def _widget_from_candidate(
         item.get("tabIndex") or item.get("tab_index"),
         tab_context.tab_index if tab_context is not None else 0,
     )
+    resolved_widget_order = _int_or_none(
+        item.get("widgetOrder")
+        or item.get("widget_order")
+        or item.get("order")
+        or item.get("index")
+    )
+    if resolved_widget_order is None:
+        resolved_widget_order = widget_order
     visualization = _text(
         card.get("visualization")
         or card.get("visualizationType")
@@ -567,6 +582,7 @@ def _widget_from_candidate(
         tab_id=tab_context.tab_id if tab_context is not None else None,
         tab_name=tab_name,
         tab_index=tab_index,
+        widget_order=resolved_widget_order,
         visual_role=role,
         widget_type=kind,
         enabled=bool(role),
@@ -587,7 +603,14 @@ def _dedupe_widgets(widgets: list[QuantumDashboardWidget]) -> list[QuantumDashbo
     by_key: dict[str, QuantumDashboardWidget] = {}
     for widget in widgets:
         by_key.setdefault(widget.widget_id, widget)
-    return list(by_key.values())
+    return sorted(
+        by_key.values(),
+        key=lambda widget: (
+            widget.tab_index,
+            widget.widget_order if widget.widget_order is not None else 999_999,
+            widget.title.casefold(),
+        ),
+    )
 
 
 def _dashboard_name_from_payload(value: Any) -> str | None:
@@ -879,3 +902,10 @@ def _int(value: Any, default: int) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _int_or_none(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None

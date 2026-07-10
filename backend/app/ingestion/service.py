@@ -590,7 +590,7 @@ def _explicit_range_from_request(request: IngestionCreate) -> IngestionRange | N
     start, _ = _day_bounds(start_day)
     _, end = _day_bounds(end_day)
     if end_day >= today:
-        end = min(end, _quantum_relative_range_end())
+        end = _bounded_dynamic_range_end(start=start, day_end=end)
     if end < start:
         end = start
     return IngestionRange(
@@ -625,7 +625,7 @@ def _preset_range(range_key: str | None, *, now: datetime | None = None) -> Inge
     start, _ = _day_bounds(start_day)
     _, end = _day_bounds(end_day)
     if dynamic_end:
-        end = min(end, _quantum_relative_range_end(now))
+        end = _bounded_dynamic_range_end(start=start, day_end=end, now=now)
     if end < start:
         end = start
     return IngestionRange(
@@ -644,6 +644,29 @@ def _quantum_relative_range_end(now: datetime | None = None) -> datetime:
     local_now = now.astimezone(zone) if now else datetime.now(zone)
     current_hour_start = local_now.replace(minute=0, second=0, microsecond=0)
     return (current_hour_start - timedelta(hours=1, seconds=1)).astimezone(UTC)
+
+
+def _bounded_dynamic_range_end(
+    *,
+    start: datetime,
+    day_end: datetime,
+    now: datetime | None = None,
+) -> datetime:
+    safe_end = min(day_end, _quantum_relative_range_end(now))
+    if safe_end > start:
+        return safe_end
+
+    zone = zoneinfo_for("CST")
+    local_now = now.astimezone(zone) if now else datetime.now(zone)
+    completed_hour_end = local_now.replace(minute=0, second=0, microsecond=0) - timedelta(seconds=1)
+    fallback_end = min(day_end, completed_hour_end.astimezone(UTC))
+    if fallback_end > start:
+        return fallback_end
+
+    current_end = min(day_end, local_now.astimezone(UTC))
+    if current_end > start:
+        return current_end
+    return start
 
 
 def _parse_requested_day(value: str) -> date | None:

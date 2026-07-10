@@ -138,6 +138,7 @@ class CardContract(BaseModel):
     tab_name: str
     tab_index: int | None = None
     widget_id: str | None = None
+    widget_order: int | None = None
     card_id: str
     card_title: str
     card_type: str

@@ -211,8 +211,6 @@ def _parse_generic_table(
         parsed = _generic_table_row(row, index)
         if parsed:
             parsed_rows.append(parsed)
-    if not parsed_rows:
-        return _error(role, "row_shape_unknown", "Generic table has no parseable rows.")
     columns = _generic_table_columns(response_json, parsed_rows)
     widget = {
         "id": role,
@@ -617,13 +615,15 @@ def _generic_table_columns(
                 value = column.get("key") or column.get("name") or column.get("label")
                 if value:
                     columns.append(canonicalize_key(str(value)))
-    if not columns:
+    if not columns and rows:
         preferred = ["name"]
         metric_keys = sorted({key for row in rows for key in row if key.startswith("metric_")})
         dimension_keys = sorted(
             {key for row in rows for key in row if key.startswith("dimension_")}
         )
         columns = [key for key in [*preferred, *dimension_keys, *metric_keys] if key in rows[0]]
+    if not rows:
+        return columns
     extras = [key for key in rows[0] if key not in columns and key != "row_index"]
     return [*columns, *extras]
 

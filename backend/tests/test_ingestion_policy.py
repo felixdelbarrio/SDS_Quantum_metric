@@ -57,6 +57,16 @@ def test_relative_presets_use_quantum_web_complete_hour_cutoff() -> None:
     assert last_7_days.end == datetime(2026, 6, 29, 9, 59, 59, tzinfo=UTC)
 
 
+def test_today_preset_keeps_positive_window_early_in_cst_day() -> None:
+    now = datetime(2026, 7, 10, 7, 38, tzinfo=UTC)
+
+    today = _preset_range("today", now=now)
+
+    assert today is not None
+    assert today.start == datetime(2026, 7, 10, 6, 0, tzinfo=UTC)
+    assert today.end == datetime(2026, 7, 10, 6, 59, 59, tzinfo=UTC)
+
+
 def test_apply_ingestion_range_rewrites_nested_ts_preserving_timestamp_shape() -> None:
     ingestion_range = build_ingestion_range(
         datetime(2026, 6, 10, tzinfo=UTC),
