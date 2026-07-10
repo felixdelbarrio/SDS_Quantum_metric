@@ -1,0 +1,9 @@
+{
+  "iteration": 18,
+  "country": "MX",
+  "dashboard_id": null,
+  "range_key": "last_7_days",
+  "verdict": "BLOCKED",
+  "reason": "The exact live default dashboard and widget contracts could not be audited without Quantum authentication.",
+  "widgets": []
+}

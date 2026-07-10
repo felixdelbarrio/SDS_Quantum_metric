@@ -576,7 +576,7 @@ function responseFor(url: URL, options: MockOptions) {
 }
 
 function dashboardPayload(country: string) {
-  return {
+  const payload = {
     status: "ok",
     country,
     source: "parquet",
@@ -708,6 +708,100 @@ function dashboardPayload(country: string) {
       },
     ],
     available_datasets: ["country=MX/derived/dashboard_widgets"],
+  };
+  return {
+    ...payload,
+    tabs: payload.tabs.map((tab) => ({
+      tab: tab.tab,
+      tab_name: tab.tab_name,
+      tab_index: tab.tab_index,
+      sections: [
+        {
+          section_id: `${tab.tab}-section`,
+          section_name:
+            tab.tab === "easy-dashboard-example" ? "Experience" : "Summary",
+          section_index: 0,
+          widgets: tab.widgets.map(canonicalWidget),
+        },
+      ],
+    })),
+    available_datasets: ["country=MX/derived/widget_contracts"],
+  };
+}
+
+type DashboardFixtureWidget = {
+  id: string;
+  role: string;
+  title: string;
+  value?: number;
+  unit?: string;
+  semantic_intent?: string;
+  comparison?: { label: string; delta_percent: number };
+  chart_payload?: unknown;
+  table_columns?: string[];
+  table_rows?: Array<Record<string, unknown>>;
+  period?: { label: string };
+};
+
+function canonicalWidget(widget: DashboardFixtureWidget) {
+  const unit = widget.unit ?? "count";
+  const comparison = widget.comparison
+    ? {
+        label: widget.comparison.label,
+        raw_delta: widget.comparison.delta_percent,
+        display_delta: widget.comparison.delta_percent,
+        precision: 2,
+        formatted: `${widget.comparison.delta_percent >= 0 ? "+" : ""}${widget.comparison.delta_percent.toFixed(2)}%`,
+        semantic_intent:
+          widget.semantic_intent === "good" ? "positive" : "negative",
+      }
+    : null;
+  const tableColumns = (widget.table_columns ?? []).map((key: string) => ({
+    key,
+    label:
+      {
+        app_name: "App Name",
+        operating_system: "Sistema operativo",
+        page_views: "Page Views",
+        sessions: "Sessions",
+        error_name: "Error Name",
+        error_count: "Error Count",
+        delta_percent: "Delta",
+      }[key] ?? key,
+    data_type: key.includes("percent") ? "percent" : "text",
+    precision: key.includes("percent") ? 2 : null,
+    sortable: true,
+  }));
+  return {
+    id: widget.id,
+    widget_id: widget.id,
+    role: widget.role,
+    title: widget.title,
+    widget_order: 0,
+    display:
+      widget.value == null
+        ? null
+        : {
+            raw_value: widget.value,
+            display_value: widget.value,
+            unit,
+            scale: 1,
+            precision: Number.isInteger(widget.value) ? 0 : 2,
+            suffix: unit === "percent" ? "%" : null,
+            formatted: null,
+          },
+    comparison,
+    chart: widget.chart_payload ?? null,
+    table: tableColumns.length
+      ? {
+          columns: tableColumns,
+          rows: widget.table_rows ?? [],
+          period_label: "Jun 16, 2026 (CST)",
+          timezone: "America/Mexico_City",
+        }
+      : null,
+    period: widget.period,
+    parse_status: "resolved",
   };
 }
 

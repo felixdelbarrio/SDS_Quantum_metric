@@ -136,7 +136,7 @@ def test_unknown_widget_type_is_not_supported_without_parser_evidence() -> None:
     assert assessment.parser_name is None
 
 
-def test_generic_metric_parser_builds_percent_chart_payload() -> None:
+def test_generic_metric_parser_rejects_implicit_average_and_chart_type() -> None:
     result = parse_card(
         {
             "card_type": "CHART",
@@ -153,17 +153,11 @@ def test_generic_metric_parser_builds_percent_chart_payload() -> None:
         "generic.1.chart.navigation_error_rate",
     )
 
-    widget = result.data["widget"]
-
-    assert result.status == "ok"
-    assert widget["unit"] == "percent"
-    assert widget["value"] == 3.0
-    assert widget["chart_payload"]["chart_type"] == "line"
-    assert widget["chart_payload"]["series"][0]["points"]
-    assert [point["value"] for point in widget["timeseries"]] == [2.0, 4.0]
+    assert result.status == "error"
+    assert result.error_code == "failed_missing_primary_value"
 
 
-def test_generic_table_parser_extracts_dynamic_dimensions_and_metrics() -> None:
+def test_generic_table_parser_requires_exact_header_contract() -> None:
     result = parse_card(
         {
             "card_type": "TABLE",
@@ -180,16 +174,11 @@ def test_generic_table_parser_extracts_dynamic_dimensions_and_metrics() -> None:
         "generic.1.table.top_navigation_errors",
     )
 
-    widget = result.data["widget"]
-
-    assert result.status == "ok"
-    assert widget["chart_type"] == "table"
-    assert widget["table_columns"] == ["name", "dimension_1", "metric_1"]
-    assert widget["table_rows"][0]["name"] == "Possible Frustration"
-    assert widget["table_rows"][0]["metric_1"] == 758
+    assert result.status == "error"
+    assert result.error_code == "failed_missing_table_contract"
 
 
-def test_generic_donut_parser_builds_segments_and_payload() -> None:
+def test_generic_donut_parser_rejects_implicit_total_and_series_contract() -> None:
     result = parse_card(
         {
             "card_type": "DONUT",
@@ -206,12 +195,8 @@ def test_generic_donut_parser_builds_segments_and_payload() -> None:
         "generic.1.donut.sessions_by_app",
     )
 
-    widget = result.data["widget"]
-
-    assert result.status == "ok"
-    assert widget["total"] == 15
-    assert widget["chart_payload"]["chart_type"] == "donut"
-    assert [item["name"] for item in widget["series"]] == ["App A", "App B"]
+    assert result.status == "error"
+    assert result.error_code == "failed_missing_primary_value"
 
 
 def test_builder_persists_contracts_snapshots_derived_and_no_cookies(tmp_path: Path) -> None:
@@ -221,7 +206,7 @@ def test_builder_persists_contracts_snapshots_derived_and_no_cookies(tmp_path: P
 
     assert result.regression_status == "passed"
     assert result.mandatory_cards_captured == 9
-    assert result.derived_datasets == 9
+    assert result.derived_datasets == 10
     contracts = store.read_country_dataset("MX", "visual_contracts")
     snapshots = store.read_country_dataset("MX", "web_snapshots")
     summary = store.read_country_dataset("MX", "derived/summary_widgets")
@@ -685,8 +670,8 @@ def test_local_dashboard_status_cannot_pass_with_missing_enabled_generic_role(
     assert status["regression_status"] == "failed_missing_card"
     assert status["regression_verdict"] == "FAILED"
     assert status["mandatory_cards"] == 2
-    assert status["mandatory_cards_captured"] == 1
-    assert status["missing_roles"] == ["generic.0.table.custom"]
+    assert status["mandatory_cards_captured"] == 0
+    assert status["missing_roles"] == ["generic.0.table.custom", "summary.sessions"]
 
 
 def test_dynamic_dashboard_uses_real_tabs_and_generic_widget_roles(tmp_path: Path) -> None:
@@ -855,25 +840,18 @@ def test_dynamic_dashboard_uses_real_tabs_and_generic_widget_roles(tmp_path: Pat
     status = service.status("CO", range_key="last_7_days")
     dashboard = service.dashboard("CO", range_key="last_7_days")
 
-    assert status["regression_status"] == "passed"
+    assert status["regression_status"] == "failed_missing_card"
     assert status["mandatory_cards"] == 3
-    assert status["mandatory_cards_captured"] == 3
-    assert status["missing_roles"] == []
+    assert status["mandatory_cards_captured"] == 0
+    assert len(status["missing_roles"]) == 3
     assert [tab["tab_name"] for tab in dashboard["tabs"]] == [
         "Overview general",
         "Easy Dashboard Example",
     ]
-    assert [len(tab["widgets"]) for tab in dashboard["tabs"]] == [2, 1]
-    assert [widget["title"] for widget in dashboard["tabs"][0]["widgets"]] == [
-        "Zeta Widget",
-        "Alpha Widget",
-    ]
-    assert dashboard["tabs"][1]["widgets"][0]["table_rows"] == [
-        {"error_name": "Possible Frustration", "error_count": 746}
-    ]
+    assert [tab["sections"] for tab in dashboard["tabs"]] == [[], []]
 
 
-def test_generic_empty_table_is_valid_dashboard_widget(tmp_path: Path) -> None:
+def test_generic_empty_table_without_headers_fails_contract(tmp_path: Path) -> None:
     settings = Settings(qm_data_dir=tmp_path)
     store = ParquetStore(settings)
     role = "generic.0.table.empty_table"
@@ -959,15 +937,12 @@ def test_generic_empty_table_is_valid_dashboard_widget(tmp_path: Path) -> None:
         "CO", "range_key=default/derived/widget_table_payloads"
     )
 
-    assert build.regression_status == "passed"
-    assert build.parser_errors == []
+    assert build.regression_status == "failed_parse_error"
+    assert build.parser_errors[0]["error_code"] == "failed_missing_table_contract"
     assert build.missing_roles == []
-    assert report.verdict == "PASSED"
-    assert report.cards[0].status == "passed"
-    assert dashboard_widgets[0]["value"] == 0
-    assert dashboard_widgets[0]["table_rows"] == []
-    assert dashboard_widgets[0]["widget_order"] == 3
-    assert table_payloads[0]["table_rows"] == []
+    assert report.verdict == "FAILED"
+    assert dashboard_widgets == []
+    assert table_payloads == []
 
 
 def test_generic_chart_value_prefers_core_metrics_over_timeseries(tmp_path: Path) -> None:
@@ -1061,7 +1036,7 @@ def test_generic_chart_value_prefers_core_metrics_over_timeseries(tmp_path: Path
 
     assert build.regression_status == "passed"
     assert dashboard_widgets[0]["value"] == 7.35
-    assert dashboard_widgets[0]["chart_payload"]["series"][0]["points"]
+    assert dashboard_widgets[0]["chart_payload"] is None
 
 
 def test_summary_detail_parser_keeps_flat_rows_when_web_has_no_hierarchy() -> None:
@@ -1291,7 +1266,7 @@ def test_parsers_support_real_quantum_rows_and_results_shapes() -> None:
         "errors.error_sessions_percentage_evolution",
     )
     assert percent.status == "ok"
-    assert percent.data["widget"]["value"] == 97.0
+    assert percent.data["widget"]["value"] == 0.969
 
     summary_table = parse_card(
         _parser_call(
@@ -1322,7 +1297,7 @@ def test_parsers_support_real_quantum_rows_and_results_shapes() -> None:
     )
     assert top_errors.status == "ok"
     assert top_errors.data["rows"][0]["error_sessions"] == 10607
-    assert top_errors.data["rows"][0]["error_session_percent"] == 100
+    assert top_errors.data["rows"][0]["error_session_percent"] == 1
 
     error_percentage = parse_card(
         _parser_call(
@@ -1388,8 +1363,8 @@ def test_parsers_support_real_quantum_rows_and_results_shapes() -> None:
         ),
         "summary.avg_session_duration",
     )
-    assert historical.status == "ok"
-    assert historical.data["widget"]["value"] == 76.5
+    assert historical.status == "error"
+    assert historical.error_code == "failed_missing_primary_value"
 
     timeseries = parse_card(
         _parser_call(
@@ -1402,11 +1377,8 @@ def test_parsers_support_real_quantum_rows_and_results_shapes() -> None:
         ),
         "summary.sessions",
     )
-    assert timeseries.status == "ok"
-    assert timeseries.data["widget"]["timeseries"] == [
-        {"ts": "1781589600", "value": 10.0},
-        {"ts": "1781593200", "value": 12.0},
-    ]
+    assert timeseries.status == "error"
+    assert timeseries.error_code == "failed_missing_primary_value"
 
 
 def test_line_chart_payload_combines_devices_as_daily_visual_series() -> None:

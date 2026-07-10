@@ -33,14 +33,16 @@ class RangeValidation:
     error: str | None = None
 
 
-def rewrite_query_time_range(payload: dict[str, Any], target: IngestionChunk) -> RewriteResult:
+def rewrite_query_time_range(
+    payload: dict[str, Any], target: IngestionChunk, *, timezone: str = "CST"
+) -> RewriteResult:
     rewritten = deepcopy(payload)
     changed = _rewrite(rewritten, target)
     return RewriteResult(
         payload=rewritten,
         changed=changed,
         range=QueryTimeRange(
-            start=target.start, end=target.end, timezone="CST", label=target.label
+            start=target.start, end=target.end, timezone=timezone, label=target.label
         ),
     )
 

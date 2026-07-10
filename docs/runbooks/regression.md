@@ -1,5 +1,12 @@
 # Runbook - Regression
 
+## Iteración 18: criterio de aceptación
+
+Comparar por widget valor/formato, comparación, tabla, chart type, series, ejes, bandas, leyenda,
+sección/layout, periodo y timezone. Cualquier diferencia produce FAILED. Falta de autenticación,
+contrato o evidencia produce BLOCKED, nunca PASSED. Guardar MD y JSON separados por país,
+dashboard y `range_key`.
+
 La regresion Web vs Local compara por:
 
 - pais;

@@ -1,5 +1,12 @@
 # Runbook - Datasets
 
+## Iteración 18: dataset canónico
+
+Para Home, inspeccionar exclusivamente `range_key=<range>/derived/widget_contracts`. Verificar
+`dashboard_id`, tab/section/widget, hashes, `parse_status` y timezone antes de analizar payloads.
+`summary_*`, `errors_*` y `dashboard_widgets` son vistas legacy y no demuestran paridad de Home.
+Si solo existen schemas anteriores, borrar/reingerir desde la UI; no mezclar rangos o dashboards.
+
 Datasets lista paises con datos locales y entidades Parquet.
 
 Cuando existe metadata de Iteracion 12:

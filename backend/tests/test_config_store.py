@@ -165,7 +165,7 @@ def test_config_store_persists_dashboards_widgets_and_schema_version(tmp_path: P
     dashboard = country.default_dashboard()
 
     assert store.path.name == "quantum_config.json"
-    assert loaded.schema_version == 2
+    assert loaded.schema_version == 3
     assert loaded.theme_preference == "light"
     assert dashboard is not None
     assert dashboard.dashboard_id == "dash"

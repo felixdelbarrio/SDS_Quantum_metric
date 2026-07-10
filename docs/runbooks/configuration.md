@@ -1,5 +1,12 @@
 # Runbook - Configuracion
 
+## Iteración 18: configuración contractual
+
+Cada país debe tener timezone y un dashboard default validado. Tras actualizar dashboards con
+sesión Quantum real, verificar dashboard/team, tabs, secciones, widgets, layout y visual contract.
+No introducir manualmente IDs o formatos para superar regresión. Un config schema anterior se
+migra a schema 3, pero sus datos Parquet deben reingerirse.
+
 1. Abrir Configuracion.
 2. Elegir pais y Base URL.
 3. Usar `Actualizar dashboards`.

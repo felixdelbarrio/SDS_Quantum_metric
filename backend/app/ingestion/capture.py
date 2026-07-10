@@ -255,7 +255,10 @@ class QuantumAnalyticsCaptureSession:
                     if effective_source_end
                     else None,
                     "source_period_label": query_range.label if query_range else None,
-                    "source_timezone": query_range.timezone if query_range else "CST",
+                    "source_timezone": (
+                        query_range.timezone if query_range and query_range.timezone else None
+                    )
+                    or (ingestion_range.timezone if ingestion_range else "UTC"),
                     "capture_chunk_start": _iso(ingestion_range.start) if ingestion_range else None,
                     "capture_chunk_end": _iso(ingestion_range.end) if ingestion_range else None,
                     "range_key": ingestion_range.range_key if ingestion_range else "custom",

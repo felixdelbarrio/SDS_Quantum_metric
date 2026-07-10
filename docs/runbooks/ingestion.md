@@ -1,5 +1,13 @@
 # Runbook - Ingestion
 
+## Iteración 18: ingesta exacta
+
+1. Autenticar el navegador controlado en la geografía correcta.
+2. Actualizar dashboards y validar el default.
+3. Ingerir `last_7_days`; confirmar timezone, start/end y periodo visible.
+4. Revisar `derived/widget_contracts`: todo widget requerido debe estar `resolved`.
+5. Si aparece missing/ambiguous/invalid, corregir captura/correlación; no usar otro dataset.
+
 La ingesta usa solo el dashboard default del pais.
 
 Antes de ingestar:

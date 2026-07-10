@@ -50,6 +50,7 @@ from backend.app.quantum_dashboard.dashboard_resources import (
 )
 from backend.app.quantum_dashboard.dashboard_structure import (
     discover_dashboard_structure_via_browser,
+    section_configs_from_structure,
     structure_from_dashboard_config,
     tab_configs_from_structure,
     widget_configs_from_structure,
@@ -605,6 +606,7 @@ def add_manual_quantum_dashboard(
             existing.errors_tab if existing else 1,
             structure.tabs,
         ),
+        timezone=country_config.timezone,
         is_default=existing.is_default if existing else False,
         is_manual=True,
         validated=True,
@@ -613,6 +615,7 @@ def add_manual_quantum_dashboard(
         discovered_at=structure.discovered_at,
         last_structure_at=structure.discovered_at,
         tabs=tab_configs_from_structure(structure),
+        sections=section_configs_from_structure(structure),
         widgets=widget_configs_from_structure(structure, existing.widgets if existing else []),
     )
     updated_countries = [
@@ -734,7 +737,9 @@ def discover_quantum_dashboard_structure(
                 structure.tabs,
             ),
             "tabs": tab_configs_from_structure(structure),
+            "sections": section_configs_from_structure(structure),
             "widgets": widget_configs_from_structure(structure, dashboard.widgets),
+            "timezone": dashboard.timezone or country_config.timezone,
             "last_structure_at": structure.discovered_at,
             "source": structure.source,
         }

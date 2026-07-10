@@ -271,7 +271,7 @@ def test_filter_enabled_rows_materializes_resolved_card_role() -> None:
     ]
 
 
-def test_filter_enabled_rows_assigns_ambiguous_table_calls_by_widget_order() -> None:
+def test_filter_enabled_rows_does_not_assign_ambiguous_tables_by_order() -> None:
     widgets = [
         QuantumWidgetConfig(
             role="generic.0.table.first",
@@ -317,11 +317,8 @@ def test_filter_enabled_rows_assigns_ambiguous_table_calls_by_widget_order() -> 
         widgets,
     )
 
-    assert [row["card_role"] for row in filtered] == [
-        "generic.0.table.first",
-        "generic.0.table.second",
-    ]
-    assert [row["widget_id"] for row in filtered] == ["first-widget", "second-widget"]
+    assert len(filtered) == 2
+    assert all("card_role" not in row for row in filtered)
 
 
 class _ConfigStore(QuantumConfigStore):

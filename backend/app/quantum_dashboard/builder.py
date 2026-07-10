@@ -3,16 +3,30 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from backend.app.analytics.normalizer import canonicalize_key, parse_json_object
 from backend.app.quantum.schemas import QuantumWidgetConfig
 from backend.app.quantum_dashboard.card_mapper import card_title_for_role
 from backend.app.quantum_dashboard.catalog import (
-    ERRORS_APP_COMPARISON,
     required_roles,
     spec_for_role,
 )
+from backend.app.quantum_dashboard.contracts import (
+    PARSE_STATUSES,
+    ChartLegendContract,
+    DisplayNumberContract,
+    DisplayUnit,
+    HistoricalComparisonContract,
+    QuantumBandContract,
+    QuantumChartContract,
+    QuantumSeriesContract,
+    QuantumTableColumnContract,
+    QuantumTableContract,
+    QuantumWidgetContract,
+    SemanticIntent,
+)
+from backend.app.quantum_dashboard.correlation import correlate_call_to_widget
 from backend.app.quantum_dashboard.generic_roles import is_generic_role
 from backend.app.quantum_dashboard.models import (
     CardContract,
@@ -24,7 +38,7 @@ from backend.app.quantum_dashboard.models import (
     VisualRole,
     WebSnapshot,
 )
-from backend.app.quantum_dashboard.parsers import build_line_chart_payload_from_series, parse_card
+from backend.app.quantum_dashboard.parsers import parse_card
 from backend.app.quantum_dashboard.periods import format_period_label, parse_datetime
 from backend.app.quantum_dashboard.semantics import semantic_intent, semantic_state
 from backend.app.quantum_dashboard.widget_roles import (
@@ -51,6 +65,7 @@ DATASET_DASHBOARD_WIDGETS = "derived/dashboard_widgets"
 DATASET_WIDGET_CHART_PAYLOADS = "derived/widget_chart_payloads"
 DATASET_WIDGET_TABLE_PAYLOADS = "derived/widget_table_payloads"
 DATASET_WIDGET_REGRESSION = "derived/widget_regression"
+DATASET_WIDGET_CONTRACTS = "derived/widget_contracts"
 DATASET_REGRESSION_RESULTS = "regression/web_vs_local_results"
 DATASET_REGRESSION_DISCREPANCIES = "regression/discrepancies"
 REQUIRED_CHART_ROLES: set[VisualRole] = {
@@ -60,6 +75,28 @@ REQUIRED_CHART_ROLES: set[VisualRole] = {
     "summary.avg_session_duration",
     "errors.error_sessions_percentage_evolution",
     "errors.error_sessions_by_app_name_comparison",
+}
+
+EXACT_TABLE_COLUMN_CONTRACTS: dict[str, dict[str, tuple[str, str]]] = {
+    "summary.detail_by_app_name_os": {
+        "name": ("name", "text"),
+        "app_name": ("App Name", "text"),
+        "operating_system": ("Sistema operativo", "text"),
+        "page_views": ("Page Views", "number"),
+        "sessions": ("Sessions", "number"),
+        "conversions": ("General - Conversiones", "number"),
+    },
+    "errors.top_errors_by_error_name": {
+        "name": ("Error Name", "text"),
+        "error_sessions": ("General - Sesiones con error", "number"),
+        "error_session_percent": ("General - % Sesiones con error", "percent"),
+    },
+    "errors.error_session_percentage_by_app_name": {
+        "name": ("App Name", "text"),
+        "sessions": ("Sessions", "number"),
+        "sessions_with_error": ("Sessions with Error", "number"),
+        "error_session_percent": ("General - % Sesiones con Error", "percent"),
+    },
 }
 
 
@@ -120,7 +157,8 @@ def build_derived_datasets(
     chart_payload_rows: list[dict[str, Any]] = []
     dashboard_widget_rows: list[dict[str, Any]] = []
     widget_table_payload_rows: list[dict[str, Any]] = []
-    parser_errors: list[dict[str, str]] = []
+    widget_contract_rows: list[dict[str, Any]] = []
+    parser_errors: list[dict[str, str]] = _correlation_errors(calls, descriptors, enabled_role_set)
 
     for role, call in selected.items():
         contract = _contract_from_call(
@@ -134,6 +172,9 @@ def build_derived_datasets(
         )
         result = parse_card(call, role)
         if result.status != "ok":
+            widget_contract_rows.append(
+                _canonical_widget_contract(contract, result, call).storage_row()
+            )
             parser_errors.append(
                 {
                     "card_role": role,
@@ -150,6 +191,9 @@ def build_derived_datasets(
             role,
             range_key=range_key,
         )
+
+        canonical_contract = _canonical_widget_contract(contract, result, call)
+        widget_contract_rows.append(canonical_contract.storage_row())
 
         contracts.append(contract)
         snapshots.append(_snapshot_from_result(country, contract, result, call, now))
@@ -179,6 +223,13 @@ def build_derived_datasets(
         DATASET_VISUAL_CONTRACTS,
         [contract.model_dump(mode="json") for contract in contracts],
         file_name="visual_contracts.parquet",
+        range_key=range_key,
+    )
+    _write_range_dataset(
+        store,
+        country,
+        DATASET_WIDGET_CONTRACTS,
+        widget_contract_rows,
         range_key=range_key,
     )
     _write_range_dataset(
@@ -274,6 +325,7 @@ def build_derived_datasets(
                 chart_payload_rows,
                 dashboard_widget_rows,
                 widget_table_payload_rows,
+                widget_contract_rows,
             )
         ),
         missing_roles=[str(role) for role in missing],
@@ -305,6 +357,32 @@ def _latest_call_by_role(
             selected[role] = enriched
             scores[role] = score
     return selected
+
+
+def _correlation_errors(
+    calls: list[dict[str, Any]],
+    descriptors: list[WidgetRoleDescriptor],
+    enabled_roles: set[str],
+) -> list[dict[str, str]]:
+    if not descriptors:
+        return []
+    errors: dict[tuple[str, str], dict[str, str]] = {}
+    active_descriptors = [item for item in descriptors if item.role in enabled_roles]
+    for call in calls:
+        result = correlate_call_to_widget(call, active_descriptors)
+        if result.status != "ambiguous":
+            continue
+        card_id = _text(call.get("card_id")) or "unknown"
+        key = (card_id, str(call.get("view_name") or "unknown"))
+        errors[key] = {
+            "card_role": "unresolved",
+            "card_title": _text(call.get("card_title")) or card_id,
+            "error_code": "failed_ambiguous_widget_correlation",
+            "error_message": (
+                "Request matches multiple widget contracts with the same strong identifiers."
+            ),
+        }
+    return list(errors.values())
 
 
 def _related_calls_by_role(
@@ -374,87 +452,23 @@ def _with_related_timeseries(
     *,
     range_key: str,
 ) -> ParserResult:
+    del range_key
     if related_calls is None:
         return result
     widget = result.data.get("widget")
     if not isinstance(widget, dict):
         return result
-    base_timeseries = _parsed_timeseries(related_calls.base_timeseries, role)
-    comparison_timeseries = _parsed_timeseries(related_calls.comparison_timeseries, role)
-    single_series = bool(base_timeseries) and not comparison_timeseries
-    base_widget = _parsed_widget(related_calls.base_metric, role)
-    comparison_widget = _parsed_widget(related_calls.comparison_metric, role)
-    if base_widget or comparison_widget:
-        breakdown = []
-        if base_widget and base_widget.get("value") is not None:
-            breakdown.append(
-                {
-                    "label": "All Users" if is_generic_role(role) or single_series else "Desktop",
-                    "value": base_widget["value"],
-                }
-            )
-        if comparison_widget and comparison_widget.get("value") is not None:
-            breakdown.append(
-                {
-                    "label": "Historical Range" if is_generic_role(role) else "Mobile",
-                    "value": comparison_widget["value"],
-                }
-            )
-        if breakdown:
-            widget["breakdown"] = breakdown
-            spec = spec_for_role(role)
-            unit = str(widget.get("unit") or (spec.unit if spec else None) or "count")
-            if unit == "count":
-                widget["value"] = round(sum(float(item["value"]) for item in breakdown), 2)
-            elif comparison_widget and comparison_widget.get("value") is not None:
-                widget["value"] = comparison_widget["value"]
-    if role == ERRORS_APP_COMPARISON:
-        total = _donut_total_from_related_metric(
-            related_calls.base_total_metric or related_calls.comparison_total_metric,
-            role,
+    candidates = [
+        candidate
+        for candidate in (
+            _explicit_chart_payload(related_calls.base_timeseries, role),
+            _explicit_chart_payload(related_calls.comparison_timeseries, role),
         )
-        if total is not None:
-            widget["value"] = total
-            widget["total"] = total
-    period_call = (
-        related_calls.comparison_timeseries
-        or related_calls.base_timeseries
-        or related_calls.comparison_total_metric
-        or related_calls.base_total_metric
-        or related_calls.comparison_metric
-        or related_calls.base_metric
-    )
-    period = _period_from_call(period_call or {})
-    if base_timeseries or comparison_timeseries:
-        spec = spec_for_role(role)
-        mobile_points = (
-            base_timeseries if is_generic_role(role) or single_series else comparison_timeseries
-        )
-        desktop_points = [] if is_generic_role(role) or single_series else base_timeseries
-        chart_payload = build_line_chart_payload_from_series(
-            role=role,
-            title=str(widget.get("title") or (spec.title if spec else role)),
-            unit=str(widget.get("unit") or (spec.unit if spec else None) or "count"),
-            mobile_points=mobile_points,
-            desktop_points=desktop_points,
-            response_json=parse_json_object(
-                (related_calls.comparison_timeseries or related_calls.base_timeseries or {}).get(
-                    "response_json"
-                )
-            ),
-            aggregate_daily=range_key == "last_7_days",
-            period_end=period.get("end") if period else None,
-            mobile_label="All Users" if is_generic_role(role) or single_series else "Mobile",
-            desktop_label="Desktop",
-        )
-        if isinstance(chart_payload, dict):
-            widget["chart_payload"] = chart_payload
-            widget["timeseries"] = _flatten_chart_series(chart_payload)
-    if period:
-        widget["period"] = period
-    payload = widget.get("chart_payload")
-    if isinstance(payload, dict) and period:
-        payload["timezone"] = period.get("timezone") or payload.get("timezone")
+        if candidate is not None
+    ]
+    unique_candidates = {hash_json(candidate): candidate for candidate in candidates}
+    if len(unique_candidates) == 1 and "chart_payload" not in widget:
+        widget["chart_payload"] = next(iter(unique_candidates.values()))
     return ParserResult(role=result.role, status=result.status, data=result.data)
 
 
@@ -466,36 +480,12 @@ def _parsed_widget(call: dict[str, Any] | None, role: VisualRole) -> dict[str, A
     return widget if isinstance(widget, dict) else None
 
 
-def _parsed_timeseries(call: dict[str, Any] | None, role: VisualRole) -> list[dict[str, Any]]:
-    widget = _parsed_widget(call, role)
-    if not widget:
-        return []
-    timeseries = widget.get("timeseries")
-    return timeseries if isinstance(timeseries, list) else []
-
-
-def _donut_total_from_related_metric(call: dict[str, Any] | None, role: VisualRole) -> float | None:
+def _explicit_chart_payload(call: dict[str, Any] | None, role: VisualRole) -> dict[str, Any] | None:
     widget = _parsed_widget(call, role)
     if not widget:
         return None
-    total = widget.get("total") or widget.get("value")
-    return _float_or_none(total)
-
-
-def _flatten_chart_series(chart_payload: dict[str, Any]) -> list[dict[str, Any]]:
-    output: list[dict[str, Any]] = []
-    series = chart_payload.get("series")
-    if not isinstance(series, list):
-        return output
-    for item in series:
-        if not isinstance(item, dict):
-            continue
-        label = item.get("label")
-        points = item.get("points")
-        if not isinstance(points, list):
-            continue
-        output.extend({**point, "series": label} for point in _list_of_dicts(points))
-    return output
+    payload = widget.get("chart_payload")
+    return payload if isinstance(payload, dict) else None
 
 
 def _call_score(role: VisualRole, call: dict[str, Any]) -> int:
@@ -631,6 +621,252 @@ def _contract_from_call(
         required=spec.required,
         discovered_at=discovered_at,
     )
+
+
+def _canonical_widget_contract(
+    contract: CardContract,
+    result: ParserResult,
+    call: dict[str, Any],
+) -> QuantumWidgetContract:
+    widget_value = result.data.get("widget")
+    widget: dict[str, Any] = widget_value if isinstance(widget_value, dict) else {}
+    display = _canonical_display(widget)
+    comparison = _canonical_comparison(widget)
+    chart = _canonical_chart(widget)
+    table = _canonical_table(widget, result.data, contract, call)
+    explicit_period_label = _text(
+        (chart.period_label if chart else None)
+        or (table.period_label if table else None)
+        or call.get("period_label")
+        or contract.period_label
+    )
+    timezone = (
+        _text(
+            (chart.timezone if chart else None)
+            or (table.timezone if table else None)
+            or call.get("range_timezone")
+            or call.get("source_timezone")
+            or contract.period.timezone
+        )
+        or "UTC"
+    )
+    parse_status = "resolved"
+    if (display is None and table is None and chart is None) or not explicit_period_label:
+        parse_status = "failed_invalid_contract"
+    if result.status != "ok":
+        parse_status = (
+            result.error_code if result.error_code in PARSE_STATUSES else "failed_invalid_contract"
+        )
+    requested_start = _text(call.get("requested_start") or contract.range_start) or ""
+    requested_end = _text(call.get("requested_end") or contract.range_end) or ""
+    effective_start = (
+        _text(call.get("effective_start") or contract.period.start or contract.range_start) or ""
+    )
+    effective_end = (
+        _text(call.get("effective_end") or contract.period.end or contract.range_end) or ""
+    )
+    return QuantumWidgetContract(
+        country=contract.country,
+        dashboard_id=contract.dashboard_id or "",
+        dashboard_name=contract.dashboard_name or "",
+        tab_id=_text(call.get("tab_id")),
+        tab_name=contract.tab_name,
+        tab_index=contract.tab_index or 0,
+        section_id=_text(call.get("section_id")),
+        section_name=_text(call.get("section_name")),
+        section_index=_int_or_none(call.get("section_index")),
+        widget_id=contract.widget_id or contract.card_id,
+        card_id=contract.card_id,
+        visual_role=contract.visual_role,
+        widget_title=contract.card_title,
+        widget_type=contract.card_type,
+        widget_order=contract.widget_order or 0,
+        layout_x=_int_or_none(call.get("layout_x")),
+        layout_y=_int_or_none(call.get("layout_y")),
+        layout_width=_positive_int_or_none(call.get("layout_width")),
+        layout_height=_positive_int_or_none(call.get("layout_height")),
+        value=display,
+        comparison=comparison,
+        chart=chart,
+        table=table,
+        range_key=contract.range_key,
+        requested_start=requested_start,
+        requested_end=requested_end,
+        effective_start=effective_start,
+        effective_end=effective_end,
+        period_label=explicit_period_label or "",
+        timezone=timezone,
+        query_period=_text(call.get("query_period")),
+        request_hash=contract.request_hash,
+        response_hash=contract.response_hash,
+        query_hash=contract.source_query_hash,
+        parser_version="exact-widget-contract-v1",
+        parse_status=cast(Any, parse_status),
+    )
+
+
+def _canonical_display(widget: dict[str, Any]) -> DisplayNumberContract | None:
+    value = widget.get("display")
+    if isinstance(value, dict):
+        return DisplayNumberContract.model_validate(value)
+    numeric = _float_or_none(widget.get("value"))
+    if numeric is None:
+        return None
+    raw_unit = str(widget.get("unit") or "count")
+    unit: DisplayUnit = cast(
+        DisplayUnit,
+        raw_unit if raw_unit in {"count", "score", "percent", "seconds", "text"} else "count",
+    )
+    return DisplayNumberContract(
+        raw_value=numeric,
+        display_value=numeric,
+        unit=unit,
+        precision=_decimal_places(numeric),
+    )
+
+
+def _canonical_comparison(widget: dict[str, Any]) -> HistoricalComparisonContract | None:
+    value = widget.get("comparison")
+    if not isinstance(value, dict):
+        return None
+    if "display_delta" in value or "raw_delta" in value:
+        return HistoricalComparisonContract.model_validate(value)
+    delta = _float_or_none(value.get("delta_percent") or value.get("delta"))
+    label = _text(value.get("label"))
+    if delta is None or not label:
+        return None
+    raw_intent = str(value.get("semantic_intent") or "neutral")
+    intent: SemanticIntent = cast(
+        SemanticIntent,
+        raw_intent if raw_intent in {"positive", "negative", "neutral"} else "neutral",
+    )
+    return HistoricalComparisonContract(
+        label=label,
+        raw_delta=delta,
+        display_delta=delta,
+        precision=_decimal_places(delta),
+        formatted=_text(value.get("formatted")),
+        semantic_intent=intent,
+    )
+
+
+def _canonical_chart(widget: dict[str, Any]) -> QuantumChartContract | None:
+    payload = widget.get("chart_payload")
+    if not isinstance(payload, dict):
+        return None
+    raw_type = str(payload.get("chart_type") or "").lower()
+    if raw_type not in {"line", "bar", "area", "stacked_bar", "donut", "mixed"}:
+        return None
+    series: list[QuantumSeriesContract] = []
+    for index, item in enumerate(_list_of_dicts(payload.get("series"))):
+        raw_kind = str(item.get("kind") or "").lower()
+        if raw_kind not in {"line", "bar", "area", "baseline", "band", "anomaly"}:
+            continue
+        series.append(
+            QuantumSeriesContract.model_validate(
+                {
+                    "series_id": item.get("series_id") or item.get("id") or f"series-{index}",
+                    "label": item.get("label") or item.get("name") or "",
+                    "kind": raw_kind,
+                    "order": item.get("order", index),
+                    "points": item.get("points") or [],
+                    "visible": item.get("visible") is not False,
+                    "style": item.get("style"),
+                }
+            )
+        )
+    bands: list[QuantumBandContract] = []
+    for index, item in enumerate(_list_of_dicts(payload.get("bands"))):
+        raw_kind = str(item.get("kind") or item.get("purpose") or "custom").lower()
+        if raw_kind not in {"historical_range", "anomaly", "confidence", "custom"}:
+            raw_kind = "custom"
+        bands.append(
+            QuantumBandContract.model_validate(
+                {
+                    "band_id": item.get("band_id") or item.get("id") or f"band-{index}",
+                    "label": item.get("label") or raw_kind.replace("_", " "),
+                    "kind": raw_kind,
+                    "start": item.get("start") or item.get("start_ts"),
+                    "end": item.get("end") or item.get("end_ts"),
+                    "lower_points": item.get("lower_points") or [],
+                    "upper_points": item.get("upper_points") or [],
+                    "pattern": item.get("pattern"),
+                }
+            )
+        )
+    legends = [
+        ChartLegendContract.model_validate(
+            {
+                "id": item.get("id") or f"legend-{index}",
+                "label": item.get("label") or item.get("id") or "",
+                "order": item.get("order", index),
+                "kind": item.get("kind"),
+                "visible": item.get("visible") is not False,
+            }
+        )
+        for index, item in enumerate(_list_of_dicts(payload.get("legends")))
+    ]
+    return QuantumChartContract.model_validate(
+        {
+            "chart_type": raw_type,
+            "x_axis": payload.get("x_axis") or {"ticks": []},
+            "y_axis": payload.get("y_axis") or {"ticks": []},
+            "series": series,
+            "bands": bands,
+            "legends": legends,
+            "period_label": payload.get("period_label") or "",
+            "timezone": payload.get("timezone") or "UTC",
+            "granularity": payload.get("granularity") or "captured",
+        }
+    )
+
+
+def _canonical_table(
+    widget: dict[str, Any],
+    result_data: dict[str, Any],
+    contract: CardContract,
+    call: dict[str, Any],
+) -> QuantumTableContract | None:
+    explicit = widget.get("table_contract")
+    if isinstance(explicit, dict):
+        return QuantumTableContract.model_validate(explicit)
+    columns: list[QuantumTableColumnContract] = []
+    raw_columns = widget.get("table_columns") or result_data.get("columns")
+    for item in raw_columns if isinstance(raw_columns, list) else []:
+        if isinstance(item, dict):
+            columns.append(QuantumTableColumnContract.model_validate(item))
+        elif isinstance(item, str):
+            exact = EXACT_TABLE_COLUMN_CONTRACTS.get(contract.visual_role, {}).get(item)
+            if exact:
+                label, data_type = exact
+                columns.append(
+                    QuantumTableColumnContract(
+                        key=item,
+                        label=label,
+                        data_type=cast(Any, data_type),
+                        precision=2 if data_type == "percent" else None,
+                        sortable=True,
+                    )
+                )
+    rows = _list_of_dicts(widget.get("table_rows") or result_data.get("rows"))
+    if not columns:
+        return None
+    return QuantumTableContract(
+        columns=columns,
+        rows=rows,
+        period_label=_text(call.get("period_label") or contract.period_label) or "",
+        timezone=_text(call.get("range_timezone") or contract.period.timezone) or "UTC",
+    )
+
+
+def _positive_int_or_none(value: Any) -> int | None:
+    parsed = _int_or_none(value)
+    return parsed if parsed is not None and parsed > 0 else None
+
+
+def _decimal_places(value: float) -> int:
+    text = format(value, ".12f").rstrip("0").rstrip(".")
+    return len(text.rsplit(".", 1)[1]) if "." in text else 0
 
 
 def _snapshot_from_result(

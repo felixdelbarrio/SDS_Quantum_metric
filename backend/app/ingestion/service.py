@@ -124,8 +124,15 @@ class IngestionService:
         config = self.config_store.read()
         dashboard: QuantumDashboardConfig | None = None
         try:
-            explicit_range = _explicit_range_from_request(request)
-            day_chunks = [] if explicit_range else _chunks_for_requested_days(request.days)
+            country_config = config.required_country_config(request.country)
+            dashboard = country_config.default_dashboard()
+            timezone = dashboard.timezone if dashboard is not None else country_config.timezone
+            explicit_range = _explicit_range_from_request(request, timezone=timezone)
+            day_chunks = (
+                []
+                if explicit_range
+                else _chunks_for_requested_days(request.days, timezone=timezone)
+            )
             if explicit_range:
                 ingestion_range = explicit_range
             elif day_chunks:
@@ -136,10 +143,11 @@ class IngestionService:
                     latest_source_end=None,
                     lookback_days=len(day_chunks),
                     range_key=request.range_key or "custom",
+                    timezone=timezone,
                     capture_mode="daily",
                 )
             else:
-                preset_range = _preset_range(request.range_key)
+                preset_range = _preset_range(request.range_key, timezone=timezone)
                 if preset_range:
                     ingestion_range = preset_range
                 else:
@@ -155,10 +163,9 @@ class IngestionService:
                         latest_source_end=legacy_range.latest_source_end,
                         lookback_days=legacy_range.lookback_days,
                         range_key=request.range_key or "default",
+                        timezone=timezone,
                         capture_mode="daily",
                     )
-            country_config = config.required_country_config(request.country)
-            dashboard = country_config.default_dashboard()
             if not dashboard or not dashboard.dashboard_id:
                 raise IngestionFailure(
                     "failed_dashboard_not_found",
@@ -474,7 +481,7 @@ class IngestionService:
                 range_key=ingestion_range.range_key,
                 start=request.start_date,
                 end=request.end_date,
-                timezone="CST",
+                timezone=ingestion_range.timezone,
                 last_regression_status=report.status,
             )
             job.details["coverage"] = coverage.model_dump(mode="json")
@@ -563,19 +570,23 @@ def _is_chunk_covered(
     )
 
 
-def _chunks_for_requested_days(days: list[str]) -> list[IngestionChunk]:
+def _chunks_for_requested_days(
+    days: list[str], *, timezone: str = "America/Mexico_City"
+) -> list[IngestionChunk]:
     parsed_days = sorted(
         day for day in {_parse_requested_day(day) for day in days} if day is not None
     )
     chunks: list[IngestionChunk] = []
     for day in parsed_days:
-        start, end = _day_bounds(day)
+        start, end = _day_bounds(day, timezone=timezone)
         chunks.append(IngestionChunk(start=start, end=end, label=day.isoformat()))
     return chunks
 
 
-def _explicit_range_from_request(request: IngestionCreate) -> IngestionRange | None:
-    zone = zoneinfo_for("CST")
+def _explicit_range_from_request(
+    request: IngestionCreate, *, timezone: str = "America/Mexico_City"
+) -> IngestionRange | None:
+    zone = zoneinfo_for(timezone)
     today = datetime.now(zone).date()
     start_day = parse_date(request.start_date)
     end_day = parse_date(request.end_date)
@@ -587,10 +598,10 @@ def _explicit_range_from_request(request: IngestionCreate) -> IngestionRange | N
         return None
     if end_day < start_day:
         start_day, end_day = end_day, start_day
-    start, _ = _day_bounds(start_day)
-    _, end = _day_bounds(end_day)
+    start, _ = _day_bounds(start_day, timezone=timezone)
+    _, end = _day_bounds(end_day, timezone=timezone)
     if end_day >= today:
-        end = _bounded_dynamic_range_end(start=start, day_end=end)
+        end = _bounded_dynamic_range_end(start=start, day_end=end, timezone=timezone)
     if end < start:
         end = start
     return IngestionRange(
@@ -600,15 +611,21 @@ def _explicit_range_from_request(request: IngestionCreate) -> IngestionRange | N
         latest_source_end=None,
         lookback_days=(end_day - start_day).days + 1,
         range_key=request.range_key or "default",
+        timezone=timezone,
         capture_mode="range_contract",
     )
 
 
-def _preset_range(range_key: str | None, *, now: datetime | None = None) -> IngestionRange | None:
+def _preset_range(
+    range_key: str | None,
+    *,
+    now: datetime | None = None,
+    timezone: str = "America/Mexico_City",
+) -> IngestionRange | None:
     if not range_key:
         return None
     key = range_key.strip().lower()
-    zone = zoneinfo_for("CST")
+    zone = zoneinfo_for(timezone)
     today = (now.astimezone(zone) if now else datetime.now(zone)).date()
     if key == "today":
         start_day = end_day = today
@@ -622,10 +639,10 @@ def _preset_range(range_key: str | None, *, now: datetime | None = None) -> Inge
         dynamic_end = True
     else:
         return None
-    start, _ = _day_bounds(start_day)
-    _, end = _day_bounds(end_day)
+    start, _ = _day_bounds(start_day, timezone=timezone)
+    _, end = _day_bounds(end_day, timezone=timezone)
     if dynamic_end:
-        end = _bounded_dynamic_range_end(start=start, day_end=end, now=now)
+        end = _bounded_dynamic_range_end(start=start, day_end=end, now=now, timezone=timezone)
     if end < start:
         end = start
     return IngestionRange(
@@ -635,12 +652,15 @@ def _preset_range(range_key: str | None, *, now: datetime | None = None) -> Inge
         latest_source_end=None,
         lookback_days=(end_day - start_day).days + 1,
         range_key=key,
+        timezone=timezone,
         capture_mode="range_contract",
     )
 
 
-def _quantum_relative_range_end(now: datetime | None = None) -> datetime:
-    zone = zoneinfo_for("CST")
+def _quantum_relative_range_end(
+    now: datetime | None = None, *, timezone: str = "America/Mexico_City"
+) -> datetime:
+    zone = zoneinfo_for(timezone)
     local_now = now.astimezone(zone) if now else datetime.now(zone)
     current_hour_start = local_now.replace(minute=0, second=0, microsecond=0)
     return (current_hour_start - timedelta(hours=1, seconds=1)).astimezone(UTC)
@@ -651,12 +671,13 @@ def _bounded_dynamic_range_end(
     start: datetime,
     day_end: datetime,
     now: datetime | None = None,
+    timezone: str = "America/Mexico_City",
 ) -> datetime:
-    safe_end = min(day_end, _quantum_relative_range_end(now))
+    safe_end = min(day_end, _quantum_relative_range_end(now, timezone=timezone))
     if safe_end > start:
         return safe_end
 
-    zone = zoneinfo_for("CST")
+    zone = zoneinfo_for(timezone)
     local_now = now.astimezone(zone) if now else datetime.now(zone)
     completed_hour_end = local_now.replace(minute=0, second=0, microsecond=0) - timedelta(seconds=1)
     fallback_end = min(day_end, completed_hour_end.astimezone(UTC))
@@ -673,8 +694,8 @@ def _parse_requested_day(value: str) -> date | None:
     return parse_date(value)
 
 
-def _day_bounds(day: date) -> tuple[datetime, datetime]:
-    zone = zoneinfo_for("CST")
+def _day_bounds(day: date, *, timezone: str = "America/Mexico_City") -> tuple[datetime, datetime]:
+    zone = zoneinfo_for(timezone)
     start = datetime.combine(day, datetime.min.time(), tzinfo=zone).astimezone(UTC)
     end = datetime.combine(day, datetime.max.time().replace(microsecond=0), tzinfo=zone).astimezone(
         UTC
