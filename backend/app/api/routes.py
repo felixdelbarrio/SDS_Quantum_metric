@@ -20,7 +20,7 @@ from backend.app.ingestion.models import (
     MissingDaysIngestionCreate,
     RangeIngestionCreate,
 )
-from backend.app.ingestion.service import IngestionService
+from backend.app.ingestion.service import IngestionAlreadyRunning, IngestionService
 from backend.app.quantum.client import QuantumClient
 from backend.app.quantum.config_store import QuantumConfigStore
 from backend.app.quantum.schemas import (
@@ -50,6 +50,7 @@ from backend.app.quantum_dashboard.dashboard_resources import (
 )
 from backend.app.quantum_dashboard.dashboard_structure import (
     discover_dashboard_structure_via_browser,
+    section_configs_from_structure,
     structure_from_dashboard_config,
     tab_configs_from_structure,
     widget_configs_from_structure,
@@ -605,6 +606,7 @@ def add_manual_quantum_dashboard(
             existing.errors_tab if existing else 1,
             structure.tabs,
         ),
+        timezone=country_config.timezone,
         is_default=existing.is_default if existing else False,
         is_manual=True,
         validated=True,
@@ -613,6 +615,7 @@ def add_manual_quantum_dashboard(
         discovered_at=structure.discovered_at,
         last_structure_at=structure.discovered_at,
         tabs=tab_configs_from_structure(structure),
+        sections=section_configs_from_structure(structure),
         widgets=widget_configs_from_structure(structure, existing.widgets if existing else []),
     )
     updated_countries = [
@@ -734,7 +737,9 @@ def discover_quantum_dashboard_structure(
                 structure.tabs,
             ),
             "tabs": tab_configs_from_structure(structure),
+            "sections": section_configs_from_structure(structure),
             "widgets": widget_configs_from_structure(structure, dashboard.widgets),
+            "timezone": dashboard.timezone or country_config.timezone,
             "last_structure_at": structure.discovered_at,
             "source": structure.source,
         }
@@ -799,7 +804,13 @@ async def create_ingestion(
     request: IngestionCreate,
     service: Annotated[IngestionService, Depends(ingestion_service_dep)],
 ) -> dict[str, object]:
-    return service.start(request).model_dump(mode="json")
+    try:
+        return service.start(request).model_dump(mode="json")
+    except IngestionAlreadyRunning as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "already_running", "ingestion_id": exc.ingestion_id},
+        ) from exc
 
 
 @router.post("/ingestions/missing-days")
@@ -817,6 +828,11 @@ async def create_missing_days_ingestion(
                 end_date=request.end_date,
             )
         )
+    except IngestionAlreadyRunning as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "already_running", "ingestion_id": exc.ingestion_id},
+        ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return job.model_dump(mode="json")
@@ -827,14 +843,20 @@ async def create_range_ingestion(
     request: RangeIngestionCreate,
     service: Annotated[IngestionService, Depends(ingestion_service_dep)],
 ) -> dict[str, object]:
-    job = service.start(
-        IngestionCreate(
-            country=request.country,
-            range_key=request.range_key,
-            start_date=request.start_date,
-            end_date=request.end_date,
+    try:
+        job = service.start(
+            IngestionCreate(
+                country=request.country,
+                range_key=request.range_key,
+                start_date=request.start_date,
+                end_date=request.end_date,
+            )
         )
-    )
+    except IngestionAlreadyRunning as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "already_running", "ingestion_id": exc.ingestion_id},
+        ) from exc
     payload = job.model_dump(mode="json")
     payload["reason"] = request.reason
     return payload
@@ -1203,6 +1225,7 @@ def local_dashboard_status(
 @router.get("/local-dashboard/coverage")
 def local_dashboard_coverage(
     store: Annotated[ParquetStore, Depends(parquet_store_dep)],
+    config_store: Annotated[QuantumConfigStore, Depends(config_store_dep)],
     country: str = "MX",
     start: str | None = None,
     end: str | None = None,
@@ -1217,13 +1240,34 @@ def local_dashboard_coverage(
             start=start,
             end=end,
             timezone="CST",
-            last_regression_status=LocalDashboardService(store, config_store=None)
+            last_regression_status=LocalDashboardService(store, config_store)
             .status(country, range_key=range_key, dashboard_id=dashboard_id)
             .get("regression_status"),
         )
-        return range_resolution_payload(resolution)
+        payload = range_resolution_payload(resolution)
+        payload["dashboard_id"] = dashboard_id
+        return payload
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/local-dashboard/dashboard")
+def local_dashboard_dynamic(
+    store: Annotated[ParquetStore, Depends(parquet_store_dep)],
+    config_store: Annotated[QuantumConfigStore, Depends(config_store_dep)],
+    country: str = "MX",
+    start_date: str | None = None,
+    end_date: str | None = None,
+    range_key: str = "last_7_days",
+    dashboard_id: str | None = None,
+) -> dict[str, object]:
+    return LocalDashboardService(store, config_store).dashboard(
+        country,
+        start_date=start_date,
+        end_date=end_date,
+        range_key=range_key,
+        dashboard_id=dashboard_id,
+    )
 
 
 @router.get("/local-dashboard/summary")

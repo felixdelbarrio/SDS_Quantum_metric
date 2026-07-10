@@ -7,8 +7,6 @@ import { QuantumChartLegend } from "./QuantumChartLegend";
 import { QuantumChartTooltip } from "./QuantumChartTooltip";
 import { QuantumChartProps } from "./chartTypes";
 
-const MEXICO_TIMEZONE = "America/Mexico_City";
-
 const COMPACT_SIZE = {
   width: 320,
   height: 180,
@@ -31,7 +29,10 @@ export function QuantumChart({
   const [activePoint, setActivePoint] = useState<RenderedPoint | null>(null);
   const size = mode === "expanded" ? EXPANDED_SIZE : COMPACT_SIZE;
   const chartMode =
-    displayMode ?? (payload?.chart_type === "bar" ? "bar" : "line");
+    displayMode ??
+    (payload?.chart_type === "bar" || payload?.chart_type === "stacked_bar"
+      ? "bar"
+      : "line");
   const renderModel = useMemo(
     () =>
       payload && payload.chart_type !== "donut"
@@ -70,8 +71,31 @@ export function QuantumChart({
           aria-label={ariaLabel}
           onMouseLeave={() => setActivePoint(null)}
         >
+          <defs>
+            <pattern
+              id="quantum-anomaly-pattern"
+              width="8"
+              height="8"
+              patternUnits="userSpaceOnUse"
+              patternTransform="rotate(45)"
+            >
+              <rect
+                className="quantum-anomaly-pattern-bg"
+                width="8"
+                height="8"
+              />
+              <line
+                className="quantum-anomaly-pattern-stroke"
+                x1="0"
+                y1="0"
+                x2="0"
+                y2="8"
+              />
+            </pattern>
+          </defs>
           <QuantumChartBands
             bands={payload.bands}
+            ticks={payload.x_axis.ticks}
             width={size.width}
             height={size.height}
             padding={size.padding}
@@ -116,7 +140,7 @@ export function QuantumChart({
           {renderModel.paths.map((path, index) => (
             <path
               key={path.id}
-              className={`quantum-chart-series quantum-chart-series-${index % 5}`}
+              className={`quantum-chart-series quantum-chart-series-kind-${path.kind} quantum-chart-series-${index % 5}`}
               d={path.d}
             />
           ))}
@@ -178,9 +202,7 @@ export function QuantumChart({
           <ImageDown size={14} /> PNG
         </button>
       </div>
-      {payload.period_label && (
-        <figcaption>{formatPeriodCaption(payload.period_label)}</figcaption>
-      )}
+      {payload.period_label && <figcaption>{payload.period_label}</figcaption>}
       <QuantumChartTooltip label={ariaLabel} />
     </figure>
   );
@@ -207,7 +229,11 @@ function buildChartRenderModel(
   size: typeof COMPACT_SIZE,
   displayMode: "line" | "bar",
 ): {
-  paths: Array<{ id: string; d: string }>;
+  paths: Array<{
+    id: string;
+    d: string;
+    kind: ChartPayload["series"][number]["kind"];
+  }>;
   bars: RenderedPoint[];
   points: RenderedPoint[];
 } {
@@ -216,7 +242,11 @@ function buildChartRenderModel(
   const range = max - min || 1;
   const plotWidth = size.width - size.padding.left - size.padding.right;
   const plotHeight = size.height - size.padding.top - size.padding.bottom;
-  const paths: Array<{ id: string; d: string }> = [];
+  const paths: Array<{
+    id: string;
+    d: string;
+    kind: ChartPayload["series"][number]["kind"];
+  }> = [];
   const bars: RenderedPoint[] = [];
   const points: RenderedPoint[] = [];
   const visibleSeries = payload.series.filter(
@@ -252,13 +282,11 @@ function buildChartRenderModel(
         seriesIndex * (groupWidth / Math.max(1, visibleSeries.length)) +
         (groupWidth / Math.max(1, visibleSeries.length) - barWidth) / 2;
       const renderedPoint = {
-        seriesId: series.id,
+        seriesId: series.series_id ?? series.id ?? `series-${seriesIndex}`,
         seriesLabel: series.label,
         seriesIndex,
         index,
-        label: formatPointLabel(
-          point.label ?? point.ts ?? `Punto ${index + 1}`,
-        ),
+        label: String(point.label ?? point.ts ?? `Punto ${index + 1}`),
         ts: point.ts,
         value: point.value,
         x,
@@ -271,10 +299,17 @@ function buildChartRenderModel(
       seriesPoints.push(renderedPoint);
     });
     points.push(...seriesPoints);
-    if (displayMode === "bar") {
+    if (displayMode === "bar" || series.kind === "bar") {
       bars.push(...seriesPoints);
     } else {
-      paths.push({ id: series.id, d: smoothPath(seriesPoints) });
+      paths.push({
+        id: series.series_id ?? series.id ?? `series-${seriesIndex}`,
+        d:
+          series.kind === "area" || series.kind === "band"
+            ? areaPath(seriesPoints, size.padding.top + plotHeight)
+            : smoothPath(seriesPoints),
+        kind: series.kind,
+      });
     }
   });
   return { paths, bars, points };
@@ -310,6 +345,16 @@ function smoothPath(points: Array<Pick<RenderedPoint, "x" | "y">>) {
     );
   }
   return commands.join(" ");
+}
+
+function areaPath(
+  points: Array<Pick<RenderedPoint, "x" | "y">>,
+  baseline: number,
+) {
+  if (!points.length) return "";
+  const first = points[0];
+  const last = points[points.length - 1];
+  return `${smoothPath(points)} L ${formatCoord(last.x)} ${formatCoord(baseline)} L ${formatCoord(first.x)} ${formatCoord(baseline)} Z`;
 }
 
 function formatCoord(value: number) {
@@ -472,9 +517,7 @@ function QuantumDonutChart({
           </li>
         ))}
       </ul>
-      {payload.period_label && (
-        <figcaption>{formatPeriodCaption(payload.period_label)}</figcaption>
-      )}
+      {payload.period_label && <figcaption>{payload.period_label}</figcaption>}
     </figure>
   );
 }
@@ -504,56 +547,4 @@ function donutSegments(points: ChartSeriesPoint[]) {
     ...segment,
     dash: percentTotal ? (segment.percent / percentTotal) * 100 : 0,
   }));
-}
-
-function formatPointLabel(value: string | number) {
-  const date = dateFromEpochLike(value);
-  if (!date) return String(value);
-  return new Intl.DateTimeFormat("en-US", {
-    timeZone: MEXICO_TIMEZONE,
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(date);
-}
-
-function formatPeriodCaption(value: string) {
-  const match = value.match(
-    /(\d{10,13})\s*-\s*(\d{10,13})(?:\s+([A-Z]{2,4}))?/,
-  );
-  if (!match) return value;
-  const start = dateFromEpochLike(match[1]);
-  const end = dateFromEpochLike(match[2]);
-  if (!start || !end) return value;
-  const timezoneLabel = match[3] ?? "CST";
-  const dateFormatter = new Intl.DateTimeFormat("en-US", {
-    timeZone: MEXICO_TIMEZONE,
-    month: "short",
-    day: "2-digit",
-    year: "numeric",
-  });
-  const timeFormatter = new Intl.DateTimeFormat("en-US", {
-    timeZone: MEXICO_TIMEZONE,
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
-  const startDate = dateFormatter.format(start);
-  const endDate = dateFormatter.format(end);
-  const startTime = timeFormatter.format(start);
-  const endTime = timeFormatter.format(end);
-  if (startDate === endDate) {
-    return `${startDate}, ${startTime} - ${endTime} ${timezoneLabel}`;
-  }
-  return `${startDate} ${startTime} - ${endDate} ${endTime} ${timezoneLabel}`;
-}
-
-function dateFromEpochLike(value: string | number) {
-  const numeric = Number(String(value).trim());
-  if (!Number.isFinite(numeric) || Math.abs(numeric) < 1_000_000) {
-    return null;
-  }
-  const millis = Math.abs(numeric) > 10_000_000_000 ? numeric : numeric * 1000;
-  const date = new Date(millis);
-  return Number.isNaN(date.getTime()) ? null : date;
 }

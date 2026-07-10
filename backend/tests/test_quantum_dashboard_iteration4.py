@@ -15,6 +15,7 @@ from backend.app.quantum.schemas import (
     QuantumConfigUpdate,
     QuantumCountryConfig,
     QuantumDashboardConfig,
+    QuantumDashboardTabConfig,
     QuantumWidgetConfig,
 )
 from backend.app.quantum_dashboard.builder import DATASET_WEB_SNAPSHOTS, build_derived_datasets
@@ -63,8 +64,20 @@ def test_discovery_uses_env_defaults_as_fallback(tmp_path: Path) -> None:
     assert result.dashboard_id == "dash-default"
     assert result.team_id == "team-default"
     assert result.tabs == [
-        {"name": "Resumen", "tab": 0, "role": "summary"},
-        {"name": "Errores", "tab": 1, "role": "errors"},
+        {
+            "name": "Resumen",
+            "tab_name": "Resumen",
+            "tab": "summary",
+            "tab_index": 0,
+            "role": "summary",
+        },
+        {
+            "name": "Errores",
+            "tab_name": "Errores",
+            "tab": "errors",
+            "tab_index": 1,
+            "role": "errors",
+        },
     ]
 
 
@@ -123,7 +136,7 @@ def test_unknown_widget_type_is_not_supported_without_parser_evidence() -> None:
     assert assessment.parser_name is None
 
 
-def test_generic_metric_parser_builds_percent_chart_payload() -> None:
+def test_generic_metric_parser_rejects_implicit_average_and_chart_type() -> None:
     result = parse_card(
         {
             "card_type": "CHART",
@@ -140,17 +153,11 @@ def test_generic_metric_parser_builds_percent_chart_payload() -> None:
         "generic.1.chart.navigation_error_rate",
     )
 
-    widget = result.data["widget"]
-
-    assert result.status == "ok"
-    assert widget["unit"] == "percent"
-    assert widget["value"] == 3.0
-    assert widget["chart_payload"]["chart_type"] == "line"
-    assert widget["chart_payload"]["series"][0]["points"]
-    assert [point["value"] for point in widget["timeseries"]] == [2.0, 4.0]
+    assert result.status == "error"
+    assert result.error_code == "failed_missing_primary_value"
 
 
-def test_generic_table_parser_extracts_dynamic_dimensions_and_metrics() -> None:
+def test_generic_table_parser_requires_exact_header_contract() -> None:
     result = parse_card(
         {
             "card_type": "TABLE",
@@ -167,16 +174,11 @@ def test_generic_table_parser_extracts_dynamic_dimensions_and_metrics() -> None:
         "generic.1.table.top_navigation_errors",
     )
 
-    widget = result.data["widget"]
-
-    assert result.status == "ok"
-    assert widget["chart_type"] == "table"
-    assert widget["table_columns"] == ["name", "dimension_1", "metric_1"]
-    assert widget["table_rows"][0]["name"] == "Possible Frustration"
-    assert widget["table_rows"][0]["metric_1"] == 758
+    assert result.status == "error"
+    assert result.error_code == "failed_missing_table_contract"
 
 
-def test_generic_donut_parser_builds_segments_and_payload() -> None:
+def test_generic_donut_parser_rejects_implicit_total_and_series_contract() -> None:
     result = parse_card(
         {
             "card_type": "DONUT",
@@ -193,12 +195,8 @@ def test_generic_donut_parser_builds_segments_and_payload() -> None:
         "generic.1.donut.sessions_by_app",
     )
 
-    widget = result.data["widget"]
-
-    assert result.status == "ok"
-    assert widget["total"] == 15
-    assert widget["chart_payload"]["chart_type"] == "donut"
-    assert [item["name"] for item in widget["series"]] == ["App A", "App B"]
+    assert result.status == "error"
+    assert result.error_code == "failed_missing_primary_value"
 
 
 def test_builder_persists_contracts_snapshots_derived_and_no_cookies(tmp_path: Path) -> None:
@@ -208,11 +206,13 @@ def test_builder_persists_contracts_snapshots_derived_and_no_cookies(tmp_path: P
 
     assert result.regression_status == "passed"
     assert result.mandatory_cards_captured == 9
-    assert result.derived_datasets == 7
+    assert result.derived_datasets == 10
     contracts = store.read_country_dataset("MX", "visual_contracts")
     snapshots = store.read_country_dataset("MX", "web_snapshots")
     summary = store.read_country_dataset("MX", "derived/summary_widgets")
+    dashboard_widgets = store.read_country_dataset("MX", "derived/dashboard_widgets")
     chart_payloads = store.read_country_dataset("MX", "derived/chart_payloads")
+    widget_chart_payloads = store.read_country_dataset("MX", "derived/widget_chart_payloads")
     detail = store.read_country_dataset("MX", "derived/summary_detail_table")
     assert {row["visual_role"] for row in contracts} >= {
         "summary.page_views",
@@ -220,8 +220,10 @@ def test_builder_persists_contracts_snapshots_derived_and_no_cookies(tmp_path: P
     }
     assert snapshots[0]["card_role"]
     assert next(row for row in summary if row["id"] == "page_views")["value"] == 150
+    assert next(row for row in dashboard_widgets if row["id"] == "page_views")["value"] == 150
     assert next(row for row in summary if row["id"] == "page_views")["chart_payload"]["series"]
     assert chart_payloads
+    assert widget_chart_payloads
     assert detail[0]["app_name"] == "portabilidad nomina"
     assert all(not row.get("parent_row_id") for row in detail)
     assert all(not row.get("is_expandable") for row in detail)
@@ -668,8 +670,373 @@ def test_local_dashboard_status_cannot_pass_with_missing_enabled_generic_role(
     assert status["regression_status"] == "failed_missing_card"
     assert status["regression_verdict"] == "FAILED"
     assert status["mandatory_cards"] == 2
-    assert status["mandatory_cards_captured"] == 1
-    assert status["missing_roles"] == ["generic.0.table.custom"]
+    assert status["mandatory_cards_captured"] == 0
+    assert status["missing_roles"] == ["generic.0.table.custom", "summary.sessions"]
+
+
+def test_dynamic_dashboard_uses_real_tabs_and_generic_widget_roles(tmp_path: Path) -> None:
+    settings = Settings(qm_data_dir=tmp_path)
+    store = ParquetStore(settings)
+    config_store = QuantumConfigStore(settings)
+    config_store.write(
+        QuantumConfigUpdate(
+            country=Country.CO,
+            countries=[
+                QuantumCountryConfig(
+                    country=Country.CO,
+                    base_url="https://bbvaco.quantummetric.com",
+                    dashboards=[
+                        QuantumDashboardConfig(
+                            dashboard_id="sds-co",
+                            name="SDS",
+                            team_id="team-co",
+                            is_default=True,
+                            validated=True,
+                            validation_status="ok",
+                            tabs=[
+                                QuantumDashboardTabConfig(
+                                    name="Overview general",
+                                    tab_index=0,
+                                    normalized_role="overview-general",
+                                ),
+                                QuantumDashboardTabConfig(
+                                    name="Easy Dashboard Example",
+                                    tab_index=1,
+                                    normalized_role="easy-dashboard-example",
+                                ),
+                            ],
+                            widgets=[
+                                QuantumWidgetConfig(
+                                    role="generic.0.chart.zeta",
+                                    title="Zeta Widget",
+                                    widget_id="zeta-widget",
+                                    widget_type="CHART",
+                                    tab="overview-general",
+                                    tab_name="Overview general",
+                                    tab_index=0,
+                                    widget_order=0,
+                                    enabled=True,
+                                    supported=True,
+                                ),
+                                QuantumWidgetConfig(
+                                    role="generic.0.chart.alpha",
+                                    title="Alpha Widget",
+                                    widget_id="alpha-widget",
+                                    widget_type="CHART",
+                                    tab="overview-general",
+                                    tab_name="Overview general",
+                                    tab_index=0,
+                                    widget_order=1,
+                                    enabled=True,
+                                    supported=True,
+                                ),
+                                QuantumWidgetConfig(
+                                    role="generic.1.table.top_navigation_errors",
+                                    title="Top Navigation Errors",
+                                    widget_id="top-navigation-errors",
+                                    widget_type="TABLE",
+                                    tab="easy-dashboard-example",
+                                    tab_name="Easy Dashboard Example",
+                                    tab_index=1,
+                                    widget_order=0,
+                                    enabled=True,
+                                    supported=True,
+                                ),
+                            ],
+                        )
+                    ],
+                )
+            ],
+        )
+    )
+    store.write_country_dataset(
+        "CO",
+        "range_key=last_7_days/derived/dashboard_widgets",
+        [
+            {
+                "country": "CO",
+                "dashboard_id": "sds-co",
+                "dashboard_name": "SDS",
+                "range_key": "last_7_days",
+                "card_role": "generic.0.chart.alpha",
+                "id": "generic.0.chart.alpha",
+                "widget_id": "alpha-widget",
+                "widget_order": 1,
+                "title": "Alpha Widget",
+                "value": 8.7,
+                "unit": "count",
+                "chart_type": "line",
+                "tab": "overview-general",
+                "tab_name": "Overview general",
+                "tab_index": 0,
+                "breakdown": [],
+                "timeseries": [],
+                "chart_payload": None,
+                "table_columns": [],
+                "table_rows": [],
+            },
+            {
+                "country": "CO",
+                "dashboard_id": "sds-co",
+                "dashboard_name": "SDS",
+                "range_key": "last_7_days",
+                "card_role": "generic.0.chart.zeta",
+                "id": "generic.0.chart.zeta",
+                "widget_id": "zeta-widget",
+                "widget_order": 0,
+                "title": "Zeta Widget",
+                "value": 9.1,
+                "unit": "count",
+                "chart_type": "line",
+                "tab": "overview-general",
+                "tab_name": "Overview general",
+                "tab_index": 0,
+                "breakdown": [],
+                "timeseries": [],
+                "chart_payload": None,
+                "table_columns": [],
+                "table_rows": [],
+            },
+            {
+                "country": "CO",
+                "dashboard_id": "sds-co",
+                "dashboard_name": "SDS",
+                "range_key": "last_7_days",
+                "card_role": "generic.1.table.top_navigation_errors",
+                "id": "generic.1.table.top_navigation_errors",
+                "widget_id": "top-navigation-errors",
+                "widget_order": 0,
+                "title": "Top Navigation Errors",
+                "value": 3,
+                "unit": "count",
+                "chart_type": "table",
+                "tab": "easy-dashboard-example",
+                "tab_name": "Easy Dashboard Example",
+                "tab_index": 1,
+                "breakdown": [],
+                "timeseries": [],
+                "chart_payload": None,
+                "table_columns": ["error_name", "error_count"],
+                "table_rows": [{"error_name": "Possible Frustration", "error_count": 746}],
+            },
+        ],
+    )
+    store.write_country_dataset(
+        "CO",
+        "range_key=last_7_days/regression/web_vs_local_results",
+        [
+            {
+                "country": "CO",
+                "dashboard_id": "sds-co",
+                "range_key": "last_7_days",
+                "status": "passed",
+                "verdict": "PASSED",
+                "generated_at": "2026-07-07T12:00:00Z",
+            }
+        ],
+    )
+
+    service = LocalDashboardService(store, config_store)
+    status = service.status("CO", range_key="last_7_days")
+    dashboard = service.dashboard("CO", range_key="last_7_days")
+
+    assert status["regression_status"] == "failed_missing_card"
+    assert status["mandatory_cards"] == 3
+    assert status["mandatory_cards_captured"] == 0
+    assert len(status["missing_roles"]) == 3
+    assert [tab["tab_name"] for tab in dashboard["tabs"]] == [
+        "Overview general",
+        "Easy Dashboard Example",
+    ]
+    assert [tab["sections"] for tab in dashboard["tabs"]] == [[], []]
+
+
+def test_generic_empty_table_without_headers_fails_contract(tmp_path: Path) -> None:
+    settings = Settings(qm_data_dir=tmp_path)
+    store = ParquetStore(settings)
+    role = "generic.0.table.empty_table"
+    widget = QuantumWidgetConfig(
+        role=role,
+        title="Tabla vacia",
+        widget_id="empty-table",
+        card_id="table-card",
+        widget_type="TABLE",
+        tab="overview-general",
+        tab_name="Overview general",
+        tab_index=0,
+        widget_order=3,
+        enabled=True,
+        required=True,
+        supported=True,
+    )
+    raw_call = {
+        "ingestion_id": "ingestion-empty-table",
+        "country": "CO",
+        "source_endpoint": "/analytics",
+        "endpoint": "/analytics",
+        "http_method": "POST",
+        "method": "POST",
+        "status_code": 200,
+        "dashboard_id": "sds-co",
+        "dashboard_name": "SDS",
+        "widget_id": "empty-table",
+        "card_id": "table-card",
+        "card_title": "Tabla vacia",
+        "card_type": "TABLE",
+        "widget_type": "TABLE",
+        "view_name": "table",
+        "metric_ids": '["metric-empty"]',
+        "request_json": json.dumps(
+            {
+                "metadata": {
+                    "dashboardId": "sds-co",
+                    "widgetId": "empty-table",
+                    "cardId": "table-card",
+                    "cardTitle": "Tabla vacia",
+                    "cardType": "TABLE",
+                    "viewName": "table",
+                }
+            }
+        ),
+        "response_json": json.dumps({"rows": [], "stats": {"rows": 0}}),
+        "row_count": 0,
+        "range_key": "default",
+        "range_start": "2026-07-09T05:00:00Z",
+        "range_end": "2026-07-10T04:59:59Z",
+        "range_timezone": "CST",
+        "source_ts_start": "2026-07-09T05:00:00Z",
+        "source_ts_end": "2026-07-10T04:59:59Z",
+        "source_timezone": "CST",
+        "query_hash": "query-empty",
+        "response_hash": "response-empty",
+    }
+
+    build = build_derived_datasets(
+        store,
+        "CO",
+        raw_calls=[raw_call],
+        ingestion_id="ingestion-empty-table",
+        enabled_roles={role},
+        dashboard_id="sds-co",
+        dashboard_name="SDS",
+        range_key="default",
+        widget_configs=[widget],
+    )
+    report = run_regression(
+        store,
+        "CO",
+        ingestion_id="ingestion-empty-table",
+        enabled_roles={role},
+        dashboard_id="sds-co",
+        range_key="default",
+    )
+    dashboard_widgets = store.read_country_dataset(
+        "CO", "range_key=default/derived/dashboard_widgets"
+    )
+    table_payloads = store.read_country_dataset(
+        "CO", "range_key=default/derived/widget_table_payloads"
+    )
+
+    assert build.regression_status == "failed_parse_error"
+    assert build.parser_errors[0]["error_code"] == "failed_missing_table_contract"
+    assert build.missing_roles == []
+    assert report.verdict == "FAILED"
+    assert dashboard_widgets == []
+    assert table_payloads == []
+
+
+def test_generic_chart_value_prefers_core_metrics_over_timeseries(tmp_path: Path) -> None:
+    settings = Settings(qm_data_dir=tmp_path)
+    store = ParquetStore(settings)
+    role = "generic.1.chart.experience_health"
+    widget = QuantumWidgetConfig(
+        role=role,
+        title="Experience Health Score",
+        widget_id="experience-health",
+        card_id="experience-card",
+        widget_type="CHART",
+        tab="easy-dashboard-example",
+        tab_name="Easy Dashboard Example",
+        tab_index=1,
+        widget_order=0,
+        enabled=True,
+        required=True,
+        supported=True,
+    )
+
+    def raw_call(view_name: str, response: dict[str, Any], row_count: int) -> dict[str, Any]:
+        return {
+            "ingestion_id": "ingestion-chart",
+            "country": "CO",
+            "source_endpoint": "/analytics",
+            "endpoint": "/analytics",
+            "http_method": "POST",
+            "method": "POST",
+            "status_code": 200,
+            "dashboard_id": "sds-co",
+            "dashboard_name": "SDS",
+            "widget_id": "experience-health",
+            "card_id": "experience-card",
+            "card_title": "Experience Health Score",
+            "card_type": "CHART",
+            "widget_type": "CHART",
+            "view_name": view_name,
+            "metric_ids": '["metric-experience"]',
+            "request_json": json.dumps(
+                {
+                    "metadata": {
+                        "dashboardId": "sds-co",
+                        "widgetId": "experience-health",
+                        "cardId": "experience-card",
+                        "cardTitle": "Experience Health Score",
+                        "cardType": "CHART",
+                        "viewName": view_name,
+                    }
+                }
+            ),
+            "response_json": json.dumps(response),
+            "row_count": row_count,
+            "range_key": "default",
+            "range_start": "2026-07-09T05:00:00Z",
+            "range_end": "2026-07-10T04:59:59Z",
+            "range_timezone": "CST",
+            "source_ts_start": "2026-07-09T05:00:00Z",
+            "source_ts_end": "2026-07-10T04:59:59Z",
+            "source_timezone": "CST",
+            "query_hash": f"query-{view_name}",
+            "response_hash": f"response-{view_name}",
+        }
+
+    build = build_derived_datasets(
+        store,
+        "CO",
+        raw_calls=[
+            raw_call("coreMetrics", {"rows": [{"dimensions": [], "metrics": [7.35]}]}, 1),
+            raw_call(
+                "timeSeriesQuery",
+                {
+                    "rows": [
+                        {"dimensions": [1783644600], "metrics": [5]},
+                        {"dimensions": [1783646580], "metrics": [2.5]},
+                    ]
+                },
+                2,
+            ),
+        ],
+        ingestion_id="ingestion-chart",
+        enabled_roles={role},
+        dashboard_id="sds-co",
+        dashboard_name="SDS",
+        range_key="default",
+        widget_configs=[widget],
+    )
+    dashboard_widgets = store.read_country_dataset(
+        "CO", "range_key=default/derived/dashboard_widgets"
+    )
+
+    assert build.regression_status == "passed"
+    assert dashboard_widgets[0]["value"] == 7.35
+    assert dashboard_widgets[0]["chart_payload"] is None
 
 
 def test_summary_detail_parser_keeps_flat_rows_when_web_has_no_hierarchy() -> None:
@@ -899,7 +1266,7 @@ def test_parsers_support_real_quantum_rows_and_results_shapes() -> None:
         "errors.error_sessions_percentage_evolution",
     )
     assert percent.status == "ok"
-    assert percent.data["widget"]["value"] == 97.0
+    assert percent.data["widget"]["value"] == 0.969
 
     summary_table = parse_card(
         _parser_call(
@@ -930,7 +1297,7 @@ def test_parsers_support_real_quantum_rows_and_results_shapes() -> None:
     )
     assert top_errors.status == "ok"
     assert top_errors.data["rows"][0]["error_sessions"] == 10607
-    assert top_errors.data["rows"][0]["error_session_percent"] == 100
+    assert top_errors.data["rows"][0]["error_session_percent"] == 1
 
     error_percentage = parse_card(
         _parser_call(
@@ -996,8 +1363,8 @@ def test_parsers_support_real_quantum_rows_and_results_shapes() -> None:
         ),
         "summary.avg_session_duration",
     )
-    assert historical.status == "ok"
-    assert historical.data["widget"]["value"] == 76.5
+    assert historical.status == "error"
+    assert historical.error_code == "failed_missing_primary_value"
 
     timeseries = parse_card(
         _parser_call(
@@ -1010,11 +1377,8 @@ def test_parsers_support_real_quantum_rows_and_results_shapes() -> None:
         ),
         "summary.sessions",
     )
-    assert timeseries.status == "ok"
-    assert timeseries.data["widget"]["timeseries"] == [
-        {"ts": "1781589600", "value": 10.0},
-        {"ts": "1781593200", "value": 12.0},
-    ]
+    assert timeseries.status == "error"
+    assert timeseries.error_code == "failed_missing_primary_value"
 
 
 def test_line_chart_payload_combines_devices_as_daily_visual_series() -> None:

@@ -1,29 +1,30 @@
-type Tab = "summary" | "errors";
-
-type Props = {
-  active: Tab;
-  onChange: (tab: Tab) => void;
+type DashboardTabItem = {
+  tab: string;
+  tab_name: string;
+  tab_index: number;
 };
 
-export function DashboardTabs({ active, onChange }: Props) {
+type Props = {
+  tabs: DashboardTabItem[];
+  active: string;
+  onChange: (tab: string) => void;
+};
+
+export function DashboardTabs({ tabs, active, onChange }: Props) {
+  if (!tabs.length) return null;
   return (
     <div className="dashboard-tabs" role="tablist" aria-label="Dashboard tabs">
-      <button
-        className={active === "summary" ? "active" : ""}
-        role="tab"
-        aria-selected={active === "summary"}
-        onClick={() => onChange("summary")}
-      >
-        Resumen
-      </button>
-      <button
-        className={active === "errors" ? "active" : ""}
-        role="tab"
-        aria-selected={active === "errors"}
-        onClick={() => onChange("errors")}
-      >
-        Errores
-      </button>
+      {tabs.map((tab) => (
+        <button
+          key={`${tab.tab_index}:${tab.tab}`}
+          className={active === tab.tab ? "active" : ""}
+          role="tab"
+          aria-selected={active === tab.tab}
+          onClick={() => onChange(tab.tab)}
+        >
+          {tab.tab_name}
+        </button>
+      ))}
     </div>
   );
 }

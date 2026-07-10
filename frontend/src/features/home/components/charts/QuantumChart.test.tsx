@@ -70,15 +70,12 @@ describe("QuantumChart", () => {
     expect(screen.getByText("4 - 80%")).toBeInTheDocument();
   });
 
-  it("normaliza etiquetas antiguas con epoch antes de mostrarlas", () => {
+  it("conserva literalmente el label de periodo del contrato", () => {
     render(<QuantumChart payload={rawEpochPayload()} title="Paginas vistas" />);
 
+    expect(screen.getByText("1781676000 - 1781686680 CST")).toBeInTheDocument();
     expect(
-      screen.getByText("Jun 17, 2026, 00:00 - 02:58 CST"),
-    ).toBeInTheDocument();
-    expect(screen.queryByText(/1781676000/)).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Mobile 02:50: 180" }),
+      screen.getByRole("button", { name: "Mobile 1781686200: 180" }),
     ).toBeInTheDocument();
   });
 });

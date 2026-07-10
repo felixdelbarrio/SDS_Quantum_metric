@@ -5,10 +5,6 @@ from typing import Any
 
 from backend.app.quantum.schemas import QuantumDashboardConfig, QuantumWidgetConfig
 from backend.app.quantum_dashboard.card_mapper import map_card_role
-from backend.app.quantum_dashboard.generic_roles import (
-    dashboard_tab_for_widget,
-    normalized_widget_type,
-)
 
 
 @dataclass(frozen=True)
@@ -19,8 +15,18 @@ class WidgetRoleDescriptor:
     card_id: str | None
     widget_type: str
     tab: str
+    tab_id: str | None
     tab_name: str
     tab_index: int
+    section_id: str | None
+    section_name: str | None
+    section_index: int | None
+    widget_order: int | None
+    layout_x: int | None
+    layout_y: int | None
+    layout_width: int | None
+    layout_height: int | None
+    visual_contract: dict[str, Any]
     enabled: bool
     supported: bool
     required: bool
@@ -64,6 +70,8 @@ def resolve_call_role(
     descriptor = _descriptor_for_call(call, descriptors or [], enabled_roles)
     if descriptor is not None:
         return descriptor.role, descriptor
+    if _has_ambiguous_strong_match(call, descriptors or [], enabled_roles):
+        return None, None
     mapped = map_card_role(call)
     if mapped is None:
         return None, None
@@ -91,8 +99,18 @@ def enrich_call_with_descriptor(
         enriched["card_type"] = enriched.get("card_type") or descriptor.widget_type
         enriched["widget_type"] = enriched.get("widget_type") or descriptor.widget_type
         enriched["tab"] = descriptor.tab
+        enriched["tab_id"] = descriptor.tab_id
         enriched["tab_name"] = descriptor.tab_name
         enriched["tab_index"] = descriptor.tab_index
+        enriched["section_id"] = descriptor.section_id
+        enriched["section_name"] = descriptor.section_name
+        enriched["section_index"] = descriptor.section_index
+        enriched["widget_order"] = descriptor.widget_order
+        enriched["layout_x"] = descriptor.layout_x
+        enriched["layout_y"] = descriptor.layout_y
+        enriched["layout_width"] = descriptor.layout_width
+        enriched["layout_height"] = descriptor.layout_height
+        enriched["visual_contract"] = descriptor.visual_contract
     return enriched
 
 
@@ -102,10 +120,14 @@ def enrich_ambiguous_calls_with_descriptor_sequence(
     descriptors: list[WidgetRoleDescriptor] | None = None,
     enabled_roles: set[str] | None = None,
 ) -> list[dict[str, Any]]:
+    """Enrich only calls with a unique strong identifier match.
+
+    Iteration 18 deliberately removed the former TABLE round-robin fallback. A
+    repeated card id is ambiguous and must be handled as a correlation error.
+    """
     resolved_descriptors = descriptors or []
     if not resolved_descriptors:
         return calls
-    counters: dict[tuple[str, str], int] = {}
     enriched_calls: list[dict[str, Any]] = []
     for call in calls:
         role, descriptor = resolve_call_role(
@@ -116,16 +138,7 @@ def enrich_ambiguous_calls_with_descriptor_sequence(
         if descriptor is not None:
             enriched_calls.append(enrich_call_with_descriptor(call, descriptor, role))
             continue
-        descriptor = _sequence_descriptor_for_call(
-            call,
-            resolved_descriptors,
-            counters,
-            enabled_roles,
-        )
-        if descriptor is not None:
-            enriched_calls.append(enrich_call_with_descriptor(call, descriptor, descriptor.role))
-        else:
-            enriched_calls.append(call)
+        enriched_calls.append(call)
     return enriched_calls
 
 
@@ -143,8 +156,18 @@ def _descriptor(widget: QuantumWidgetConfig) -> WidgetRoleDescriptor:
         card_id=widget.card_id or None,
         widget_type=widget.widget_type,
         tab=tab,
+        tab_id=widget.tab_id,
         tab_name=widget.tab_name or widget.tab or tab,
         tab_index=widget.tab_index,
+        section_id=widget.section_id,
+        section_name=widget.section_name,
+        section_index=widget.section_index,
+        widget_order=widget.widget_order,
+        layout_x=widget.layout_x,
+        layout_y=widget.layout_y,
+        layout_width=widget.layout_width,
+        layout_height=widget.layout_height,
+        visual_contract=widget.visual_contract,
         enabled=widget.enabled,
         supported=widget.supported,
         required=widget.required,
@@ -152,11 +175,13 @@ def _descriptor(widget: QuantumWidgetConfig) -> WidgetRoleDescriptor:
 
 
 def _descriptor_tab(widget: QuantumWidgetConfig) -> str:
-    if widget.tab_index == 0:
-        return "summary"
-    if widget.tab_index == 1:
-        return "errors"
-    return dashboard_tab_for_widget(widget.tab, widget.tab_name, widget.title)
+    tab = _text(widget.tab)
+    if tab:
+        return tab
+    tab_name = _text(widget.tab_name)
+    if tab_name:
+        return tab_name
+    return f"tab-{widget.tab_index}"
 
 
 def _descriptor_for_call(
@@ -184,34 +209,27 @@ def _descriptor_for_call(
     return None
 
 
-def _sequence_descriptor_for_call(
+def _has_ambiguous_strong_match(
     call: dict[str, Any],
     descriptors: list[WidgetRoleDescriptor],
-    counters: dict[tuple[str, str], int],
     enabled_roles: set[str] | None,
-) -> WidgetRoleDescriptor | None:
+) -> bool:
+    widget_id = _text(call.get("widget_id"))
     card_id = _text(call.get("card_id"))
-    if not card_id:
-        return None
-    call_type = normalized_widget_type(call.get("widget_type") or call.get("card_type"))
-    candidates = [
-        descriptor
-        for descriptor in descriptors
-        if descriptor.card_id == card_id
-        and normalized_widget_type(descriptor.widget_type) == call_type
-        and descriptor.enabled
-        and descriptor.supported
-        and (enabled_roles is None or descriptor.role in enabled_roles)
-    ]
-    if len(candidates) <= 1:
-        return None
-    view_name = str(call.get("view_name") or "")
-    if call_type != "TABLE" or not view_name:
-        return None
-    key = (card_id, view_name)
-    index = counters.get(key, 0)
-    counters[key] = index + 1
-    return candidates[index % len(candidates)]
+    for value, attribute in ((widget_id, "widget_id"), (card_id, "card_id")):
+        if not value:
+            continue
+        candidates = [
+            descriptor
+            for descriptor in descriptors
+            if getattr(descriptor, attribute) == value
+            and descriptor.enabled
+            and descriptor.supported
+            and (enabled_roles is None or descriptor.role in enabled_roles)
+        ]
+        if len(candidates) > 1:
+            return True
+    return False
 
 
 def _text(value: Any) -> str | None:

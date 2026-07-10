@@ -42,9 +42,12 @@ o manuales no se escriben en disco.
 
 ## Dashboard local
 
-Home muestra `Dashboard General {pais}` y consume solo endpoints locales:
+Home muestra `Dashboard General {pais}` y consume solo endpoints locales. Desde Iteración 18,
+el endpoint principal reproduce contratos schema 3 desde `derived/widget_contracts` con jerarquía
+Dashboard → Tab → Section → Widget:
 
 - `GET /api/local-dashboard/countries`
+- `GET /api/local-dashboard/dashboard`
 - `GET /api/local-dashboard/status`
 - `GET /api/local-dashboard/summary`
 - `GET /api/local-dashboard/summary/table`
@@ -55,9 +58,10 @@ Home muestra `Dashboard General {pais}` y consume solo endpoints locales:
 - `GET /api/local-dashboard/cards/{card_role}/breakdown`
 - `GET /api/local-dashboard/cards/{card_role}/points`
 
-La ingesta captura tabs `Resumen` y `Errores`, persiste raw API calls, construye contratos visuales,
-snapshots web, datasets derivados y ejecuta regresion Web vs Local. Home solo pinta datos derivados
-con regresion `passed` o `passed_with_tolerance`.
+La ingesta captura tabs/secciones reales, persiste raw API calls, construye el contrato canónico,
+snapshots web, vistas derivadas y ejecuta regresión Web vs Local. Home pinta
+`/api/local-dashboard/dashboard` exclusivamente desde el contrato canónico; no cae a Summary,
+Errors o `dashboard_widgets`. Un dataset anterior exige nueva ingesta.
 
 La ingesta publica particiones diarias `parquet/country=<pais>/day=YYYY-MM-DD/raw_api_calls`
 y `parquet/country=<pais>/manifests/day_coverage.parquet`. Home consulta
@@ -71,10 +75,13 @@ Los widgets no agregables desde dias sueltos requieren contrato Quantum capturad
 completa. Si no existe contrato del rango, Home muestra estado accionable y no reutiliza datos de
 otro preset.
 
-Las graficas se renderizan desde `chart_payload`: ejes, leyenda, series Mobile/Desktop, bandas y periodo salen del backend y se persisten en `derived/chart_payloads`. React no fabrica curvas desde agregados.
+Las gráficas se renderizan desde `QuantumChartContract`: tipo, ejes, labels, orden de series,
+baseline, bandas, anomaly, leyenda y periodo salen de Quantum. React no renombra series ni
+regenera el periodo. Los valores usan `formatted`/`precision`; las tablas usan labels persistidos.
 
-Si hay raw calls pero faltan cards obligatorias, derivados o regresion, la API devuelve un motivo
-accionable. La UI no rellena datos falsos ni oculta discrepancias.
+Si hay raw calls pero faltan cards obligatorias, derivados, cobertura o regresion, la API devuelve
+un motivo accionable. La UI no rellena datos falsos, no oculta discrepancias y envia el detalle
+tecnico a Datasets/Evidence.
 
 ## Datasets
 
@@ -142,6 +149,17 @@ recarga Home: el dashboard debe seguir funcionando sobre Parquet local.
 - Recuperacion Mexico last 7 days en `docs/to-be/mexico-regression-recovery.md`.
 - Estados de ingesta Iteracion 16 en `docs/to-be/ingestion-failure-states.md`.
 - Regresion CO/MX Iteracion 16 en `docs/regression/iteration-16-*-last-7-days.md`.
+- RCA Iteracion 17 en `docs/as-is/iteration-17-dashboard-driven-rca.md`.
+- Arquitectura dashboard-driven en `docs/to-be/iteration-17-dashboard-driven-architecture.md`.
+- Tabs dinamicas en `docs/to-be/dynamic-tabs-contract.md`.
+- Render generico de dashboards en `docs/to-be/generic-dashboard-rendering.md`.
+- Cobertura de rangos en `docs/to-be/coverage-contract.md`.
+- Bloqueo de scopes de ingesta en `docs/to-be/ingestion-scope-locking.md`.
+- Datasets genericos dashboard-driven en `docs/to-be/generic-derived-datasets.md`.
+- Regresion CO/MX Iteracion 17 en `docs/regression/iteration-17-*-last-7-days.md`.
+- Contrato canónico Iteración 18 en `docs/to-be/iteration-18-canonical-widget-contract.md`.
+- Auditoría live Iteración 18 en `docs/as-is/iteration-18-quantum-widget-contract-audit.md`.
+- Regresiones CO/MX Iteración 18 en `docs/regression/iteration-18-*-last-7-days.*` (BLOCKED hasta autenticación real).
 - Backend local versionado bajo `/api`.
 - Persistencia Parquet en la ruta de usuario activa bajo `parquet/country=<pais>`.
 - Export/import ZIP en la ruta de usuario activa bajo `exports`.

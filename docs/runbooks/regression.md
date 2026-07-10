@@ -1,5 +1,12 @@
 # Runbook - Regression
 
+## Iteración 18: criterio de aceptación
+
+Comparar por widget valor/formato, comparación, tabla, chart type, series, ejes, bandas, leyenda,
+sección/layout, periodo y timezone. Cualquier diferencia produce FAILED. Falta de autenticación,
+contrato o evidencia produce BLOCKED, nunca PASSED. Guardar MD y JSON separados por país,
+dashboard y `range_key`.
+
 La regresion Web vs Local compara por:
 
 - pais;
@@ -25,3 +32,9 @@ Para Iteracion 16:
 - Colombia SDS escribe `docs/regression/iteration-16-co-sds-last-7-days.*` y debe quedar `PASSED` 11/11.
 - Mexico default escribe `docs/regression/iteration-16-mx-default-last-7-days.*` y debe quedar `PASSED` 9/9.
 - La regresion de widgets genericos compara valores, filas visibles, dimensiones y metricas normalizadas.
+
+Para Iteracion 17:
+
+- Colombia SDS escribe `docs/regression/iteration-17-co-sds-last-7-days.*` y debe quedar `PASSED` 11/11 con tabs `Overview general` y `Easy Dashboard Example`.
+- Mexico default escribe `docs/regression/iteration-17-mx-default-last-7-days.*` y debe quedar `PASSED` 9/9 sin tabs duplicadas.
+- Home debe consumir `/api/local-dashboard/dashboard`; los endpoints summary/errors son compatibilidad, no el contrato principal.

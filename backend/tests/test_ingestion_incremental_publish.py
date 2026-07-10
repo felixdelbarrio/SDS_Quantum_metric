@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+import asyncio
+from contextlib import suppress
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 
@@ -11,7 +13,11 @@ from backend.app.config.settings import Settings
 from backend.app.ingestion.models import IngestionCreate, IngestionJob
 from backend.app.ingestion.planner import IngestionChunk
 from backend.app.ingestion.policy import IngestionRange
-from backend.app.ingestion.service import IngestionService, _filter_enabled_rows
+from backend.app.ingestion.service import (
+    IngestionAlreadyRunning,
+    IngestionService,
+    _filter_enabled_rows,
+)
 from backend.app.quantum.config_store import QuantumConfigStore
 from backend.app.quantum.schemas import (
     Country,
@@ -21,7 +27,46 @@ from backend.app.quantum.schemas import (
     QuantumWidgetConfig,
 )
 from backend.app.quantum_dashboard.models import DashboardDiscoveryResult
+from backend.app.quantum_dashboard.range_query import RangeResolution
 from backend.app.storage.parquet_store import ParquetStore, RawCallMergeResult
+
+
+@pytest.mark.asyncio
+async def test_ingestion_start_blocks_duplicate_active_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = Settings(qm_data_dir=tmp_path)
+    service = IngestionService(
+        settings,
+        _ConfigStore(settings),
+        ParquetStore(settings),
+        cast(BrowserCookieProvider, _CookieProvider(cookies=["chrome-session"])),
+    )
+    started = asyncio.Event()
+
+    async def hold_job(_job: IngestionJob, _request: IngestionCreate) -> None:
+        started.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(service, "_run", hold_job)
+    request = IngestionCreate(
+        country=Country.MX,
+        range_key="last_7_days",
+        start_date="2026-06-11",
+        end_date="2026-06-17",
+    )
+
+    job = service.start(request)
+    await started.wait()
+
+    with pytest.raises(IngestionAlreadyRunning) as exc:
+        service.start(request)
+
+    assert exc.value.ingestion_id == job.ingestion_id
+    service.cancel(job.ingestion_id)
+    task = service._tasks[job.ingestion_id]
+    with suppress(asyncio.CancelledError):
+        await task
 
 
 @pytest.mark.asyncio
@@ -111,6 +156,24 @@ async def test_ingestion_publishes_dashboard_after_each_completed_chunk(
         "backend.app.ingestion.service.capture_quantum_dashboard_cards", fake_capture
     )
     monkeypatch.setattr("backend.app.ingestion.service._publish_completed_chunk", fake_publish)
+    monkeypatch.setattr(
+        "backend.app.ingestion.service.resolve_range",
+        lambda *args, **kwargs: RangeResolution(
+            country="MX",
+            range_key=str(kwargs.get("range_key") or "today"),
+            start=chunks[-1].start,
+            end=chunks[0].end,
+            timezone="CST",
+            required_days=[date(2026, 6, 16), date(2026, 6, 17)],
+            covered_days=[date(2026, 6, 16), date(2026, 6, 17)],
+            missing_days=[],
+            completeness="complete",
+            data_quality="complete",
+            warning_level="none",
+            last_regression_status="passed",
+            message="Periodo completo en Parquet.",
+        ),
+    )
 
     job = IngestionJob(
         ingestion_id="ingestion-id",
@@ -208,7 +271,7 @@ def test_filter_enabled_rows_materializes_resolved_card_role() -> None:
     ]
 
 
-def test_filter_enabled_rows_assigns_ambiguous_table_calls_by_widget_order() -> None:
+def test_filter_enabled_rows_does_not_assign_ambiguous_tables_by_order() -> None:
     widgets = [
         QuantumWidgetConfig(
             role="generic.0.table.first",
@@ -254,11 +317,8 @@ def test_filter_enabled_rows_assigns_ambiguous_table_calls_by_widget_order() -> 
         widgets,
     )
 
-    assert [row["card_role"] for row in filtered] == [
-        "generic.0.table.first",
-        "generic.0.table.second",
-    ]
-    assert [row["widget_id"] for row in filtered] == ["first-widget", "second-widget"]
+    assert len(filtered) == 2
+    assert all("card_role" not in row for row in filtered)
 
 
 class _ConfigStore(QuantumConfigStore):

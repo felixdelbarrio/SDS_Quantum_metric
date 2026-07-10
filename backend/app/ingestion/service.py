@@ -21,6 +21,7 @@ from backend.app.quantum_dashboard.capture import capture_quantum_dashboard_card
 from backend.app.quantum_dashboard.discovery import discover_dashboard_from_config
 from backend.app.quantum_dashboard.models import DerivedBuildResult, RegressionReport
 from backend.app.quantum_dashboard.periods import parse_date, zoneinfo_for
+from backend.app.quantum_dashboard.range_query import resolve_range
 from backend.app.quantum_dashboard.regression import REGRESSION_REPORT_PATH, run_regression
 from backend.app.quantum_dashboard.widget_roles import (
     descriptors_from_widgets,
@@ -38,6 +39,7 @@ INGESTION_TERMINAL_STATUSES = {
     "failed_dashboard_not_found",
     "failed_no_widgets",
     "failed_no_analytics_responses",
+    "failed_coverage_incomplete",
     "failed_regression",
     "cancelled",
     "cancelled_by_user",
@@ -48,6 +50,13 @@ class IngestionFailure(RuntimeError):
     def __init__(self, status: str, message: str) -> None:
         super().__init__(message)
         self.status = status
+
+
+class IngestionAlreadyRunning(RuntimeError):
+    def __init__(self, scope: str, ingestion_id: str) -> None:
+        super().__init__(f"Ingestion already running for scope {scope}.")
+        self.scope = scope
+        self.ingestion_id = ingestion_id
 
 
 class IngestionService:
@@ -64,16 +73,26 @@ class IngestionService:
         self.cookie_provider = cookie_provider
         self.jobs: dict[str, IngestionJob] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
+        self._active_scopes: dict[str, str] = {}
 
     def start(self, request: IngestionCreate) -> IngestionJob:
+        scope = self._scope_for_request(request)
+        active_ingestion_id = self._active_scopes.get(scope)
+        if active_ingestion_id:
+            active_job = self.jobs.get(active_ingestion_id)
+            if active_job and active_job.status not in INGESTION_TERMINAL_STATUSES:
+                raise IngestionAlreadyRunning(scope, active_ingestion_id)
+            self._active_scopes.pop(scope, None)
         ingestion_id = str(uuid.uuid4())
         job = IngestionJob(
             ingestion_id=ingestion_id,
             country=request.country.value,
             status="pending",
             started_at=datetime.now(UTC),
+            details={"scope": scope},
         )
         self.jobs[ingestion_id] = job
+        self._active_scopes[scope] = ingestion_id
         self._tasks[ingestion_id] = asyncio.create_task(self._run(job, request))
         return job
 
@@ -105,8 +124,15 @@ class IngestionService:
         config = self.config_store.read()
         dashboard: QuantumDashboardConfig | None = None
         try:
-            explicit_range = _explicit_range_from_request(request)
-            day_chunks = [] if explicit_range else _chunks_for_requested_days(request.days)
+            country_config = config.required_country_config(request.country)
+            dashboard = country_config.default_dashboard()
+            timezone = dashboard.timezone if dashboard is not None else country_config.timezone
+            explicit_range = _explicit_range_from_request(request, timezone=timezone)
+            day_chunks = (
+                []
+                if explicit_range
+                else _chunks_for_requested_days(request.days, timezone=timezone)
+            )
             if explicit_range:
                 ingestion_range = explicit_range
             elif day_chunks:
@@ -117,10 +143,11 @@ class IngestionService:
                     latest_source_end=None,
                     lookback_days=len(day_chunks),
                     range_key=request.range_key or "custom",
+                    timezone=timezone,
                     capture_mode="daily",
                 )
             else:
-                preset_range = _preset_range(request.range_key)
+                preset_range = _preset_range(request.range_key, timezone=timezone)
                 if preset_range:
                     ingestion_range = preset_range
                 else:
@@ -136,10 +163,9 @@ class IngestionService:
                         latest_source_end=legacy_range.latest_source_end,
                         lookback_days=legacy_range.lookback_days,
                         range_key=request.range_key or "default",
+                        timezone=timezone,
                         capture_mode="daily",
                     )
-            country_config = config.required_country_config(request.country)
-            dashboard = country_config.default_dashboard()
             if not dashboard or not dashboard.dashboard_id:
                 raise IngestionFailure(
                     "failed_dashboard_not_found",
@@ -263,17 +289,12 @@ class IngestionService:
                     chunk_count: int = chunk_count,
                     chunk_label: str = chunk_label,
                 ) -> None:
-                    tab_label = "Resumen" if tab_name == "summary" else "Errores"
                     update_progress(
                         job,
-                        status=(
-                            "capturing_summary_tab"
-                            if tab_name == "summary"
-                            else "capturing_errors_tab"
-                        ),
-                        current_tab=tab_label,
+                        status="capturing_web",
+                        current_tab=tab_name,
                         message=(
-                            f"Capturando {tab_label} para chunk "
+                            f"Capturando {tab_name} para chunk "
                             f"{chunk_index}/{chunk_count} {chunk_label}."
                         ),
                     )
@@ -299,6 +320,7 @@ class IngestionService:
                         team_id=discovery.team_id,
                         summary_tab=discovery.summary_tab,
                         errors_tab=discovery.errors_tab,
+                        tabs=discovery.tabs,
                         ingestion_id=job.ingestion_id,
                         ingestion_range=chunk_range,
                         session_mode=capture_session_mode,
@@ -453,8 +475,20 @@ class IngestionService:
                 "dashboard": discovery.model_dump(mode="json"),
                 "enabled_roles": sorted(enabled_roles),
             }
+            coverage = resolve_range(
+                self.parquet_store,
+                request.country.value,
+                range_key=ingestion_range.range_key,
+                start=request.start_date,
+                end=request.end_date,
+                timezone=ingestion_range.timezone,
+                last_regression_status=report.status,
+            )
+            job.details["coverage"] = coverage.model_dump(mode="json")
             if report.verdict == "FAILED":
                 job.status = "failed_regression"
+            elif coverage.missing_days:
+                job.status = "failed_coverage_incomplete"
             elif build.missing_roles:
                 job.status = "completed_with_warnings"
             else:
@@ -506,6 +540,24 @@ class IngestionService:
             job.finished_at = datetime.now(UTC)
             job.duration_seconds = round(time.perf_counter() - started, 2)
             self.parquet_store.append_manifest(job.model_dump(mode="json"))
+            scope = str(job.details.get("scope") or "")
+            if scope and self._active_scopes.get(scope) == job.ingestion_id:
+                self._active_scopes.pop(scope, None)
+
+    def _scope_for_request(self, request: IngestionCreate) -> str:
+        config = self.config_store.read()
+        country_config = config.country_config(request.country)
+        dashboard = country_config.default_dashboard() if country_config is not None else None
+        dashboard_id = dashboard.dashboard_id if dashboard is not None else ""
+        return "|".join(
+            (
+                request.country.value,
+                dashboard_id,
+                request.range_key or "default",
+                request.start_date or "",
+                request.end_date or "",
+            )
+        )
 
 
 def _is_chunk_covered(
@@ -518,19 +570,23 @@ def _is_chunk_covered(
     )
 
 
-def _chunks_for_requested_days(days: list[str]) -> list[IngestionChunk]:
+def _chunks_for_requested_days(
+    days: list[str], *, timezone: str = "America/Mexico_City"
+) -> list[IngestionChunk]:
     parsed_days = sorted(
         day for day in {_parse_requested_day(day) for day in days} if day is not None
     )
     chunks: list[IngestionChunk] = []
     for day in parsed_days:
-        start, end = _day_bounds(day)
+        start, end = _day_bounds(day, timezone=timezone)
         chunks.append(IngestionChunk(start=start, end=end, label=day.isoformat()))
     return chunks
 
 
-def _explicit_range_from_request(request: IngestionCreate) -> IngestionRange | None:
-    zone = zoneinfo_for("CST")
+def _explicit_range_from_request(
+    request: IngestionCreate, *, timezone: str = "America/Mexico_City"
+) -> IngestionRange | None:
+    zone = zoneinfo_for(timezone)
     today = datetime.now(zone).date()
     start_day = parse_date(request.start_date)
     end_day = parse_date(request.end_date)
@@ -542,10 +598,10 @@ def _explicit_range_from_request(request: IngestionCreate) -> IngestionRange | N
         return None
     if end_day < start_day:
         start_day, end_day = end_day, start_day
-    start, _ = _day_bounds(start_day)
-    _, end = _day_bounds(end_day)
+    start, _ = _day_bounds(start_day, timezone=timezone)
+    _, end = _day_bounds(end_day, timezone=timezone)
     if end_day >= today:
-        end = min(end, _quantum_relative_range_end())
+        end = _bounded_dynamic_range_end(start=start, day_end=end, timezone=timezone)
     if end < start:
         end = start
     return IngestionRange(
@@ -555,15 +611,21 @@ def _explicit_range_from_request(request: IngestionCreate) -> IngestionRange | N
         latest_source_end=None,
         lookback_days=(end_day - start_day).days + 1,
         range_key=request.range_key or "default",
+        timezone=timezone,
         capture_mode="range_contract",
     )
 
 
-def _preset_range(range_key: str | None, *, now: datetime | None = None) -> IngestionRange | None:
+def _preset_range(
+    range_key: str | None,
+    *,
+    now: datetime | None = None,
+    timezone: str = "America/Mexico_City",
+) -> IngestionRange | None:
     if not range_key:
         return None
     key = range_key.strip().lower()
-    zone = zoneinfo_for("CST")
+    zone = zoneinfo_for(timezone)
     today = (now.astimezone(zone) if now else datetime.now(zone)).date()
     if key == "today":
         start_day = end_day = today
@@ -577,10 +639,10 @@ def _preset_range(range_key: str | None, *, now: datetime | None = None) -> Inge
         dynamic_end = True
     else:
         return None
-    start, _ = _day_bounds(start_day)
-    _, end = _day_bounds(end_day)
+    start, _ = _day_bounds(start_day, timezone=timezone)
+    _, end = _day_bounds(end_day, timezone=timezone)
     if dynamic_end:
-        end = min(end, _quantum_relative_range_end(now))
+        end = _bounded_dynamic_range_end(start=start, day_end=end, now=now, timezone=timezone)
     if end < start:
         end = start
     return IngestionRange(
@@ -590,23 +652,50 @@ def _preset_range(range_key: str | None, *, now: datetime | None = None) -> Inge
         latest_source_end=None,
         lookback_days=(end_day - start_day).days + 1,
         range_key=key,
+        timezone=timezone,
         capture_mode="range_contract",
     )
 
 
-def _quantum_relative_range_end(now: datetime | None = None) -> datetime:
-    zone = zoneinfo_for("CST")
+def _quantum_relative_range_end(
+    now: datetime | None = None, *, timezone: str = "America/Mexico_City"
+) -> datetime:
+    zone = zoneinfo_for(timezone)
     local_now = now.astimezone(zone) if now else datetime.now(zone)
     current_hour_start = local_now.replace(minute=0, second=0, microsecond=0)
     return (current_hour_start - timedelta(hours=1, seconds=1)).astimezone(UTC)
+
+
+def _bounded_dynamic_range_end(
+    *,
+    start: datetime,
+    day_end: datetime,
+    now: datetime | None = None,
+    timezone: str = "America/Mexico_City",
+) -> datetime:
+    safe_end = min(day_end, _quantum_relative_range_end(now, timezone=timezone))
+    if safe_end > start:
+        return safe_end
+
+    zone = zoneinfo_for(timezone)
+    local_now = now.astimezone(zone) if now else datetime.now(zone)
+    completed_hour_end = local_now.replace(minute=0, second=0, microsecond=0) - timedelta(seconds=1)
+    fallback_end = min(day_end, completed_hour_end.astimezone(UTC))
+    if fallback_end > start:
+        return fallback_end
+
+    current_end = min(day_end, local_now.astimezone(UTC))
+    if current_end > start:
+        return current_end
+    return start
 
 
 def _parse_requested_day(value: str) -> date | None:
     return parse_date(value)
 
 
-def _day_bounds(day: date) -> tuple[datetime, datetime]:
-    zone = zoneinfo_for("CST")
+def _day_bounds(day: date, *, timezone: str = "America/Mexico_City") -> tuple[datetime, datetime]:
+    zone = zoneinfo_for(timezone)
     start = datetime.combine(day, datetime.min.time(), tzinfo=zone).astimezone(UTC)
     end = datetime.combine(day, datetime.max.time().replace(microsecond=0), tzinfo=zone).astimezone(
         UTC

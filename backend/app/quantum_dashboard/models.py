@@ -4,7 +4,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-type DashboardTab = Literal["summary", "errors"]
+type DashboardTab = str
 type ParseStrategy = Literal[
     "timeseries_metric_card_v1",
     "single_metric_breakdown_card_v1",
@@ -138,6 +138,7 @@ class CardContract(BaseModel):
     tab_name: str
     tab_index: int | None = None
     widget_id: str | None = None
+    widget_order: int | None = None
     card_id: str
     card_title: str
     card_type: str

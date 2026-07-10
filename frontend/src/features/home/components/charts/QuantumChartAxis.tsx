@@ -1,8 +1,6 @@
 import { ChartAxisTick } from "../../types";
 
 const MAX_X_TICKS = 5;
-const MEXICO_TIMEZONE = "America/Mexico_City";
-
 type Props = {
   ticks: ChartAxisTick[];
   orientation: "x" | "y";
@@ -36,7 +34,7 @@ export function QuantumChartAxis({
               transform={`translate(${x} ${y})`}
             >
               <line y2="4" />
-              <text y="18">{formatAxisLabel(tick.label || tick.value)}</text>
+              <text y="18">{String(tick.label || tick.value)}</text>
             </g>
           );
         })}
@@ -61,7 +59,7 @@ export function QuantumChartAxis({
               y2={y}
             />
             <text x={padding.left - 8} y={y + 4}>
-              {formatAxisLabel(tick.label || tick.value)}
+              {String(tick.label || tick.value)}
             </text>
           </g>
         );
@@ -82,21 +80,4 @@ function sampleTicks(ticks: ChartAxisTick[], maxTicks: number) {
     tick: ticks[originalIndex],
     originalIndex,
   }));
-}
-
-function formatAxisLabel(value: number | string) {
-  const text = String(value).trim();
-  const numeric = Number(text);
-  if (text && Number.isFinite(numeric) && Math.abs(numeric) > 1_000_000) {
-    const millis =
-      Math.abs(numeric) > 10_000_000_000 ? numeric : numeric * 1000;
-    return new Intl.DateTimeFormat("en-US", {
-      timeZone: MEXICO_TIMEZONE,
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    }).format(new Date(millis));
-  }
-  if (text.length > 14) return `${text.slice(0, 12)}...`;
-  return text;
 }

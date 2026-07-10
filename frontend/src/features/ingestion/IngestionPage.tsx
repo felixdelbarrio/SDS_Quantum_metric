@@ -109,6 +109,7 @@ export function IngestionPage() {
     mutationFn: () =>
       apiPost<IngestionJob>("/ingestions", {
         country: activeCountry,
+        range_key: "today",
       }),
     onSuccess: () => void ingestions.refetch(),
   });

@@ -16,6 +16,7 @@ export type AvailableCountry = {
   last_ingestion_at?: string | null;
   dashboard_id?: string | null;
   dashboard_name?: string | null;
+  timezone: string;
 };
 
 export type CountriesResponse = {
@@ -25,6 +26,7 @@ export type CountriesResponse = {
 
 export type DashboardCoverage = {
   country: CountryCode;
+  dashboard_id?: string | null;
   start: string | null;
   end: string | null;
   range_key?: string;
@@ -62,7 +64,24 @@ export type DashboardPeriod = {
 
 export type DashboardComparison = {
   label: string;
+  raw_delta?: number | null;
+  display_delta?: number | null;
+  precision?: number;
+  formatted?: string | null;
+  semantic_intent?: "positive" | "negative" | "neutral";
   delta_percent?: number | null;
+};
+
+export type DisplayNumberContract = {
+  raw_value?: number | null;
+  display_value?: number | null;
+  unit: "count" | "score" | "percent" | "seconds" | "text";
+  scale: number;
+  precision: number;
+  prefix?: string | null;
+  suffix?: string | null;
+  formatter?: string | null;
+  formatted?: string | null;
 };
 
 export type ChartAxisTick = {
@@ -89,17 +108,26 @@ export type ChartSeriesPoint = {
 };
 
 export type ChartSeries = {
-  id: string;
+  series_id?: string;
+  id?: string;
   label: string;
-  kind: "line" | "bar" | "area";
+  kind: "line" | "bar" | "area" | "baseline" | "band" | "anomaly";
+  order?: number;
   device?: "mobile" | "desktop" | "unknown" | null;
   points: ChartSeriesPoint[];
   visible: boolean;
 };
 
 export type ChartBand = {
-  id: string;
+  band_id?: string;
+  id?: string;
   label?: string | null;
+  kind?: "historical_range" | "anomaly" | "confidence" | "custom";
+  start?: string | null;
+  end?: string | null;
+  lower_points?: ChartSeriesPoint[];
+  upper_points?: ChartSeriesPoint[];
+  pattern?: string | null;
   start_ts?: string | null;
   end_ts?: string | null;
   start_x?: number | null;
@@ -110,7 +138,7 @@ export type ChartBand = {
 };
 
 export type ChartPayload = {
-  chart_type: "line" | "bar" | "donut" | "table";
+  chart_type: "line" | "bar" | "area" | "stacked_bar" | "donut" | "mixed";
   x_axis: ChartAxis;
   y_axis: ChartAxis;
   series: ChartSeries[];
@@ -124,14 +152,35 @@ export type ChartPayload = {
 export type KpiWidget = {
   id: string;
   role?: string;
+  widget_id?: string | null;
+  tab_name?: string | null;
+  tab_index?: number | null;
+  widget_order?: number | null;
   range_key?: string | null;
   title: string;
+  display?: DisplayNumberContract | null;
   value?: number | null;
-  unit: "count" | "seconds" | "percent";
+  unit?: "count" | "score" | "seconds" | "percent" | "text";
   chart_type?: "line" | "bar" | "donut" | "table" | null;
   breakdown: KpiBreakdownItem[];
   timeseries: TimeseriesPoint[];
   chart_payload?: ChartPayload | null;
+  chart?: ChartPayload | null;
+  table?: {
+    columns: Array<{
+      key: string;
+      label: string;
+      data_type: "text" | "number" | "percent" | "datetime";
+      precision?: number | null;
+      sortable: boolean;
+      default_sort?: "asc" | "desc" | null;
+    }>;
+    rows: Array<Record<string, unknown>>;
+    default_sort_column?: string | null;
+    default_sort_direction?: "asc" | "desc" | null;
+    period_label: string;
+    timezone: string;
+  } | null;
   table_columns?: string[] | null;
   table_rows?: Array<Record<string, unknown>> | null;
   comparison?: DashboardComparison | null;
@@ -140,6 +189,44 @@ export type KpiWidget = {
   semantic_intent?: "good" | "bad" | "neutral" | null;
   missing_source_field?: string | null;
   period?: DashboardPeriod | null;
+  layout_x?: number | null;
+  layout_y?: number | null;
+  layout_width?: number | null;
+  layout_height?: number | null;
+  parse_status?: string;
+};
+
+export type DynamicDashboardSection = {
+  section_id?: string | null;
+  section_name?: string | null;
+  section_index?: number | null;
+  widgets: KpiWidget[];
+};
+
+export type DynamicDashboardTab = {
+  tab: string;
+  tab_name: string;
+  tab_index: number;
+  tab_id?: string | null;
+  sections: DynamicDashboardSection[];
+  widgets?: KpiWidget[];
+};
+
+export type DynamicDashboardResponse = {
+  status: AnalyticsStatus;
+  country: CountryCode;
+  source: "parquet";
+  last_ingestion_at?: string | null;
+  dashboard_id?: string | null;
+  dashboard_name?: string | null;
+  dashboard_title?: string | null;
+  description?: string | null;
+  tabs: DynamicDashboardTab[];
+  reason?: string | null;
+  required_dataset?: string | null;
+  available_datasets: string[];
+  period?: DashboardPeriod;
+  regression?: DashboardRegression | null;
 };
 
 export type SummaryDashboardResponse = {

@@ -48,7 +48,7 @@ def resolve_range(
         start_day, end_day = end_day, start_day
 
     required_days = _required_days(range_key, start_day, end_day, today)
-    coverage = store.day_coverage(country, start_day, end_day)
+    coverage = store.day_coverage(country, start_day, end_day, timezone=timezone)
     covered_days = [day for day in _dates(coverage.get("covered_days")) if day in required_days]
     regression_status = _regression_status(last_regression_status)
     if regression_status == "passed" and range_key in {"today", "yesterday", "last_7_days"}:

@@ -1,5 +1,6 @@
 import { CalendarDays, Star } from "lucide-react";
 import { AvailableCountry, CountryCode, DashboardCoverage } from "../types";
+import { todayInTimezone } from "../timezone";
 import { CountrySelector } from "./CountrySelector";
 
 export type DatePreset = "today" | "yesterday" | "last_7_days" | "custom";
@@ -12,10 +13,13 @@ export type DateRange = {
 
 type Props = {
   country: CountryCode;
+  timezone: string;
   countries: AvailableCountry[];
   dateRange: DateRange;
   coverage?: DashboardCoverage | null;
   dashboardName?: string | null;
+  dashboardTitle?: string | null;
+  dashboardDescription?: string | null;
   missingIngestionPending: boolean;
   onCountryChange: (country: CountryCode) => void;
   onDateRangeChange: (range: DateRange) => void;
@@ -24,10 +28,13 @@ type Props = {
 
 export function DashboardHeader({
   country,
+  timezone,
   countries,
   dateRange,
   coverage,
   dashboardName,
+  dashboardTitle,
+  dashboardDescription,
   missingIngestionPending,
   onCountryChange,
   onDateRangeChange,
@@ -43,8 +50,13 @@ export function DashboardHeader({
           <Star size={18} />
         </span>
         <div>
-          <h1>Dashboard General {country}</h1>
-          <p>Este dashboard es un resumen de sesiones y errores.</p>
+          <h1>
+            {dashboardTitle ?? dashboardName ?? `Dashboard General ${country}`}
+          </h1>
+          <p>
+            {dashboardDescription ??
+              "Dashboard local generado desde Quantum Web."}
+          </p>
           {dashboardName ? (
             <span className="dashboard-context">
               Dashboard: {dashboardName}
@@ -60,7 +72,7 @@ export function DashboardHeader({
                 disabled={!canIngestCoverage}
               >
                 {missingIngestionPending
-                  ? "Ingestando"
+                  ? "Ingestando periodo..."
                   : dateRange.preset === "today"
                     ? "Actualizar hoy"
                     : "Ingestar periodo"}
@@ -83,7 +95,11 @@ export function DashboardHeader({
               value={dateRange.preset}
               onChange={(event) =>
                 onDateRangeChange(
-                  rangeForPreset(event.target.value as DatePreset, dateRange),
+                  rangeForPreset(
+                    event.target.value as DatePreset,
+                    dateRange,
+                    timezone,
+                  ),
                 )
               }
             >
@@ -130,9 +146,13 @@ export function DashboardHeader({
   );
 }
 
-function rangeForPreset(preset: DatePreset, current: DateRange): DateRange {
+function rangeForPreset(
+  preset: DatePreset,
+  current: DateRange,
+  timezone: string,
+): DateRange {
   if (preset === "custom") return { ...current, preset };
-  const today = todayInMexico();
+  const today = todayInTimezone(timezone);
   if (preset === "today") {
     return { preset, startDate: today, endDate: today };
   }
@@ -142,19 +162,6 @@ function rangeForPreset(preset: DatePreset, current: DateRange): DateRange {
   }
   const start = addDays(today, -6);
   return { preset, startDate: start, endDate: today };
-}
-
-function todayInMexico() {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/Mexico_City",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(new Date());
-  const value = Object.fromEntries(
-    parts.map((part) => [part.type, part.value]),
-  );
-  return `${value.year}-${value.month}-${value.day}`;
 }
 
 function addDays(value: string, days: number) {

@@ -20,6 +20,7 @@ from backend.app.observability.sanitizer import sanitize_error
 from backend.app.quantum.schemas import (
     Country,
     QuantumDashboardConfig,
+    QuantumDashboardSectionConfig,
     QuantumDashboardTabConfig,
     QuantumWidgetConfig,
 )
@@ -68,6 +69,14 @@ class QuantumDashboardTab(BaseModel):
     normalized_role: str | None = None
 
 
+class QuantumDashboardSection(BaseModel):
+    section_id: str | None = None
+    tab_id: str | None = None
+    tab_index: int
+    name: str
+    section_index: int
+
+
 class QuantumDashboardWidget(BaseModel):
     widget_id: str
     card_id: str | None = None
@@ -75,6 +84,15 @@ class QuantumDashboardWidget(BaseModel):
     tab_id: str | None = None
     tab_name: str
     tab_index: int
+    section_id: str | None = None
+    section_name: str | None = None
+    section_index: int | None = None
+    widget_order: int | None = None
+    layout_x: int | None = None
+    layout_y: int | None = None
+    layout_width: int | None = None
+    layout_height: int | None = None
+    visual_contract: dict[str, Any] = Field(default_factory=dict)
     visual_role: str | None = None
     widget_type: WidgetKind = "unknown"
     enabled: bool = True
@@ -91,6 +109,7 @@ class QuantumDashboardStructure(BaseModel):
     source: StructureSource
     discovered_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     tabs: list[QuantumDashboardTab] = Field(default_factory=list)
+    sections: list[QuantumDashboardSection] = Field(default_factory=list)
     widgets: list[QuantumDashboardWidget] = Field(default_factory=list)
 
 
@@ -135,6 +154,7 @@ def structure_from_payloads(
     source: StructureSource,
 ) -> QuantumDashboardStructure:
     tabs: list[QuantumDashboardTab] = []
+    sections: list[QuantumDashboardSection] = []
     widgets: list[QuantumDashboardWidget] = []
     dashboard_name: str | None = None
     for payload in payloads:
@@ -142,9 +162,11 @@ def structure_from_payloads(
         _extract_structure(
             payload,
             tabs=tabs,
+            sections=sections,
             widgets=widgets,
             source=source,
             tab_context=None,
+            section_context=None,
             path=(),
         )
     return QuantumDashboardStructure(
@@ -154,6 +176,7 @@ def structure_from_payloads(
         team_id=team_id,
         source=source,
         tabs=_dedupe_tabs(tabs),
+        sections=_dedupe_sections(sections),
         widgets=_dedupe_widgets(widgets),
     )
 
@@ -170,6 +193,16 @@ def structure_from_dashboard_config(
             normalized_role=tab.normalized_role,
         )
         for tab in dashboard.tabs
+    ]
+    sections = [
+        QuantumDashboardSection(
+            section_id=section.section_id,
+            tab_id=section.tab_id,
+            tab_index=section.tab_index,
+            name=section.name,
+            section_index=section.section_index,
+        )
+        for section in dashboard.sections
     ]
     if not tabs:
         tabs = _dedupe_tabs(
@@ -190,6 +223,9 @@ def structure_from_dashboard_config(
             tab_id=widget.tab_id,
             tab_name=widget.tab_name or widget.tab,
             tab_index=widget.tab_index,
+            section_id=widget.section_id,
+            section_name=widget.section_name,
+            section_index=widget.section_index,
             visual_role=widget.role or None,
             widget_type=_to_widget_kind(widget.widget_type),
             enabled=widget.enabled,
@@ -201,6 +237,12 @@ def structure_from_dashboard_config(
                 widget_type=widget.widget_type,
                 visual_role=widget.role or None,
             ).supported,
+            widget_order=widget.widget_order,
+            layout_x=widget.layout_x,
+            layout_y=widget.layout_y,
+            layout_width=widget.layout_width,
+            layout_height=widget.layout_height,
+            visual_contract=widget.visual_contract,
             source=widget.source,
         )
         for widget in dashboard.widgets
@@ -213,6 +255,7 @@ def structure_from_dashboard_config(
         source="config_cache",
         discovered_at=dashboard.last_structure_at or dashboard.discovered_at or datetime.now(UTC),
         tabs=tabs,
+        sections=sections,
         widgets=widgets,
     )
 
@@ -344,6 +387,18 @@ def widget_configs_from_structure(
                 tab=_normalized_tab(structure.tabs, widget.tab_index, widget.tab_name),
                 tab_name=widget.tab_name,
                 tab_index=widget.tab_index,
+                tab_resolution="resolved" if widget.tab_id or widget.tab_name else "unassigned",
+                section_id=widget.section_id,
+                section_name=widget.section_name,
+                section_index=widget.section_index,
+                widget_order=(
+                    widget.widget_order if widget.widget_order is not None else len(configs)
+                ),
+                layout_x=widget.layout_x,
+                layout_y=widget.layout_y,
+                layout_width=widget.layout_width,
+                layout_height=widget.layout_height,
+                visual_contract=widget.visual_contract,
                 enabled=enabled_by_key.get(key, widget.enabled and supported),
                 required=supported,
                 supported=supported,
@@ -368,13 +423,30 @@ def tab_configs_from_structure(
     ]
 
 
+def section_configs_from_structure(
+    structure: QuantumDashboardStructure,
+) -> list[QuantumDashboardSectionConfig]:
+    return [
+        QuantumDashboardSectionConfig(
+            section_id=section.section_id,
+            tab_id=section.tab_id,
+            tab_index=section.tab_index,
+            name=section.name,
+            section_index=section.section_index,
+        )
+        for section in structure.sections
+    ]
+
+
 def _extract_structure(
     value: Any,
     *,
     tabs: list[QuantumDashboardTab],
+    sections: list[QuantumDashboardSection],
     widgets: list[QuantumDashboardWidget],
     source: StructureSource,
     tab_context: QuantumDashboardTab | None,
+    section_context: QuantumDashboardSection | None,
     path: tuple[str, ...],
 ) -> None:
     if isinstance(value, list):
@@ -389,9 +461,11 @@ def _extract_structure(
             _extract_structure(
                 child,
                 tabs=tabs,
+                sections=sections,
                 widgets=widgets,
                 source=source,
                 tab_context=tab_context,
+                section_context=section_context,
                 path=path,
             )
         return
@@ -403,30 +477,37 @@ def _extract_structure(
         _extract_structure(
             parsed_tabs,
             tabs=tabs,
+            sections=sections,
             widgets=widgets,
             source=source,
             tab_context=tab_context,
+            section_context=section_context,
             path=(*path, "tabs"),
         )
 
     current_tab = _tab_from_candidate(value, path) or tab_context
     if current_tab is not None:
         tabs.append(current_tab)
+    current_section = _section_from_candidate(value, current_tab) or section_context
+    if current_section is not None:
+        sections.append(current_section)
 
     layout_cards = _ordered_layout_cards(value)
     if layout_cards:
-        for layout_key, layout_card in layout_cards:
+        for widget_order, (layout_key, layout_card) in enumerate(layout_cards):
             widget = _widget_from_candidate(
                 layout_card,
                 source,
                 current_tab,
+                current_section,
                 fallback_widget_id=layout_key,
+                widget_order=widget_order,
             )
             if widget is not None:
                 widgets.append(widget)
         return
 
-    widget = _widget_from_candidate(value, source, current_tab)
+    widget = _widget_from_candidate(value, source, current_tab, current_section)
     if widget is not None:
         widgets.append(widget)
 
@@ -436,9 +517,11 @@ def _extract_structure(
         _extract_structure(
             child,
             tabs=tabs,
+            sections=sections,
             widgets=widgets,
             source=source,
             tab_context=current_tab,
+            section_context=current_section,
             path=(*path, str(key)),
         )
 
@@ -461,12 +544,55 @@ def _tab_from_candidate(
     )
 
 
+def _section_from_candidate(
+    item: dict[str, Any],
+    tab_context: QuantumDashboardTab | None,
+) -> QuantumDashboardSection | None:
+    raw_section = item.get("section") or item.get("group") or item.get("container")
+    section = raw_section if isinstance(raw_section, dict) else {}
+    section_id = _text(
+        item.get("sectionId")
+        or item.get("section_id")
+        or section.get("id")
+        or section.get("sectionId")
+    )
+    section_name = _text(
+        item.get("sectionName")
+        or item.get("section_name")
+        or section.get("name")
+        or section.get("title")
+    )
+    if not section_id and not section_name:
+        return None
+    tab_index = _int(
+        item.get("tabIndex") or item.get("tab_index") or section.get("tabIndex"),
+        tab_context.tab_index if tab_context is not None else 0,
+    )
+    return QuantumDashboardSection(
+        section_id=section_id,
+        tab_id=_text(
+            item.get("tabId")
+            or item.get("tab_id")
+            or section.get("tabId")
+            or (tab_context.tab_id if tab_context is not None else None)
+        ),
+        tab_index=tab_index,
+        name=section_name or "Sin sección",
+        section_index=_int(
+            item.get("sectionIndex") or item.get("section_index") or section.get("index"),
+            0,
+        ),
+    )
+
+
 def _widget_from_candidate(
     item: dict[str, Any],
     source: StructureSource,
     tab_context: QuantumDashboardTab | None,
+    section_context: QuantumDashboardSection | None,
     *,
     fallback_widget_id: str | None = None,
+    widget_order: int | None = None,
 ) -> QuantumDashboardWidget | None:
     if any(key in item for key in ("tabs", "cards")) and not any(
         key in item for key in ("adHocData", "card", "cardId", "card_id", "widgetId", "widget_id")
@@ -515,6 +641,14 @@ def _widget_from_candidate(
         item.get("tabIndex") or item.get("tab_index"),
         tab_context.tab_index if tab_context is not None else 0,
     )
+    resolved_widget_order = _int_or_none(
+        item.get("widgetOrder")
+        or item.get("widget_order")
+        or item.get("order")
+        or item.get("index")
+    )
+    if resolved_widget_order is None:
+        resolved_widget_order = widget_order
     visualization = _text(
         card.get("visualization")
         or card.get("visualizationType")
@@ -567,6 +701,27 @@ def _widget_from_candidate(
         tab_id=tab_context.tab_id if tab_context is not None else None,
         tab_name=tab_name,
         tab_index=tab_index,
+        section_id=_text(item.get("sectionId") or item.get("section_id"))
+        or (section_context.section_id if section_context is not None else None),
+        section_name=_text(item.get("sectionName") or item.get("section_name"))
+        or (section_context.name if section_context is not None else None),
+        section_index=_int_or_none(item.get("sectionIndex") or item.get("section_index"))
+        if item.get("sectionIndex") is not None or item.get("section_index") is not None
+        else (section_context.section_index if section_context is not None else None),
+        widget_order=resolved_widget_order,
+        layout_x=_int_or_none(item.get("layout_x") if "layout_x" in item else item.get("x")),
+        layout_y=_int_or_none(item.get("layout_y") if "layout_y" in item else item.get("y")),
+        layout_width=_int_or_none(
+            item.get("layout_width")
+            if "layout_width" in item
+            else item.get("w") or item.get("width")
+        ),
+        layout_height=_int_or_none(
+            item.get("layout_height")
+            if "layout_height" in item
+            else item.get("h") or item.get("height")
+        ),
+        visual_contract=_visual_contract_from_candidate(item, card, visualization),
         visual_role=role,
         widget_type=kind,
         enabled=bool(role),
@@ -583,11 +738,28 @@ def _dedupe_tabs(tabs: list[QuantumDashboardTab]) -> list[QuantumDashboardTab]:
     return sorted(by_key.values(), key=lambda tab: (tab.tab_index, tab.name.casefold()))
 
 
+def _dedupe_sections(
+    sections: list[QuantumDashboardSection],
+) -> list[QuantumDashboardSection]:
+    by_key: dict[tuple[int, int, str], QuantumDashboardSection] = {}
+    for section in sections:
+        key = (section.tab_index, section.section_index, section.section_id or section.name)
+        by_key.setdefault(key, section)
+    return [by_key[key] for key in sorted(by_key)]
+
+
 def _dedupe_widgets(widgets: list[QuantumDashboardWidget]) -> list[QuantumDashboardWidget]:
     by_key: dict[str, QuantumDashboardWidget] = {}
     for widget in widgets:
         by_key.setdefault(widget.widget_id, widget)
-    return list(by_key.values())
+    return sorted(
+        by_key.values(),
+        key=lambda widget: (
+            widget.tab_index,
+            widget.widget_order if widget.widget_order is not None else 999_999,
+            widget.title.casefold(),
+        ),
+    )
 
 
 def _dashboard_name_from_payload(value: Any) -> str | None:
@@ -626,31 +798,91 @@ def _ordered_layout_cards(item: dict[str, Any]) -> list[tuple[str, dict[str, Any
     for index, (key, value) in enumerate(layout_cards.items()):
         if not isinstance(value, dict):
             continue
-        sort_key = positions.get(str(key)) or (
-            _int(value.get("y"), index),
-            _int(value.get("x"), 0),
-            index,
+        layout = positions.get(str(key))
+        sort_key = (
+            (layout[1], layout[0], index)
+            if layout
+            else (
+                _int(value.get("y"), index),
+                _int(value.get("x"), 0),
+                index,
+            )
         )
-        rows.append((sort_key, str(key), value))
+        enriched = (
+            {
+                **value,
+                "layout_x": layout[0],
+                "layout_y": layout[1],
+                "layout_width": layout[2],
+                "layout_height": layout[3],
+            }
+            if layout
+            else value
+        )
+        rows.append((sort_key, str(key), enriched))
     return [(key, value) for _, key, value in sorted(rows, key=lambda row: row[0])]
 
 
-def _layout_position_map(layout: Any) -> dict[str, tuple[int, int, int]]:
+def _layout_position_map(layout: Any) -> dict[str, tuple[int, int, int, int]]:
     if isinstance(layout, dict):
         candidates = list(layout.values())
     elif isinstance(layout, list):
         candidates = layout
     else:
         return {}
-    positions: dict[str, tuple[int, int, int]] = {}
+    positions: dict[str, tuple[int, int, int, int]] = {}
     for index, item in enumerate(candidates):
         if not isinstance(item, dict):
             continue
         key = _text(item.get("i") or item.get("id") or item.get("cardId") or item.get("card_id"))
         if not key:
             continue
-        positions[key] = (_int(item.get("y"), index), _int(item.get("x"), 0), index)
+        positions[key] = (
+            _int(item.get("x"), 0),
+            _int(item.get("y"), index),
+            max(1, _int(item.get("w") or item.get("width"), 1)),
+            max(1, _int(item.get("h") or item.get("height"), 1)),
+        )
     return positions
+
+
+def _visual_contract_from_candidate(
+    item: dict[str, Any],
+    card: dict[str, Any],
+    visualization: str | None,
+) -> dict[str, Any]:
+    explicit = (
+        item.get("widgetContract")
+        or item.get("widget_contract")
+        or item.get("visualContract")
+        or item.get("visual_contract")
+        or card.get("contract")
+    )
+    if isinstance(explicit, dict):
+        return explicit
+    contract: dict[str, Any] = {}
+    value = (
+        item.get("valueContract")
+        or item.get("displayNumber")
+        or card.get("valueContract")
+        or card.get("displayNumber")
+    )
+    if isinstance(value, dict):
+        contract["value"] = value
+    comparison = item.get("comparison") or card.get("comparison")
+    if isinstance(comparison, dict):
+        contract["comparison"] = comparison
+    chart = item.get("chartContract") or card.get("chartContract") or card.get("chart")
+    if isinstance(chart, dict):
+        contract["chart"] = chart
+    elif visualization:
+        contract["visualization_type"] = visualization
+    table = item.get("tableContract") or card.get("tableContract")
+    if isinstance(table, dict):
+        contract["table"] = table
+    elif isinstance(card.get("columns"), list):
+        contract["table"] = {"columns": card["columns"]}
+    return contract
 
 
 def _parse_jsonish(value: Any) -> Any:
@@ -879,3 +1111,10 @@ def _int(value: Any, default: int) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _int_or_none(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None

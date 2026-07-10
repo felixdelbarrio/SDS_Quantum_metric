@@ -51,6 +51,14 @@ COUNTRY_ORDER: tuple[Country, ...] = (
     Country.PE,
 )
 
+COUNTRY_TIMEZONES: dict[Country, str] = {
+    Country.ES: "Europe/Madrid",
+    Country.MX: "America/Mexico_City",
+    Country.CO: "America/Bogota",
+    Country.AR: "America/Argentina/Buenos_Aires",
+    Country.PE: "America/Lima",
+}
+
 
 class CountryOption(BaseModel):
     code: Country
@@ -85,6 +93,19 @@ class QuantumDashboardTabConfig(BaseModel):
         return value.strip() if isinstance(value, str) else value
 
 
+class QuantumDashboardSectionConfig(BaseModel):
+    section_id: str | None = None
+    tab_id: str | None = None
+    tab_index: int = Field(default=0, ge=0)
+    name: str
+    section_index: int = Field(default=0, ge=0)
+
+    @field_validator("section_id", "tab_id", "name", mode="before")
+    @classmethod
+    def _strip_section_text(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
+
+
 class QuantumWidgetConfig(BaseModel):
     role: str = ""
     title: str = ""
@@ -92,9 +113,20 @@ class QuantumWidgetConfig(BaseModel):
     card_id: str | None = None
     widget_type: WidgetType = "UNKNOWN"
     tab_id: str | None = None
-    tab: str = "summary"
-    tab_name: str = "Resumen"
+    tab: str = "unassigned"
+    tab_name: str = "Sin pestaña"
     tab_index: int = Field(default=0, ge=0)
+    tab_resolution: Literal["resolved", "unassigned", "ambiguous"] = "unassigned"
+    section_id: str | None = None
+    section_name: str | None = None
+    section_index: int | None = Field(default=None, ge=0)
+    widget_order: int | None = Field(default=None, ge=0)
+    layout_x: int | None = None
+    layout_y: int | None = None
+    layout_width: int | None = Field(default=None, ge=1)
+    layout_height: int | None = Field(default=None, ge=1)
+    query_fingerprint: str | None = None
+    visual_contract: dict[str, Any] = Field(default_factory=dict)
     enabled: bool = True
     required: bool = False
     supported: bool = True
@@ -110,6 +142,10 @@ class QuantumWidgetConfig(BaseModel):
         "tab_id",
         "tab",
         "tab_name",
+        "tab_resolution",
+        "section_id",
+        "section_name",
+        "query_fingerprint",
         "source",
         mode="before",
     )
@@ -142,6 +178,7 @@ class QuantumDashboardConfig(BaseModel):
     team_id: str = ""
     summary_tab: int = Field(default=0, ge=0)
     errors_tab: int = Field(default=1, ge=0)
+    timezone: str = ""
     is_default: bool = False
     is_manual: bool = False
     validated: bool = False
@@ -150,9 +187,12 @@ class QuantumDashboardConfig(BaseModel):
     discovered_at: datetime | None = None
     last_structure_at: datetime | None = None
     tabs: list[QuantumDashboardTabConfig] = Field(default_factory=list)
+    sections: list[QuantumDashboardSectionConfig] = Field(default_factory=list)
     widgets: list[QuantumWidgetConfig] = Field(default_factory=list)
 
-    @field_validator("dashboard_id", "name", "dashboard_type", "team_id", "source", mode="before")
+    @field_validator(
+        "dashboard_id", "name", "dashboard_type", "team_id", "timezone", "source", mode="before"
+    )
     @classmethod
     def _strip_dashboard_text(cls, value: object) -> object:
         return value.strip() if isinstance(value, str) else value
@@ -163,6 +203,13 @@ class QuantumDashboardConfig(BaseModel):
             self.name = ""
         if not self.tabs and self.widgets:
             self.tabs = _tabs_from_widgets(self.widgets)
+        if self.widgets:
+            self.widgets = [
+                widget
+                if widget.widget_order is not None
+                else widget.model_copy(update={"widget_order": index})
+                for index, widget in enumerate(self.widgets)
+            ]
         return self
 
     def enabled_widget_roles(self) -> list[str]:
@@ -176,19 +223,22 @@ class QuantumDashboardConfig(BaseModel):
 class QuantumCountryConfig(BaseModel):
     country: Country
     base_url: str = ""
+    timezone: str = ""
     dashboard_id: str = ""
     team_id: str = ""
     tab: int = Field(default=0, ge=0)
     enabled: bool = True
     dashboards: list[QuantumDashboardConfig] = Field(default_factory=list)
 
-    @field_validator("base_url", "dashboard_id", "team_id", mode="before")
+    @field_validator("base_url", "timezone", "dashboard_id", "team_id", mode="before")
     @classmethod
     def _strip_text(cls, value: object) -> object:
         return value.strip() if isinstance(value, str) else value
 
     @model_validator(mode="after")
     def _migrate_dashboard_fields(self) -> QuantumCountryConfig:
+        if not self.timezone:
+            self.timezone = COUNTRY_TIMEZONES[self.country]
         if not self.dashboards and self.dashboard_id:
             self.dashboards = [
                 QuantumDashboardConfig(
@@ -206,6 +256,8 @@ class QuantumCountryConfig(BaseModel):
         normalized: list[QuantumDashboardConfig] = []
         for dashboard in self.dashboards:
             next_dashboard = dashboard
+            if not next_dashboard.timezone:
+                next_dashboard = next_dashboard.model_copy(update={"timezone": self.timezone})
             if _is_legacy_generated_dashboard_name(dashboard.name, dashboard.dashboard_id):
                 next_dashboard = next_dashboard.model_copy(update={"name": ""})
             if next_dashboard.is_default:
@@ -262,7 +314,7 @@ class QuantumCountryConfig(BaseModel):
 
 
 class QuantumConfig(BaseModel):
-    schema_version: int = 2
+    schema_version: int = 3
     browser: BrowserName = BrowserName.chrome
     session_mode: SessionMode = SessionMode.controlled
     country: Country = Country.MX
@@ -278,7 +330,7 @@ class QuantumConfig(BaseModel):
         if not isinstance(value, dict):
             return value
         migrated = dict(value)
-        migrated.setdefault("schema_version", 2)
+        migrated["schema_version"] = 3
         if value.get("countries"):
             return migrated
 
@@ -327,6 +379,7 @@ class QuantumConfigUpdate(QuantumConfig):
 class QuantumPublicCountryConfig(BaseModel):
     country: Country
     base_url: str = ""
+    timezone: str = ""
     enabled: bool = True
     is_default: bool = False
     dashboard_resolved: bool = False
@@ -398,6 +451,7 @@ def _public_country_config(
     return QuantumPublicCountryConfig(
         country=item.country,
         base_url=item.base_url,
+        timezone=item.timezone,
         enabled=item.enabled,
         is_default=is_default,
         dashboard_resolved=bool(dashboard and dashboard.validated),
@@ -423,6 +477,7 @@ def merge_public_quantum_update(
             QuantumCountryConfig(
                 country=item.country,
                 base_url=item.base_url,
+                timezone=item.timezone or COUNTRY_TIMEZONES[item.country],
                 dashboard_id=(previous.dashboard_id if previous else ""),
                 team_id=(previous.team_id if previous else ""),
                 tab=(previous.tab if previous else 0),
