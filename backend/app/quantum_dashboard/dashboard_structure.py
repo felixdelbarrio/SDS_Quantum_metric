@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 import unicodedata
@@ -398,6 +399,11 @@ def widget_configs_from_structure(
                 layout_y=widget.layout_y,
                 layout_width=widget.layout_width,
                 layout_height=widget.layout_height,
+                query_fingerprint=_text(
+                    widget.visual_contract.get("query", {}).get("fingerprint")
+                    if isinstance(widget.visual_contract.get("query"), dict)
+                    else None
+                ),
                 visual_contract=widget.visual_contract,
                 enabled=enabled_by_key.get(key, widget.enabled and supported),
                 required=supported,
@@ -436,6 +442,39 @@ def section_configs_from_structure(
         )
         for section in structure.sections
     ]
+
+
+def dashboard_config_from_structure(
+    dashboard: QuantumDashboardConfig,
+    structure: QuantumDashboardStructure,
+    *,
+    timezone: str,
+) -> QuantumDashboardConfig:
+    return dashboard.model_copy(
+        update={
+            "name": structure.dashboard_name or dashboard.name,
+            "team_id": structure.team_id or dashboard.team_id,
+            "summary_tab": _tab_index_for_role(structure.tabs, "summary", dashboard.summary_tab),
+            "errors_tab": _tab_index_for_role(structure.tabs, "errors", dashboard.errors_tab),
+            "timezone": dashboard.timezone or timezone,
+            "source": structure.source,
+            "last_structure_at": structure.discovered_at,
+            "tabs": tab_configs_from_structure(structure),
+            "sections": section_configs_from_structure(structure),
+            "widgets": widget_configs_from_structure(structure, dashboard.widgets),
+        }
+    )
+
+
+def _tab_index_for_role(
+    tabs: list[QuantumDashboardTab],
+    role: str,
+    fallback: int,
+) -> int:
+    return next(
+        (tab.tab_index for tab in tabs if tab.normalized_role == role),
+        fallback,
+    )
 
 
 def _extract_structure(
@@ -494,12 +533,24 @@ def _extract_structure(
 
     layout_cards = _ordered_layout_cards(value)
     if layout_cards:
+        active_section = current_section
+        section_count = 0
         for widget_order, (layout_key, layout_card) in enumerate(layout_cards):
+            text_section = _section_from_text_card(
+                layout_card,
+                current_tab,
+                section_index=section_count,
+            )
+            if text_section is not None:
+                sections.append(text_section)
+                active_section = text_section
+                section_count += 1
+                continue
             widget = _widget_from_candidate(
                 layout_card,
                 source,
                 current_tab,
-                current_section,
+                active_section,
                 fallback_widget_id=layout_key,
                 widget_order=widget_order,
             )
@@ -858,8 +909,6 @@ def _visual_contract_from_candidate(
         or item.get("visual_contract")
         or card.get("contract")
     )
-    if isinstance(explicit, dict):
-        return explicit
     contract: dict[str, Any] = {}
     value = (
         item.get("valueContract")
@@ -882,7 +931,150 @@ def _visual_contract_from_candidate(
         contract["table"] = table
     elif isinstance(card.get("columns"), list):
         contract["table"] = {"columns": card["columns"]}
+    contract.update(_display_settings_from_card(card))
+    query = _query_contract_from_card(card)
+    if query:
+        contract["query"] = query
+    if isinstance(explicit, dict):
+        contract = _merge_contracts(contract, explicit)
     return contract
+
+
+def _section_from_text_card(
+    item: dict[str, Any],
+    tab: QuantumDashboardTab | None,
+    *,
+    section_index: int,
+) -> QuantumDashboardSection | None:
+    if str(item.get("component") or "").strip().casefold() != "text":
+        return None
+    name = _text(item.get("textValue") or item.get("text") or item.get("content"))
+    if not name or tab is None:
+        return None
+    return QuantumDashboardSection(
+        section_id=_text(item.get("id") or item.get("sectionId")),
+        tab_id=tab.tab_id,
+        tab_index=tab.tab_index,
+        name=name,
+        section_index=section_index,
+    )
+
+
+def _display_settings_from_card(card: dict[str, Any]) -> dict[str, Any]:
+    entities = card.get("entities")
+    metric_entities = entities.get("metricEntities") if isinstance(entities, dict) else None
+    if not isinstance(metric_entities, list) or not metric_entities:
+        return {}
+    first_metric = next((item for item in metric_entities if isinstance(item, dict)), None)
+    if first_metric is None:
+        return {}
+    diff = first_metric.get("diff")
+    if not isinstance(diff, dict):
+        return {}
+    kpi_value = diff.get("kpi")
+    kpi: dict[str, Any] = kpi_value if isinstance(kpi_value, dict) else {}
+    raw_format = kpi.get("format") or diff.get("format")
+    tokens = _format_tokens(raw_format)
+    unit = "percent" if "percent" in tokens or diff.get("showPercent") is True else "count"
+    precision = _precision_from_tokens(tokens)
+    settings: dict[str, Any] = {
+        "unit": unit,
+        "scale": 100 if unit == "percent" else 1,
+        "formatter": ":".join(tokens) if tokens else None,
+    }
+    if precision is not None:
+        settings["precision"] = precision
+    if unit == "percent":
+        settings["suffix"] = "%"
+    increases_are = _text(diff.get("increasesAre"))
+    historical_type = _text(diff.get("historicalType"))
+    if increases_are:
+        settings["increases_are"] = increases_are
+    if historical_type:
+        settings["historical_type"] = historical_type
+    return {key: value for key, value in settings.items() if value is not None}
+
+
+def _query_contract_from_card(card: dict[str, Any]) -> dict[str, Any]:
+    entities = card.get("entities")
+    metric_entities = entities.get("metricEntities") if isinstance(entities, dict) else None
+    metric_ids = sorted(
+        {
+            str(item.get("id"))
+            for item in metric_entities or []
+            if isinstance(item, dict) and item.get("id")
+        }
+    )
+    dimensions_value = card.get("dimensions")
+    dimensions = dimensions_value.get("dimensions") if isinstance(dimensions_value, dict) else None
+    query_dimensions: list[dict[str, Any]] = []
+    selections: set[str] = set()
+    for item in dimensions or []:
+        if not isinstance(item, dict):
+            continue
+        metadata_value = item.get("metadata")
+        metadata: dict[str, Any] = metadata_value if isinstance(metadata_value, dict) else {}
+        values = sorted(
+            {
+                str(value)
+                for value in item.get("selections") or []
+                if value is not None and str(value).strip()
+            }
+        )
+        selections.update(values)
+        query_dimensions.append(
+            {
+                "column": _text(item.get("column") or metadata.get("column")),
+                "label": _text(item.get("name") or metadata.get("name")),
+                "selections": values,
+            }
+        )
+    if not metric_ids and not query_dimensions:
+        return {}
+    fingerprint_payload = {
+        "metric_ids": metric_ids,
+        "dimensions": query_dimensions,
+    }
+    return {
+        **fingerprint_payload,
+        "selection_tokens": sorted(selections),
+        "fingerprint": hashlib.sha256(
+            json.dumps(
+                fingerprint_payload,
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+        ).hexdigest(),
+    }
+
+
+def _format_tokens(value: Any) -> list[str]:
+    raw = value if isinstance(value, list) else [value]
+    return [str(item).strip().casefold() for item in raw if item is not None and str(item).strip()]
+
+
+def _precision_from_tokens(tokens: list[str]) -> int | None:
+    mapping = {
+        "integer": 0,
+        "comma": 0,
+        "ones": 0,
+        "tenths": 1,
+        "hundredths": 2,
+        "thousandths": 3,
+    }
+    return next((mapping[token] for token in reversed(tokens) if token in mapping), None)
+
+
+def _merge_contracts(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in override.items():
+        current = merged.get(key)
+        if isinstance(current, dict) and isinstance(value, dict):
+            merged[key] = _merge_contracts(current, value)
+        else:
+            merged[key] = value
+    return merged
 
 
 def _parse_jsonish(value: Any) -> Any:

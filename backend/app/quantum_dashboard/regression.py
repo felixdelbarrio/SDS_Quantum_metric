@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 from datetime import UTC, datetime
 from typing import Any
 
@@ -466,8 +467,12 @@ def _table_row_signature(role: VisualRole, row: Any) -> tuple[Any, ...]:
     elif role == "errors.error_session_percentage_by_app_name":
         keys = ("name", "app_name", "sessions", "sessions_with_error", "error_session_percent")
     elif is_generic_role(role):
-        metric_keys = tuple(sorted(key for key in row if key.startswith("metric_")))
-        dimension_keys = tuple(sorted(key for key in row if key.startswith("dimension_")))
+        metric_keys = tuple(sorted(key for key in row if re.fullmatch(r"metric_\d+", key)))
+        dimension_keys = tuple(
+            sorted(
+                key for key in row if key != "dimension_1" and re.fullmatch(r"dimension_\d+", key)
+            )
+        )
         keys = ("name", *dimension_keys, *metric_keys)
     else:
         keys = ("name",)

@@ -13,7 +13,12 @@ from backend.app.quantum_dashboard.parsers import (
     resolve_primary_value_from_contract,
     resolve_table_contract,
 )
-from backend.app.quantum_dashboard.widget_roles import descriptors_from_widgets
+from backend.app.quantum_dashboard.regression import _table_row_signature
+from backend.app.quantum_dashboard.widget_roles import (
+    descriptors_from_widgets,
+    enrich_calls_with_live_contracts,
+    resolve_call_role,
+)
 
 
 def test_display_contract_preserves_score_percent_and_precision() -> None:
@@ -51,6 +56,28 @@ def test_primary_value_never_sums_or_averages_timeseries_rows() -> None:
 
     assert resolution.status == "missing"
     assert resolution.value is None
+
+
+def test_primary_value_applies_quantum_percent_scale_and_display_precision() -> None:
+    resolution = resolve_primary_value_from_contract(
+        {
+            "visual_contract": {
+                "unit": "percent",
+                "scale": 100,
+                "precision": 2,
+                "suffix": "%",
+                "formatted": "56.86%",
+            }
+        },
+        {"rows": [{"dimensions": [], "metrics": [0.5686002123142]}]},
+    )
+
+    assert resolution.status == "resolved"
+    assert isinstance(resolution.value, DisplayNumberContract)
+    assert resolution.value.raw_value == 0.5686002123142
+    assert resolution.value.display_value == 56.86002123142
+    assert resolution.value.precision == 2
+    assert resolution.value.formatted == "56.86%"
 
 
 def test_chart_contract_preserves_bar_series_bands_legends_period_and_timezone() -> None:
@@ -100,6 +127,51 @@ def test_chart_contract_preserves_bar_series_bands_legends_period_and_timezone()
     assert resolution.value.legends[0].label == "Sessions"
     assert resolution.value.period_label == "Jul 01, 2026 (COT)"
     assert resolution.value.timezone == "America/Bogota"
+
+
+def test_chart_contract_populates_visible_series_from_quantum_timeseries() -> None:
+    chart = {
+        "chart_type": "line",
+        "x_axis": {
+            "ticks": [
+                {"value": "Jul 09", "label": "Jul 09"},
+                {"value": "Jul 10", "label": "Jul 10"},
+            ]
+        },
+        "y_axis": {"unit": "percent", "ticks": []},
+        "series": [
+            {
+                "series_id": "all-users",
+                "label": "All Users",
+                "kind": "line",
+                "order": 0,
+                "points": [],
+            }
+        ],
+        "bands": [],
+        "legends": [{"id": "all-users", "label": "All Users", "order": 0}],
+        "period_label": "Last 7 Days (Jul 04 - 10, 2026)",
+        "timezone": "America/Bogota",
+        "granularity": "day",
+    }
+    response = {
+        "rows": [
+            {"dimensions": ["2026-07-09T05:00:00Z"], "metrics": [0.0287]},
+            {"dimensions": ["2026-07-10T05:00:00Z"], "metrics": [0.0]},
+        ]
+    }
+
+    resolution = resolve_chart_contract(
+        {"visual_contract": {"scale": 100, "chart": chart}}, response
+    )
+
+    assert resolution.status == "resolved"
+    assert isinstance(resolution.value, QuantumChartContract)
+    assert [point.label for point in resolution.value.series[0].points] == [
+        "Jul 09",
+        "Jul 10",
+    ]
+    assert [point.value for point in resolution.value.series[0].points] == [2.87, 0.0]
 
 
 def test_table_contract_preserves_exact_headers_and_default_sort() -> None:
@@ -163,6 +235,101 @@ def test_duplicate_card_id_correlation_is_ambiguous() -> None:
     assert resolution.status == "ambiguous"
     assert resolution.error_code == "failed_ambiguous_widget_correlation"
     assert len(resolution.candidates) == 2
+
+
+def test_duplicate_card_id_is_resolved_by_declared_quantum_selection() -> None:
+    widgets = [
+        QuantumWidgetConfig(
+            role=f"generic.0.table.{name}",
+            title=name,
+            widget_id=f"widget-{name}",
+            card_id="shared-card",
+            widget_type="TABLE",
+            visual_contract={
+                "query": {
+                    "metric_ids": ["sessions"],
+                    "selection_tokens": selections,
+                    "fingerprint": name,
+                }
+            },
+            enabled=True,
+            supported=True,
+        )
+        for name, selections in (
+            ("technical", ["Long Running Spinner", "Datalayer Error"]),
+            ("usability", ["Rage Click", "Possible Frustration"]),
+        )
+    ]
+    call = {
+        "card_id": "shared-card",
+        "request_json": {
+            "metrics": ["sessions"],
+            "selections": ["Rage Click", "Possible Frustration"],
+        },
+    }
+
+    role, descriptor = resolve_call_role(
+        call,
+        descriptors=descriptors_from_widgets(widgets),
+    )
+
+    assert role == "generic.0.table.usability"
+    assert descriptor is not None
+    assert descriptor.widget_id == "widget-usability"
+
+
+def test_empty_table_reuses_only_schema_from_same_quantum_metric() -> None:
+    widgets = [
+        QuantumWidgetConfig(
+            role=f"generic.0.table.{name}",
+            title=name,
+            widget_id=f"widget-{name}",
+            card_id="shared-card",
+            widget_type="TABLE",
+            visual_contract={
+                "query": {
+                    "metric_ids": ["sessions-metric"],
+                    "fingerprint": name,
+                }
+            },
+            enabled=True,
+            supported=True,
+        )
+        for name in ("technical", "usability")
+    ]
+    columns = [
+        {"key": "name", "label": "Error Name", "data_type": "text"},
+        {"key": "metric_1", "label": "Sessions (count)", "data_type": "number"},
+    ]
+
+    rows = enrich_calls_with_live_contracts(
+        [{"widget_id": "widget-usability", "card_id": "shared-card"}],
+        descriptors=descriptors_from_widgets(widgets),
+        live_contracts={
+            "widget-technical": {"table": {"columns": columns, "rows": [{"name": "Rage Click"}]}}
+        },
+    )
+
+    table = rows[0]["visual_contract"]["table"]
+    assert table["columns"] == columns
+    assert table["rows"] == []
+
+
+def test_generic_table_signature_ignores_duplicate_and_formatted_fields() -> None:
+    role = "generic.0.table.errors"
+    web_row = {
+        "dimension_1": "Long Running Spinner",
+        "name": "Long Running Spinner",
+        "metric_1": 2.0,
+    }
+    local_row = {
+        "name": "Long Running Spinner",
+        "name_formatted": "Long Running Spinner",
+        "metric_1": 2.0,
+        "metric_1_formatted": "2",
+    }
+
+    assert _table_row_signature(role, web_row) == _table_row_signature(role, local_row)
 
 
 def _display(value: float, unit: str, precision: int, formatted: str) -> dict[str, object]:

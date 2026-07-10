@@ -3,6 +3,7 @@ import type { DynamicDashboardSection } from "../types";
 import { WidgetRenderer } from "./WidgetRenderer";
 
 type LayoutProperties = CSSProperties & {
+  "--widget-column-start"?: number;
   "--widget-column-span"?: number;
   "--widget-row-span"?: number;
 };
@@ -23,8 +24,12 @@ export function DashboardSectionGrid({
       <div className="dashboard-widget-grid dashboard-widget-layout-grid">
         {section.widgets.map((widget) => {
           const style: LayoutProperties = {
+            "--widget-column-start":
+              widget.layout_x !== null && widget.layout_x !== undefined
+                ? Math.max(1, Math.min(16, widget.layout_x + 1))
+                : undefined,
             "--widget-column-span": widget.layout_width
-              ? Math.min(12, widget.layout_width)
+              ? Math.min(16, widget.layout_width)
               : undefined,
             "--widget-row-span": widget.layout_height
               ? Math.max(1, widget.layout_height)

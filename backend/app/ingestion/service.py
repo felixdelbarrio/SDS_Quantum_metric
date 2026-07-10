@@ -15,9 +15,13 @@ from backend.app.ingestion.policy import IngestionRange, build_ingestion_range
 from backend.app.ingestion.progress import update_progress
 from backend.app.observability.sanitizer import sanitize_error
 from backend.app.quantum.config_store import QuantumConfigStore
-from backend.app.quantum.schemas import QuantumDashboardConfig
+from backend.app.quantum.schemas import QuantumConfigUpdate, QuantumDashboardConfig
 from backend.app.quantum_dashboard.builder import build_derived_datasets
 from backend.app.quantum_dashboard.capture import capture_quantum_dashboard_cards
+from backend.app.quantum_dashboard.dashboard_structure import (
+    dashboard_config_from_structure,
+    discover_dashboard_structure_via_browser,
+)
 from backend.app.quantum_dashboard.discovery import discover_dashboard_from_config
 from backend.app.quantum_dashboard.models import DerivedBuildResult, RegressionReport
 from backend.app.quantum_dashboard.periods import parse_date, zoneinfo_for
@@ -38,6 +42,7 @@ INGESTION_TERMINAL_STATUSES = {
     "failed_no_session",
     "failed_dashboard_not_found",
     "failed_no_widgets",
+    "failed_dashboard_contract",
     "failed_no_analytics_responses",
     "failed_coverage_incomplete",
     "failed_regression",
@@ -178,13 +183,6 @@ class IngestionService:
                     f"El dashboard default de {request.country.value} no esta validado. "
                     "Ve a Configuracion y valida el dashboard.",
                 )
-            enabled_roles = set(country_config.enabled_widget_roles())
-            if not enabled_roles:
-                raise IngestionFailure(
-                    "failed_no_widgets",
-                    f"No hay widgets habilitados para {request.country.value}. "
-                    "Ve a Configuracion y habilita al menos un widget soportado.",
-                )
             discovery = discover_dashboard_from_config(
                 settings=self.settings,
                 country_config=country_config,
@@ -217,6 +215,59 @@ class IngestionService:
             else:
                 cookies = self.cookie_provider.load(config.browser.value, str(discovery.base_url))
                 capture_session_mode = config.session_mode.value
+            structure, structure_error = await asyncio.to_thread(
+                discover_dashboard_structure_via_browser,
+                settings=self.settings,
+                cookies=cookies,
+                country=country_config.country,
+                base_url=discovery.base_url,
+                dashboard_id=dashboard.dashboard_id,
+                team_id=dashboard.team_id or discovery.team_id,
+                wait_seconds=self.settings.quantum_capture_timeout_seconds,
+                session_mode=capture_session_mode,
+            )
+            if structure.widgets:
+                dashboard = dashboard_config_from_structure(
+                    dashboard,
+                    structure,
+                    timezone=country_config.timezone,
+                )
+                country_config = country_config.model_copy(
+                    update={
+                        "dashboards": [
+                            dashboard if item.dashboard_id == dashboard.dashboard_id else item
+                            for item in country_config.dashboards
+                        ]
+                    }
+                )
+                config = config.model_copy(
+                    update={
+                        "countries": [
+                            country_config if item.country == country_config.country else item
+                            for item in config.countries
+                        ]
+                    }
+                )
+                self.config_store.write(
+                    QuantumConfigUpdate.model_validate(config.model_dump(mode="python"))
+                )
+                discovery = discover_dashboard_from_config(
+                    settings=self.settings,
+                    country_config=country_config,
+                )
+            elif not _dashboard_has_query_contracts(dashboard):
+                raise IngestionFailure(
+                    "failed_dashboard_contract",
+                    structure_error
+                    or "Quantum no ha expuesto la estructura contractual del dashboard.",
+                )
+            enabled_roles = set(country_config.enabled_widget_roles())
+            if not enabled_roles:
+                raise IngestionFailure(
+                    "failed_no_widgets",
+                    f"No hay widgets habilitados para {request.country.value}. "
+                    "Ve a Configuracion y habilita al menos un widget soportado.",
+                )
             chunks = day_chunks or plan_ingestion_chunks(
                 ingestion_range,
                 chunk_days=(
@@ -316,11 +367,12 @@ class IngestionService:
                         cookies=cookies,
                         country=request.country.value,
                         base_url=discovery.base_url,
-                        dashboard_id=discovery.dashboard_id,
+                        dashboard_id=dashboard.dashboard_id,
                         team_id=discovery.team_id,
                         summary_tab=discovery.summary_tab,
                         errors_tab=discovery.errors_tab,
                         tabs=discovery.tabs,
+                        widgets=dashboard.widgets,
                         ingestion_id=job.ingestion_id,
                         ingestion_range=chunk_range,
                         session_mode=capture_session_mode,
@@ -809,3 +861,19 @@ def _filter_enabled_rows(
             continue
         filtered.append(row)
     return filtered
+
+
+def _dashboard_has_query_contracts(dashboard: QuantumDashboardConfig) -> bool:
+    enabled = [
+        widget
+        for widget in dashboard.widgets
+        if widget.enabled and widget.supported and widget.role
+    ]
+    return bool(enabled) and all(
+        widget.query_fingerprint
+        or (
+            isinstance(widget.visual_contract.get("query"), dict)
+            and bool(widget.visual_contract["query"].get("fingerprint"))
+        )
+        for widget in enabled
+    )

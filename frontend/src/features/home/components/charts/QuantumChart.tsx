@@ -96,6 +96,7 @@ export function QuantumChart({
           <QuantumChartBands
             bands={payload.bands}
             ticks={payload.x_axis.ticks}
+            yAxis={payload.y_axis}
             width={size.width}
             height={size.height}
             padding={size.padding}
@@ -334,17 +335,29 @@ function smoothPath(points: Array<Pick<RenderedPoint, "x" | "y">>) {
     const following = points[index + 2] ?? next;
     const controlOne = {
       x: current.x + (next.x - previous.x) / 6,
-      y: current.y + (next.y - previous.y) / 6,
+      y: boundedControlY(
+        current.y + (next.y - previous.y) / 6,
+        current.y,
+        next.y,
+      ),
     };
     const controlTwo = {
       x: next.x - (following.x - current.x) / 6,
-      y: next.y - (following.y - current.y) / 6,
+      y: boundedControlY(
+        next.y - (following.y - current.y) / 6,
+        current.y,
+        next.y,
+      ),
     };
     commands.push(
       `C ${formatCoord(controlOne.x)} ${formatCoord(controlOne.y)} ${formatCoord(controlTwo.x)} ${formatCoord(controlTwo.y)} ${formatCoord(next.x)} ${formatCoord(next.y)}`,
     );
   }
   return commands.join(" ");
+}
+
+function boundedControlY(value: number, start: number, end: number) {
+  return Math.min(Math.max(value, Math.min(start, end)), Math.max(start, end));
 }
 
 function areaPath(

@@ -38,7 +38,11 @@ from backend.app.quantum_dashboard.models import (
     VisualRole,
     WebSnapshot,
 )
-from backend.app.quantum_dashboard.parsers import parse_card
+from backend.app.quantum_dashboard.parsers import (
+    chart_payload_from_contract,
+    parse_card,
+    resolve_chart_contract,
+)
 from backend.app.quantum_dashboard.periods import format_period_label, parse_datetime
 from backend.app.quantum_dashboard.semantics import semantic_intent, semantic_state
 from backend.app.quantum_dashboard.widget_roles import (
@@ -185,11 +189,9 @@ def build_derived_datasets(
             )
             continue
 
-        result = _with_related_timeseries(
+        result = _with_related_chart(
             result,
             related_calls_by_role.get(role),
-            role,
-            range_key=range_key,
         )
 
         canonical_contract = _canonical_widget_contract(contract, result, call)
@@ -372,6 +374,18 @@ def _correlation_errors(
         result = correlate_call_to_widget(call, active_descriptors)
         if result.status != "ambiguous":
             continue
+        candidate_ids = {candidate.widget_id for candidate in result.candidates}
+        candidate_descriptors = [
+            descriptor
+            for descriptor in active_descriptors
+            if (descriptor.widget_id or descriptor.role) in candidate_ids
+        ]
+        if (
+            candidate_descriptors
+            and all(descriptor.widget_type == "TABLE" for descriptor in candidate_descriptors)
+            and str(call.get("view_name") or "") not in {"table", "topN", "dimensionQuery"}
+        ):
+            continue
         card_id = _text(call.get("card_id")) or "unknown"
         key = (card_id, str(call.get("view_name") or "unknown"))
         errors[key] = {
@@ -445,53 +459,42 @@ def _is_non_widget_query(call: dict[str, Any]) -> bool:
     return str(call.get("view_name") or "") in {"navbarMetricsQuery", "dashboardReplayQuery"}
 
 
-def _with_related_timeseries(
+def _with_related_chart(
     result: ParserResult,
     related_calls: RelatedRoleCalls | None,
-    role: VisualRole,
-    *,
-    range_key: str,
 ) -> ParserResult:
-    del range_key
     if related_calls is None:
         return result
     widget = result.data.get("widget")
     if not isinstance(widget, dict):
         return result
-    candidates = [
-        candidate
-        for candidate in (
-            _explicit_chart_payload(related_calls.base_timeseries, role),
-            _explicit_chart_payload(related_calls.comparison_timeseries, role),
-        )
-        if candidate is not None
-    ]
-    unique_candidates = {hash_json(candidate): candidate for candidate in candidates}
-    if len(unique_candidates) == 1 and "chart_payload" not in widget:
-        widget["chart_payload"] = next(iter(unique_candidates.values()))
+    chart_payload = _explicit_chart_payload(related_calls.base_timeseries)
+    if chart_payload is None:
+        chart_payload = _explicit_chart_payload(related_calls.comparison_timeseries)
+    if chart_payload is not None:
+        widget["chart_payload"] = chart_payload
     return ParserResult(role=result.role, status=result.status, data=result.data)
 
 
-def _parsed_widget(call: dict[str, Any] | None, role: VisualRole) -> dict[str, Any] | None:
+def _explicit_chart_payload(call: dict[str, Any] | None) -> dict[str, Any] | None:
     if call is None:
         return None
-    parsed = parse_card(call, role)
-    widget = parsed.data.get("widget") if parsed.status == "ok" else None
-    return widget if isinstance(widget, dict) else None
-
-
-def _explicit_chart_payload(call: dict[str, Any] | None, role: VisualRole) -> dict[str, Any] | None:
-    widget = _parsed_widget(call, role)
-    if not widget:
+    response_json = parse_json_object(call.get("response_json"))
+    resolution = resolve_chart_contract(call, response_json)
+    if resolution.status != "resolved" or not isinstance(resolution.value, QuantumChartContract):
         return None
-    payload = widget.get("chart_payload")
-    return payload if isinstance(payload, dict) else None
+    payload = chart_payload_from_contract(resolution.value)
+    return payload if any(series.get("points") for series in payload["series"]) else None
 
 
 def _call_score(role: VisualRole, call: dict[str, Any]) -> int:
     view_name = str(call.get("view_name") or "")
     score = int(call.get("row_count") or 0)
     if is_generic_role(role) and str(call.get("card_type") or "").upper() == "TABLE":
+        visual_contract = parse_json_object(call.get("visual_contract"))
+        table_contract = visual_contract.get("table")
+        if isinstance(table_contract, dict) and table_contract.get("columns"):
+            score += 10_000 + len(table_contract.get("rows") or [])
         if view_name == "table":
             score += 1000
         if view_name == "topN":

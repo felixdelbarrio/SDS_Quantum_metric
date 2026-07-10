@@ -21,6 +21,10 @@ from backend.app.ingestion.time_rewriter import (
     validate_query_time_range,
 )
 from backend.app.observability.sanitizer import sanitize
+from backend.app.quantum_dashboard.visual_contracts import (
+    collect_visible_widget_contracts,
+    merge_visual_contract_maps,
+)
 from backend.app.storage.parquet_store import hash_json
 
 
@@ -72,6 +76,7 @@ class QuantumAnalyticsCaptureSession:
         self._playwright: Any | None = None
         self._browser: Any | None = None
         self._context: Any | None = None
+        self.last_visual_contracts: dict[str, dict[str, Any]] = {}
 
     def __enter__(self) -> QuantumAnalyticsCaptureSession:
         _configure_playwright_browser_path()
@@ -138,6 +143,7 @@ class QuantumAnalyticsCaptureSession:
         }
         routed_payloads_by_id: dict[int, dict[str, Any]] = {}
         routed_payloads_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
+        visual_contracts: dict[str, dict[str, Any]] = {}
         page = self._context.new_page()
 
         def on_route(route: Any) -> None:
@@ -304,8 +310,20 @@ class QuantumAnalyticsCaptureSession:
         page.on("requestfailed", on_request_failed)
         try:
             page.goto(dashboard_url, wait_until="domcontentloaded", timeout=60_000)
-            _wait_for_analytics_settle(page, rows, analytics_state, self.wait_seconds)
+            _wait_for_analytics_settle(
+                page,
+                rows,
+                analytics_state,
+                self.wait_seconds,
+                visual_contracts=visual_contracts,
+                timezone=ingestion_range.timezone if ingestion_range else "UTC",
+            )
         finally:
+            _collect_page_visual_contracts(
+                page,
+                visual_contracts,
+                timezone=ingestion_range.timezone if ingestion_range else "UTC",
+            )
             diagnostics = _capture_diagnostics(
                 page,
                 analytics_state,
@@ -313,6 +331,7 @@ class QuantumAnalyticsCaptureSession:
                 request_failures=request_failures,
             )
             page.close()
+        self.last_visual_contracts = visual_contracts
         if range_validation_errors and not rows:
             unique_errors = list(dict.fromkeys(range_validation_errors))
             raise RuntimeError(
@@ -411,6 +430,9 @@ def _wait_for_analytics_settle(
     rows: list[dict[str, Any]],
     analytics_state: dict[str, Any],
     wait_seconds: int,
+    *,
+    visual_contracts: dict[str, dict[str, Any]] | None = None,
+    timezone: str = "UTC",
 ) -> None:
     started = time.monotonic()
     deadline = started + max(5, wait_seconds)
@@ -421,6 +443,8 @@ def _wait_for_analytics_settle(
         page.wait_for_timeout(500)
         now = time.monotonic()
         if now >= next_scroll_at:
+            if visual_contracts is not None:
+                _collect_page_visual_contracts(page, visual_contracts, timezone=timezone)
             _scroll_dashboard(page)
             next_scroll_at = now + 1.5
         if rows and now - started >= minimum_seconds:
@@ -429,6 +453,19 @@ def _wait_for_analytics_settle(
                 return
         if not rows and now - started >= 8 and _looks_unauthenticated(page):
             return
+
+
+def _collect_page_visual_contracts(
+    page: Any,
+    contracts: dict[str, dict[str, Any]],
+    *,
+    timezone: str,
+) -> None:
+    try:
+        captured = collect_visible_widget_contracts(page, timezone=timezone)
+    except Exception:
+        return
+    merge_visual_contract_maps(contracts, captured)
 
 
 def _prepare_dashboard_page(page: Any) -> None:

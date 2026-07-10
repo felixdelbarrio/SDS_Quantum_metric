@@ -49,6 +49,7 @@ from backend.app.quantum_dashboard.dashboard_resources import (
     write_dashboard_resources_cache,
 )
 from backend.app.quantum_dashboard.dashboard_structure import (
+    dashboard_config_from_structure,
     discover_dashboard_structure_via_browser,
     section_configs_from_structure,
     structure_from_dashboard_config,
@@ -723,26 +724,10 @@ def discover_quantum_dashboard_structure(
         payload = cached_structure.model_dump(mode="json")
         payload["warning"] = error or "Se conserva la ultima estructura real guardada."
         return payload
-    dashboard_with_structure = dashboard.model_copy(
-        update={
-            "name": structure.dashboard_name or dashboard.name,
-            "summary_tab": _structure_tab_index(
-                "summary",
-                dashboard.summary_tab,
-                structure.tabs,
-            ),
-            "errors_tab": _structure_tab_index(
-                "errors",
-                dashboard.errors_tab,
-                structure.tabs,
-            ),
-            "tabs": tab_configs_from_structure(structure),
-            "sections": section_configs_from_structure(structure),
-            "widgets": widget_configs_from_structure(structure, dashboard.widgets),
-            "timezone": dashboard.timezone or country_config.timezone,
-            "last_structure_at": structure.discovered_at,
-            "source": structure.source,
-        }
+    dashboard_with_structure = dashboard_config_from_structure(
+        dashboard,
+        structure,
+        timezone=country_config.timezone,
     )
     updated_countries = [
         item.model_copy(

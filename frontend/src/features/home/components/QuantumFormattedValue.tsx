@@ -8,7 +8,7 @@ export function QuantumFormattedValue({
   if (display.formatted) return <>{display.formatted}</>;
   if (display.display_value === null || display.display_value === undefined)
     return <>-</>;
-  const value = display.display_value.toLocaleString(undefined, {
+  const value = display.display_value.toLocaleString("en-US", {
     minimumFractionDigits: display.precision,
     maximumFractionDigits: display.precision,
     useGrouping: display.formatter !== "plain",
