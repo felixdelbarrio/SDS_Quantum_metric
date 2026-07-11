@@ -24,6 +24,7 @@ from backend.app.observability.sanitizer import sanitize
 from backend.app.quantum_dashboard.visual_contracts import (
     collect_visible_widget_contracts,
     merge_visual_contract_maps,
+    visual_contracts_are_complete,
 )
 from backend.app.storage.parquet_store import hash_json
 
@@ -143,6 +144,8 @@ class QuantumAnalyticsCaptureSession:
         }
         routed_payloads_by_id: dict[int, dict[str, Any]] = {}
         routed_payloads_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
+        routed_range_status_by_id: dict[int, str] = {}
+        routed_range_status_by_key: dict[tuple[str, str, str], str] = {}
         visual_contracts: dict[str, dict[str, Any]] = {}
         page = self._context.new_page()
 
@@ -157,16 +160,20 @@ class QuantumAnalyticsCaptureSession:
             analytics_state["requests"] = int(analytics_state["requests"]) + 1
             raw_post_data = request.post_data or ""
             request_json = _parse_json(raw_post_data)
-            if _preserve_quantum_native_range(request_json):
+            request_key = (request.method, request.url, raw_post_data)
+            if _preserve_request_range(request_json, ingestion_range):
                 routed_payloads_by_id[id(request)] = request_json
-                routed_payloads_by_key[(request.method, request.url, raw_post_data)] = request_json
+                routed_payloads_by_key[request_key] = request_json
+                routed_range_status_by_id[id(request)] = "original"
+                routed_range_status_by_key[request_key] = "original"
                 route.continue_()
                 return
             rewritten, changed = apply_ingestion_range(request_json, ingestion_range)
             routed_payloads_by_id[id(request)] = rewritten if changed else request_json
-            routed_payloads_by_key[(request.method, request.url, raw_post_data)] = (
-                rewritten if changed else request_json
-            )
+            routed_payloads_by_key[request_key] = rewritten if changed else request_json
+            range_status = "rewritten" if changed else "original"
+            routed_range_status_by_id[id(request)] = range_status
+            routed_range_status_by_key[request_key] = range_status
             if changed:
                 route.continue_(
                     post_data=json.dumps(rewritten, ensure_ascii=False, separators=(",", ":"))
@@ -183,12 +190,16 @@ class QuantumAnalyticsCaptureSession:
             cast(list[int], analytics_state["statuses"]).append(int(response.status))
             request = response.request
             raw_post_data = request.post_data or ""
+            request_key = (request.method, request.url, raw_post_data)
             request_json = routed_payloads_by_id.pop(id(request), None)
             if request_json is None:
                 request_json = routed_payloads_by_key.pop(
-                    (request.method, request.url, raw_post_data),
+                    request_key,
                     _parse_json(raw_post_data),
                 )
+            range_status = routed_range_status_by_id.pop(id(request), None)
+            if range_status is None:
+                range_status = routed_range_status_by_key.pop(request_key, "original")
             try:
                 response_json = _parse_json(response.body().decode("utf-8", "replace"))
             except Exception:
@@ -199,7 +210,7 @@ class QuantumAnalyticsCaptureSession:
                 response_json,
             )
             range_validation = None
-            if ingestion_range is not None and not _preserve_quantum_native_range(request_json):
+            if ingestion_range is not None and range_status == "rewritten":
                 validation_target = IngestionChunk(
                     start=ingestion_range.start,
                     end=ingestion_range.end,
@@ -290,7 +301,7 @@ class QuantumAnalyticsCaptureSession:
                     if range_validation
                     else "not_applicable",
                     "range_validation_error": range_validation.error if range_validation else None,
-                    "time_rewrite_status": "rewritten" if ingestion_range else "original",
+                    "time_rewrite_status": range_status,
                 }
             )
 
@@ -404,6 +415,34 @@ def _preserve_quantum_native_range(request_json: dict[str, Any]) -> bool:
     return card_type == "TABLE" and view_name in {"topN", "table", "coreMetrics"}
 
 
+def _preserve_request_range(request_json: dict[str, Any], ingestion_range: IngestionRange) -> bool:
+    return _preserve_quantum_native_range(request_json) or _request_matches_ingestion_range(
+        request_json, ingestion_range
+    )
+
+
+def _request_matches_ingestion_range(
+    request_json: dict[str, Any], ingestion_range: IngestionRange
+) -> bool:
+    if ingestion_range.capture_mode != "range_contract" or ingestion_range.range_key not in {
+        "today",
+        "yesterday",
+        "last_7_days",
+    }:
+        return False
+    top_level_ts = request_json.get("ts")
+    query_range = (
+        extract_query_time_range({"ts": top_level_ts})
+        if isinstance(top_level_ts, list)
+        else extract_query_time_range(request_json)
+    )
+    if query_range is None:
+        return False
+    start_delta = abs((query_range.start - ingestion_range.start).total_seconds())
+    end_delta = abs((query_range.end - ingestion_range.end).total_seconds())
+    return start_delta <= 1 and end_delta <= 90
+
+
 def _effective_source_end(
     requested_end: datetime | None,
     response_json: dict[str, Any],
@@ -438,11 +477,13 @@ def _wait_for_analytics_settle(
     deadline = started + max(5, wait_seconds)
     quiet_seconds = 8.0
     minimum_seconds = 35.0
+    visual_wait_limit = min(float(max(5, wait_seconds)), 90.0)
     next_scroll_at = started + 2.0
     while time.monotonic() < deadline:
         page.wait_for_timeout(500)
         now = time.monotonic()
         if now >= next_scroll_at:
+            _dismiss_dashboard_overlays(page)
             if visual_contracts is not None:
                 _collect_page_visual_contracts(page, visual_contracts, timezone=timezone)
             _scroll_dashboard(page)
@@ -450,7 +491,12 @@ def _wait_for_analytics_settle(
         if rows and now - started >= minimum_seconds:
             last_response_at = float(analytics_state.get("last_response_at") or started)
             if now - last_response_at >= quiet_seconds:
-                return
+                if (
+                    visual_contracts is None
+                    or visual_contracts_are_complete(visual_contracts)
+                    or now - started >= visual_wait_limit
+                ):
+                    return
         if not rows and now - started >= 8 and _looks_unauthenticated(page):
             return
 
@@ -471,6 +517,41 @@ def _collect_page_visual_contracts(
 def _prepare_dashboard_page(page: Any) -> None:
     try:
         page.set_viewport_size({"width": 1920, "height": 2400})
+    except Exception:
+        return
+
+
+def _dismiss_dashboard_overlays(page: Any) -> None:
+    try:
+        page.evaluate(
+            """
+            () => {
+              const welcome = Array.from(document.querySelectorAll("h1, h2, h3, div"))
+                .find((node) => (node.textContent || "").trim() === "Welcome to Quantum Metric");
+              if (!welcome) return;
+              let container = welcome.parentElement;
+              while (container && !/Welcome to Quantum Metric/.test(container.textContent || "")) {
+                container = container.parentElement;
+              }
+              const scope = container?.parentElement || container || document.body;
+              const close = Array.from(scope.querySelectorAll("*"))
+                .find((node) => {
+                  const text = (node.textContent || "").trim();
+                  const label = [
+                    node.getAttribute("aria-label") || "",
+                    node.getAttribute("title") || "",
+                  ].join(" ");
+                  const rect = node.getBoundingClientRect();
+                  return (
+                    rect.width > 0 &&
+                    rect.height > 0 &&
+                    ((node.children.length === 0 && text === "×") || /close/i.test(label))
+                  );
+                });
+              close?.click();
+            }
+            """
+        )
     except Exception:
         return
 

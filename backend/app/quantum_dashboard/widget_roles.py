@@ -72,6 +72,15 @@ def resolve_call_role(
     descriptor = _descriptor_for_call(call, descriptors or [], enabled_roles)
     if descriptor is not None:
         return descriptor.role, descriptor
+    explicit_role = _text(call.get("visual_role") or call.get("card_role"))
+    if explicit_role and (enabled_roles is None or explicit_role in enabled_roles):
+        role_descriptor = _unique_descriptor_for_role(
+            explicit_role,
+            descriptors or [],
+            enabled_roles,
+        )
+        if role_descriptor is not None:
+            return explicit_role, role_descriptor
     if _has_ambiguous_strong_match(call, descriptors or [], enabled_roles):
         return None, None
     mapped = map_card_role(call)
@@ -80,7 +89,7 @@ def resolve_call_role(
     role = str(mapped)
     if enabled_roles is not None and role not in enabled_roles:
         return None, None
-    return role, None
+    return role, _unique_descriptor_for_role(role, descriptors or [], enabled_roles)
 
 
 def enrich_call_with_descriptor(
@@ -95,11 +104,11 @@ def enrich_call_with_descriptor(
         enriched["card_role"] = role
         enriched["visual_role"] = role
     if descriptor is not None:
-        enriched["card_title"] = enriched.get("card_title") or descriptor.title
-        enriched["widget_id"] = enriched.get("widget_id") or descriptor.widget_id
-        enriched["card_id"] = enriched.get("card_id") or descriptor.card_id
-        enriched["card_type"] = enriched.get("card_type") or descriptor.widget_type
-        enriched["widget_type"] = enriched.get("widget_type") or descriptor.widget_type
+        enriched["card_title"] = descriptor.title or enriched.get("card_title")
+        enriched["widget_id"] = descriptor.widget_id or enriched.get("widget_id")
+        enriched["card_id"] = descriptor.card_id or enriched.get("card_id")
+        enriched["card_type"] = descriptor.widget_type or enriched.get("card_type")
+        enriched["widget_type"] = descriptor.widget_type or enriched.get("widget_type")
         enriched["tab"] = descriptor.tab
         enriched["tab_id"] = descriptor.tab_id
         enriched["tab_name"] = descriptor.tab_name
@@ -324,6 +333,22 @@ def _has_ambiguous_strong_match(
         if len(candidates) > 1:
             return True
     return False
+
+
+def _unique_descriptor_for_role(
+    role: str,
+    descriptors: list[WidgetRoleDescriptor],
+    enabled_roles: set[str] | None,
+) -> WidgetRoleDescriptor | None:
+    candidates = [
+        descriptor
+        for descriptor in descriptors
+        if descriptor.role == role
+        and descriptor.enabled
+        and descriptor.supported
+        and (enabled_roles is None or descriptor.role in enabled_roles)
+    ]
+    return candidates[0] if len(candidates) == 1 else None
 
 
 def _text(value: Any) -> str | None:

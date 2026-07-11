@@ -206,6 +206,7 @@ class DerivedBuildResult(BaseModel):
     missing_roles: list[str] = Field(default_factory=list)
     parser_errors: list[dict[str, str]] = Field(default_factory=list)
     regression_status: RegressionStatus
+    published: bool = False
 
 
 class RegressionCardResult(BaseModel):

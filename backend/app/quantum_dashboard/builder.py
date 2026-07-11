@@ -215,86 +215,13 @@ def build_derived_datasets(
         )
 
     validation_errors = _validate_required_chart_payloads(
-        selected, summary_widgets, errors_widgets, snapshots, enabled_role_set
+        selected,
+        summary_widgets,
+        errors_widgets,
+        enabled_role_set,
+        descriptors,
     )
     parser_errors.extend(validation_errors)
-
-    _write_range_dataset(
-        store,
-        country,
-        DATASET_VISUAL_CONTRACTS,
-        [contract.model_dump(mode="json") for contract in contracts],
-        file_name="visual_contracts.parquet",
-        range_key=range_key,
-    )
-    _write_range_dataset(
-        store,
-        country,
-        DATASET_WIDGET_CONTRACTS,
-        widget_contract_rows,
-        range_key=range_key,
-    )
-    _write_range_dataset(
-        store,
-        country,
-        DATASET_DASHBOARD_CARDS,
-        [_dashboard_card_row(contract) for contract in contracts],
-        file_name="dashboard_cards.parquet",
-        range_key=range_key,
-    )
-    _write_range_dataset(
-        store,
-        country,
-        DATASET_WEB_SNAPSHOTS,
-        [snapshot.model_dump(mode="json") for snapshot in snapshots],
-        file_name="web_snapshots.parquet",
-        range_key=range_key,
-    )
-    _write_range_dataset(
-        store, country, DATASET_SUMMARY_WIDGETS, summary_widgets, range_key=range_key
-    )
-    _write_range_dataset(store, country, DATASET_SUMMARY_TABLE, summary_rows, range_key=range_key)
-    _write_range_dataset(
-        store, country, DATASET_ERRORS_WIDGETS, errors_widgets, range_key=range_key
-    )
-    _write_range_dataset(
-        store, country, DATASET_ERRORS_TOP_ERRORS, top_error_rows, range_key=range_key
-    )
-    _write_range_dataset(
-        store, country, DATASET_ERRORS_APP_NAME, error_app_rows, range_key=range_key
-    )
-    _write_range_dataset(store, country, DATASET_TIMESERIES, timeseries_rows, range_key=range_key)
-    _write_range_dataset(
-        store, country, DATASET_CHART_PAYLOADS, chart_payload_rows, range_key=range_key
-    )
-    _write_range_dataset(
-        store,
-        country,
-        DATASET_DASHBOARD_TABS,
-        _dashboard_tab_rows(contracts),
-        range_key=range_key,
-    )
-    _write_range_dataset(
-        store,
-        country,
-        DATASET_DASHBOARD_WIDGETS,
-        dashboard_widget_rows,
-        range_key=range_key,
-    )
-    _write_range_dataset(
-        store,
-        country,
-        DATASET_WIDGET_CHART_PAYLOADS,
-        chart_payload_rows,
-        range_key=range_key,
-    )
-    _write_range_dataset(
-        store,
-        country,
-        DATASET_WIDGET_TABLE_PAYLOADS,
-        widget_table_payload_rows,
-        range_key=range_key,
-    )
 
     expected_roles = sorted(enabled_role_set)
     missing = [role for role in expected_roles if role not in selected]
@@ -306,6 +233,25 @@ def build_derived_datasets(
         regression_status = "failed_parse_error"
     if validation_errors:
         regression_status = "failed_missing_chart_payload"
+    publishable = not missing and not parser_errors
+    if publishable:
+        _publish_derived_datasets(
+            store=store,
+            country=country,
+            range_key=range_key,
+            contracts=contracts,
+            snapshots=snapshots,
+            widget_contract_rows=widget_contract_rows,
+            summary_widgets=summary_widgets,
+            summary_rows=summary_rows,
+            errors_widgets=errors_widgets,
+            top_error_rows=top_error_rows,
+            error_app_rows=error_app_rows,
+            timeseries_rows=timeseries_rows,
+            chart_payload_rows=chart_payload_rows,
+            dashboard_widget_rows=dashboard_widget_rows,
+            widget_table_payload_rows=widget_table_payload_rows,
+        )
 
     return DerivedBuildResult(
         ingestion_id=ingestion_id,
@@ -315,25 +261,97 @@ def build_derived_datasets(
         captured_cards=len(selected),
         mandatory_cards=len(expected_roles),
         mandatory_cards_captured=mandatory_captured,
-        derived_datasets=sum(
-            bool(rows)
-            for rows in (
-                summary_widgets,
-                summary_rows,
-                errors_widgets,
-                top_error_rows,
-                error_app_rows,
-                timeseries_rows,
-                chart_payload_rows,
-                dashboard_widget_rows,
-                widget_table_payload_rows,
-                widget_contract_rows,
+        derived_datasets=(
+            sum(
+                bool(rows)
+                for rows in (
+                    summary_widgets,
+                    summary_rows,
+                    errors_widgets,
+                    top_error_rows,
+                    error_app_rows,
+                    timeseries_rows,
+                    chart_payload_rows,
+                    dashboard_widget_rows,
+                    widget_table_payload_rows,
+                    widget_contract_rows,
+                )
             )
+            if publishable
+            else 0
         ),
         missing_roles=[str(role) for role in missing],
         parser_errors=parser_errors,
         regression_status=regression_status,
+        published=publishable,
     )
+
+
+def _publish_derived_datasets(
+    *,
+    store: ParquetStore,
+    country: str,
+    range_key: str,
+    contracts: list[CardContract],
+    snapshots: list[WebSnapshot],
+    widget_contract_rows: list[dict[str, Any]],
+    summary_widgets: list[dict[str, Any]],
+    summary_rows: list[dict[str, Any]],
+    errors_widgets: list[dict[str, Any]],
+    top_error_rows: list[dict[str, Any]],
+    error_app_rows: list[dict[str, Any]],
+    timeseries_rows: list[dict[str, Any]],
+    chart_payload_rows: list[dict[str, Any]],
+    dashboard_widget_rows: list[dict[str, Any]],
+    widget_table_payload_rows: list[dict[str, Any]],
+) -> None:
+    datasets = (
+        (
+            DATASET_VISUAL_CONTRACTS,
+            [item.model_dump(mode="json") for item in contracts],
+            "visual_contracts.parquet",
+        ),
+        (DATASET_WIDGET_CONTRACTS, widget_contract_rows, None),
+        (
+            DATASET_DASHBOARD_CARDS,
+            [_dashboard_card_row(item) for item in contracts],
+            "dashboard_cards.parquet",
+        ),
+        (
+            DATASET_WEB_SNAPSHOTS,
+            [item.model_dump(mode="json") for item in snapshots],
+            "web_snapshots.parquet",
+        ),
+        (DATASET_SUMMARY_WIDGETS, summary_widgets, None),
+        (DATASET_SUMMARY_TABLE, summary_rows, None),
+        (DATASET_ERRORS_WIDGETS, errors_widgets, None),
+        (DATASET_ERRORS_TOP_ERRORS, top_error_rows, None),
+        (DATASET_ERRORS_APP_NAME, error_app_rows, None),
+        (DATASET_TIMESERIES, timeseries_rows, None),
+        (DATASET_CHART_PAYLOADS, chart_payload_rows, None),
+        (DATASET_DASHBOARD_TABS, _dashboard_tab_rows(contracts), None),
+        (DATASET_DASHBOARD_WIDGETS, dashboard_widget_rows, None),
+        (DATASET_WIDGET_CHART_PAYLOADS, chart_payload_rows, None),
+        (DATASET_WIDGET_TABLE_PAYLOADS, widget_table_payload_rows, None),
+    )
+    for dataset, rows, file_name in datasets:
+        if file_name:
+            _write_range_dataset(
+                store,
+                country,
+                dataset,
+                rows,
+                file_name=file_name,
+                range_key=range_key,
+            )
+        else:
+            _write_range_dataset(
+                store,
+                country,
+                dataset,
+                rows,
+                range_key=range_key,
+            )
 
 
 def _latest_call_by_role(
@@ -1192,27 +1210,33 @@ def _validate_required_chart_payloads(
     selected: dict[VisualRole, dict[str, Any]],
     summary_widgets: list[dict[str, Any]],
     errors_widgets: list[dict[str, Any]],
-    snapshots: list[WebSnapshot],
     enabled_roles: set[str],
+    descriptors: list[WidgetRoleDescriptor],
 ) -> list[dict[str, str]]:
     widgets = {str(row.get("card_role")): row for row in [*summary_widgets, *errors_widgets]}
-    snapshots_by_role = {str(snapshot.card_role): snapshot for snapshot in snapshots}
     errors: list[dict[str, str]] = []
-    for role in REQUIRED_CHART_ROLES:
+    required_chart_roles = {
+        str(role) for role in REQUIRED_CHART_ROLES if str(role) in enabled_roles
+    }
+    required_chart_roles.update(
+        descriptor.role
+        for descriptor in descriptors
+        if descriptor.role in enabled_roles and _descriptor_requires_chart(descriptor)
+    )
+    for role in sorted(required_chart_roles):
         if str(role) not in enabled_roles:
             continue
         if role not in selected:
             continue
         widget = widgets.get(role, {})
         payload = widget.get("chart_payload")
-        snapshot = snapshots_by_role.get(role)
-        expects_chart_payload = bool(
-            _list_of_dicts(widget.get("timeseries") or widget.get("series"))
-            or (snapshot.visible_series if snapshot else [])
-        )
-        if not expects_chart_payload and not isinstance(payload, dict):
-            continue
-        if not isinstance(payload, dict) or not payload.get("series"):
+        series = payload.get("series") if isinstance(payload, dict) else None
+        populated_series = [
+            item
+            for item in series or []
+            if isinstance(item, dict) and _list_of_dicts(item.get("points"))
+        ]
+        if not populated_series:
             errors.append(
                 {
                     "card_role": role,
@@ -1232,6 +1256,16 @@ def _validate_required_chart_payloads(
                 }
             )
     return errors
+
+
+def _descriptor_requires_chart(descriptor: WidgetRoleDescriptor) -> bool:
+    if descriptor.widget_type == "DONUT":
+        return True
+    if descriptor.widget_type != "CHART":
+        return False
+    if isinstance(descriptor.visual_contract.get("chart"), dict):
+        return True
+    return bool(descriptor.layout_height and descriptor.layout_height >= 12)
 
 
 def _dashboard_card_row(contract: CardContract) -> dict[str, Any]:

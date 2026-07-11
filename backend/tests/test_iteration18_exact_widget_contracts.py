@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
+from backend.app.config.settings import Settings
 from backend.app.quantum.schemas import QuantumWidgetConfig
+from backend.app.quantum_dashboard.builder import build_derived_datasets
 from backend.app.quantum_dashboard.contracts import (
     DisplayNumberContract,
     QuantumChartContract,
@@ -14,11 +19,17 @@ from backend.app.quantum_dashboard.parsers import (
     resolve_table_contract,
 )
 from backend.app.quantum_dashboard.regression import _table_row_signature
+from backend.app.quantum_dashboard.visual_contracts import (
+    _chart_contract,
+    merge_visual_contracts,
+    visual_contracts_are_complete,
+)
 from backend.app.quantum_dashboard.widget_roles import (
     descriptors_from_widgets,
     enrich_calls_with_live_contracts,
     resolve_call_role,
 )
+from backend.app.storage.parquet_store import ParquetStore
 
 
 def test_display_contract_preserves_score_percent_and_precision() -> None:
@@ -108,6 +119,8 @@ def test_chart_contract_preserves_bar_series_bands_legends_period_and_timezone()
                 "kind": "anomaly",
                 "start": "2026-07-01T00:00:00Z",
                 "end": "2026-07-01T01:00:00Z",
+                "start_x": 0.25,
+                "end_x": 0.5,
                 "pattern": "hatched",
             }
         ],
@@ -124,6 +137,8 @@ def test_chart_contract_preserves_bar_series_bands_legends_period_and_timezone()
     assert resolution.value.chart_type == "bar"
     assert [series.kind for series in resolution.value.series] == ["bar", "baseline"]
     assert resolution.value.bands[0].pattern == "hatched"
+    assert resolution.value.bands[0].start_x == 0.25
+    assert resolution.value.bands[0].end_x == 0.5
     assert resolution.value.legends[0].label == "Sessions"
     assert resolution.value.period_label == "Jul 01, 2026 (COT)"
     assert resolution.value.timezone == "America/Bogota"
@@ -315,6 +330,104 @@ def test_empty_table_reuses_only_schema_from_same_quantum_metric() -> None:
     assert table["rows"] == []
 
 
+def test_explicit_role_attaches_live_contract_and_canonical_widget_identity() -> None:
+    widget = QuantumWidgetConfig(
+        role="summary.converted_sessions",
+        title="Converted sessions",
+        widget_id="converted-widget",
+        card_id="shared-card",
+        widget_type="CHART",
+        visual_contract={"query": {"metric_ids": ["converted"]}},
+        enabled=True,
+        supported=True,
+    )
+    live_chart = {
+        "chart_type": "line",
+        "x_axis": {"ticks": []},
+        "y_axis": {"ticks": []},
+        "series": [],
+        "bands": [],
+        "legends": [],
+        "period_label": "Last 7 Days",
+        "timezone": "America/Mexico_City",
+        "granularity": "day",
+    }
+
+    rows = enrich_calls_with_live_contracts(
+        [{"card_role": "summary.converted_sessions", "widget_id": "shared-card"}],
+        descriptors=descriptors_from_widgets([widget]),
+        live_contracts={"converted-widget": {"chart": live_chart}},
+    )
+
+    assert rows[0]["widget_id"] == "converted-widget"
+    assert rows[0]["visual_contract"]["chart"] == live_chart
+
+
+def test_invalid_chart_build_preserves_last_coherent_range_snapshot(tmp_path: Path) -> None:
+    store = ParquetStore(Settings(qm_data_dir=tmp_path))
+    dataset = "range_key=last_7_days/derived/dashboard_widgets"
+    store.write_country_dataset("CO", dataset, [{"id": "coherent-snapshot"}])
+    role = "generic.1.chart.required"
+    widget = QuantumWidgetConfig(
+        role=role,
+        title="Required chart",
+        widget_id="required-widget",
+        card_id="required-card",
+        widget_type="CHART",
+        tab="details",
+        tab_name="Details",
+        tab_index=1,
+        layout_height=18,
+        visual_contract={"query": {"metric_ids": ["required-metric"]}},
+        enabled=True,
+        required=True,
+        supported=True,
+    )
+    raw_call = {
+        "ingestion_id": "invalid-ingestion",
+        "country": "CO",
+        "dashboard_id": "sds-co",
+        "widget_id": "required-widget",
+        "card_id": "required-card",
+        "card_role": role,
+        "card_title": "Required chart",
+        "card_type": "CHART",
+        "view_name": "coreMetrics",
+        "request_json": json.dumps({"metric": "required-metric"}),
+        "response_json": json.dumps({"rows": [{"dimensions": [], "metrics": [7.5]}]}),
+        "visual_contract": {
+            "unit": "score",
+            "scale": 1,
+            "precision": 2,
+            "formatted": "7.50",
+        },
+        "row_count": 1,
+        "range_key": "last_7_days",
+        "range_start": "2026-07-05T05:00:00Z",
+        "range_end": "2026-07-11T14:59:59Z",
+        "range_timezone": "America/Bogota",
+        "source_ts_start": "2026-07-05T05:00:00Z",
+        "source_ts_end": "2026-07-11T14:59:59Z",
+        "query_hash": "query",
+        "response_hash": "response",
+    }
+
+    build = build_derived_datasets(
+        store,
+        "CO",
+        raw_calls=[raw_call],
+        ingestion_id="invalid-ingestion",
+        enabled_roles={role},
+        dashboard_id="sds-co",
+        range_key="last_7_days",
+        widget_configs=[widget],
+    )
+
+    assert build.published is False
+    assert build.regression_status == "failed_missing_chart_payload"
+    assert store.read_country_dataset("CO", dataset) == [{"id": "coherent-snapshot"}]
+
+
 def test_generic_table_signature_ignores_duplicate_and_formatted_fields() -> None:
     role = "generic.0.table.errors"
     web_row = {
@@ -330,6 +443,102 @@ def test_generic_table_signature_ignores_duplicate_and_formatted_fields() -> Non
     }
 
     assert _table_row_signature(role, web_row) == _table_row_signature(role, local_row)
+
+
+def test_visual_contract_merge_never_replaces_complete_chart_with_partial_sample() -> None:
+    complete = {
+        "chart": {
+            "series": [
+                {"kind": "line", "points": [{"value": 1}]},
+                {"kind": "baseline", "points": [{"value": 2}]},
+            ],
+            "bands": [
+                {
+                    "kind": "historical_range",
+                    "lower_points": [{"value": 0}],
+                    "upper_points": [{"value": 3}],
+                }
+            ],
+        }
+    }
+    partial = {
+        "chart": {
+            "series": [{"kind": "line", "points": [{"value": 1}]}],
+            "bands": [{"kind": "historical_range"}],
+        }
+    }
+
+    merged = merge_visual_contracts(complete, partial)
+
+    assert len(merged["chart"]["series"]) == 2
+    assert merged["chart"]["bands"][0]["lower_points"] == [{"value": 0}]
+    assert visual_contracts_are_complete(
+        {
+            "widget": {
+                **merged,
+                "chart": {
+                    **merged["chart"],
+                    "legends": [
+                        {"label": "All Users; Baseline"},
+                        {"label": "Historical Range"},
+                    ],
+                },
+            }
+        }
+    )
+
+
+def test_dom_chart_contract_captures_baseline_band_and_bar_whiskers() -> None:
+    line = _chart_contract(
+        {
+            "pivotHook": "multi-line-chart",
+            "xTicks": ["Jul 10", "Jul 11"],
+            "yTicks": ["0", "10"],
+            "legends": ["All Users", "All Users; Baseline", "Historical Range"],
+            "period": "Last 7 Days",
+            "seriesData": [
+                {
+                    "id": "users",
+                    "label": "All Users",
+                    "values": [[1, 4], [2, 5]],
+                    "dasharray": "1px, 5px",
+                },
+                {
+                    "id": "users",
+                    "label": "All Users",
+                    "values": [[1, 6], [2, 7]],
+                    "dasharray": "none",
+                },
+            ],
+            "bandsData": [
+                {"points": [{"x": 1, "low": 3, "high": 8}, {"x": 2, "low": 4, "high": 9}]}
+            ],
+            "highlightsData": [
+                {"start": 1, "end": 2, "label": "Error", "startX": None, "endX": None}
+            ],
+        },
+        {"unit": "count", "scale": 1},
+        timezone="America/Bogota",
+    )
+    bars = _chart_contract(
+        {
+            "pivotHook": "stacked-bar-chart",
+            "xTicks": ["Jul 10", "Jul 11"],
+            "yTicks": ["0", "20"],
+            "legends": ["All Users", "Historical Range"],
+            "period": "Last 7 Days",
+            "whiskersData": [{"low": 2, "high": 8}, {"low": 3, "high": 9}],
+        },
+        {"unit": "count", "scale": 1},
+        timezone="America/Bogota",
+    )
+
+    assert line["series"][0]["kind"] == "line"
+    assert line["series"][1]["kind"] == "baseline"
+    assert len(line["bands"][0]["lower_points"]) == 2
+    assert line["bands"][1]["start_x"] == 0
+    assert line["bands"][1]["end_x"] == 1
+    assert [point["value"] for point in bars["bands"][0]["upper_points"]] == [8, 9]
 
 
 def _display(value: float, unit: str, precision: int, formatted: str) -> dict[str, object]:

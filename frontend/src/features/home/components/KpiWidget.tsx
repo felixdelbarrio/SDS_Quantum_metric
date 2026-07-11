@@ -36,7 +36,9 @@ export function KpiWidget({ widget }: Props) {
           intent={widget.comparison?.semantic_intent}
         />
       </div>
-      <div className={`kpi-value-row ${widget.table ? "table-widget-actions" : ""}`}>
+      <div
+        className={`kpi-value-row ${widget.table ? "table-widget-actions" : ""}`}
+      >
         {widget.table ? null : (
           <strong className="kpi-value">
             {widget.display ? (
@@ -120,7 +122,10 @@ function GenericTablePreview({
             ))
           ) : (
             <tr>
-              <td className="table-empty-cell" colSpan={Math.min(4, columns.length)}>
+              <td
+                className="table-empty-cell"
+                colSpan={Math.min(4, columns.length)}
+              >
                 Sin datos
               </td>
             </tr>
@@ -145,7 +150,9 @@ function formatCell(
   if (typeof delta !== "string" || !delta) return rendered;
   const intent = row[`${column.key}_delta_intent`];
   return (
-    <span className={`table-metric-with-delta table-delta-${String(intent ?? "neutral")}`}>
+    <span
+      className={`table-metric-with-delta table-delta-${String(intent ?? "neutral")}`}
+    >
       <span>{rendered}</span>
       <small>{delta}</small>
     </span>

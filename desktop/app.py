@@ -12,10 +12,8 @@ from backend.app.config.paths import default_user_log_dir
 from backend.app.config.settings import get_settings
 from backend.app.main import app
 from desktop.backend_runtime import (
-    is_compatible_health,
     next_available_port,
     port_available,
-    read_health,
 )
 from desktop.icon import apply_macos_app_icon, resolve_icon_png
 
@@ -28,36 +26,25 @@ def main() -> None:
     server: uvicorn.Server | None = None
     thread: threading.Thread | None = None
     try:
-        health = read_health(url + "/api/health")
-        if is_compatible_health(health):
-            logging.info("Reusing compatible SDS Quantum Metric backend at %s", url)
-        else:
-            if health is not None:
-                port = next_available_port(settings.backend_host, settings.backend_port + 1)
-                logging.warning(
-                    "Ignoring incompatible backend on configured port %s; using %s instead.",
-                    settings.backend_port,
-                    port,
-                )
-            elif not port_available(settings.backend_host, port):
-                port = next_available_port(settings.backend_host, settings.backend_port + 1)
-                logging.warning(
-                    "Configured port %s is busy; using %s instead.",
-                    settings.backend_port,
-                    port,
-                )
-            url = f"http://{settings.backend_host}:{port}"
-            server = uvicorn.Server(
-                uvicorn.Config(
-                    app,
-                    host=settings.backend_host,
-                    port=port,
-                    log_level="info",
-                )
+        if not port_available(settings.backend_host, port):
+            port = next_available_port(settings.backend_host, settings.backend_port + 1)
+            logging.warning(
+                "Configured port %s is busy; using %s instead.",
+                settings.backend_port,
+                port,
             )
-            thread = threading.Thread(target=server.run, name="sds-uvicorn", daemon=False)
-            thread.start()
-            _wait_for(url + "/api/health")
+        url = f"http://{settings.backend_host}:{port}"
+        server = uvicorn.Server(
+            uvicorn.Config(
+                app,
+                host=settings.backend_host,
+                port=port,
+                log_level="info",
+            )
+        )
+        thread = threading.Thread(target=server.run, name="sds-uvicorn", daemon=False)
+        thread.start()
+        _wait_for(url + "/api/health")
         _wait_for(url + "/")
         import webview
 

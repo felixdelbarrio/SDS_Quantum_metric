@@ -27,6 +27,8 @@ _CAPTURE_SCRIPT = r"""
     const chartNode = root.querySelector("[data-pivot-hook]") || root.querySelector('[data-testid="multi-line-chart"]');
     const chartSvg = chartNode?.querySelector("svg") || null;
     const chartPaths = chartSvg ? Array.from(chartSvg.querySelectorAll("path")) : [];
+    const plotDomain = chartSvg?.querySelector("g.x.axis path.domain") || null;
+    const plotBounds = plotDomain?.getBBox() || null;
     const legendNodes = root.querySelectorAll(".chart-legend .legend-item");
     const period = (root.querySelector(".panel-date-interior")?.textContent || "").trim();
     const table = root.querySelector("table");
@@ -83,6 +85,28 @@ _CAPTURE_SCRIPT = r"""
             bandsData: chartPaths
               .filter((path) => Array.isArray(path.__data__?.points))
               .map((path) => ({ points: path.__data__.points })),
+            whiskersData: chartSvg
+              ? Array.from(chartSvg.querySelectorAll("g.bar-whisker"))
+                  .filter((group) => Array.isArray(group.__data__) && group.__data__.length >= 2)
+                  .map((group) => ({ low: group.__data__[0], high: group.__data__[1] }))
+              : [],
+            highlightsData: chartSvg
+              ? Array.from(chartSvg.querySelectorAll("rect.backdrop"))
+                  .filter((rect) => rect.__data__?.start != null && rect.__data__?.end != null)
+                  .map((rect) => {
+                    const x = Number(rect.getAttribute("x") || 0);
+                    const width = Number(rect.getAttribute("width") || 0);
+                    const plotX = Number(plotBounds?.x || 0);
+                    const plotWidth = Number(plotBounds?.width || 0);
+                    return {
+                      start: rect.__data__.start,
+                      end: rect.__data__.end,
+                      label: rect.__data__.name || "Anomaly",
+                      startX: plotWidth ? (x - plotX) / plotWidth : null,
+                      endX: plotWidth ? (x + width - plotX) / plotWidth : null,
+                    };
+                  })
+              : [],
           }
         : null,
       table: table
@@ -134,11 +158,41 @@ def merge_visual_contracts(
         previous = merged.get(key)
         if isinstance(previous, dict) and isinstance(value, dict):
             merged[key] = merge_visual_contracts(previous, value)
-        elif isinstance(value, list) and not value:
-            continue
+        elif isinstance(value, list):
+            if not value:
+                continue
+            if isinstance(previous, list) and _data_richness(previous) > _data_richness(value):
+                continue
+            merged[key] = value
         elif value not in (None, ""):
             merged[key] = value
     return merged
+
+
+def visual_contracts_are_complete(contracts: dict[str, dict[str, Any]]) -> bool:
+    for contract in contracts.values():
+        chart = contract.get("chart")
+        if not isinstance(chart, dict):
+            continue
+        legend_labels = [
+            str(item.get("label") or "").casefold()
+            for item in chart.get("legends") or []
+            if isinstance(item, dict)
+        ]
+        series = [item for item in chart.get("series") or [] if isinstance(item, dict)]
+        bands = [item for item in chart.get("bands") or [] if isinstance(item, dict)]
+        if any("baseline" in label for label in legend_labels) and not any(
+            item.get("kind") == "baseline" and item.get("points") for item in series
+        ):
+            return False
+        if any("historical range" in label for label in legend_labels) and not any(
+            item.get("kind") == "historical_range"
+            and item.get("lower_points")
+            and item.get("upper_points")
+            for item in bands
+        ):
+            return False
+    return True
 
 
 def _contract_from_dom(item: dict[str, Any], *, timezone: str) -> dict[str, Any]:
@@ -254,10 +308,12 @@ def _chart_contract(
     bands.extend(
         _bands_from_dom(
             value.get("bandsData"),
+            whiskers=value.get("whiskersData"),
             labels=x_labels,
             scale=float(display.get("scale") or 1),
         )
     )
+    bands.extend(_highlights_from_dom(value.get("highlightsData"), series=series))
     for index, label in enumerate(legend_labels):
         normalized = label.casefold()
         if "historical range" in normalized:
@@ -272,14 +328,6 @@ def _chart_contract(
             legends.append({"id": f"legend-{index}", "label": label, "order": index})
             continue
         if "anomaly" in normalized:
-            bands.append(
-                {
-                    "band_id": f"band-{index}",
-                    "label": label,
-                    "kind": "anomaly",
-                    "pattern": "diagonal",
-                }
-            )
             legends.append({"id": f"legend-{index}", "label": label, "order": index})
             continue
         if series:
@@ -391,15 +439,26 @@ def _series_from_dom(
     return sorted(series, key=lambda item: int(item["order"]))
 
 
-def _bands_from_dom(value: Any, *, labels: list[str], scale: float) -> list[dict[str, Any]]:
+def _bands_from_dom(
+    value: Any,
+    *,
+    whiskers: Any,
+    labels: list[str],
+    scale: float,
+) -> list[dict[str, Any]]:
     rows = [item for item in value or [] if isinstance(item, dict)]
-    if not rows:
+    points = [
+        item for item in (rows[0].get("points") if rows else []) or [] if isinstance(item, dict)
+    ]
+    whisker_rows = [item for item in whiskers or [] if isinstance(item, dict)]
+    if points:
+        pairs_low = [[item.get("x"), item.get("low")] for item in points]
+        pairs_high = [[item.get("x"), item.get("high")] for item in points]
+    elif whisker_rows:
+        pairs_low = [[index, item.get("low")] for index, item in enumerate(whisker_rows)]
+        pairs_high = [[index, item.get("high")] for index, item in enumerate(whisker_rows)]
+    else:
         return []
-    points = [item for item in rows[0].get("points") or [] if isinstance(item, dict)]
-    if not points:
-        return []
-    pairs_low = [[item.get("x"), item.get("low")] for item in points]
-    pairs_high = [[item.get("x"), item.get("high")] for item in points]
     return [
         {
             "band_id": "historical-range",
@@ -409,6 +468,76 @@ def _bands_from_dom(value: Any, *, labels: list[str], scale: float) -> list[dict
             "upper_points": _points_from_pairs(pairs_high, labels=labels, scale=scale),
         }
     ]
+
+
+def _data_richness(value: Any) -> int:
+    if value in (None, "", [], {}):
+        return 0
+    if isinstance(value, dict):
+        return 1 + sum(_data_richness(item) for item in value.values())
+    if isinstance(value, list):
+        return len(value) + sum(_data_richness(item) for item in value)
+    return 1
+
+
+def _highlights_from_dom(value: Any, *, series: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    timestamps = sorted(
+        {
+            timestamp
+            for item in series
+            for point in item.get("points") or []
+            if isinstance(point, dict)
+            if (timestamp := _float(point.get("ts"))) is not None
+        }
+    )
+    domain_start = timestamps[0] if timestamps else None
+    domain_end = timestamps[-1] if timestamps else None
+    highlights: list[dict[str, Any]] = []
+    for index, item in enumerate(value or []):
+        if not isinstance(item, dict):
+            continue
+        start_x = _bounded_ratio(item.get("startX"))
+        end_x = _bounded_ratio(item.get("endX"))
+        if start_x is None or end_x is None:
+            start_x = _domain_ratio(item.get("start"), domain_start, domain_end)
+            end_x = _domain_ratio(item.get("end"), domain_start, domain_end)
+        if start_x is None or end_x is None or end_x <= start_x:
+            continue
+        highlights.append(
+            {
+                "band_id": f"anomaly-{index}",
+                "label": _text(item.get("label")) or "Anomaly",
+                "kind": "anomaly",
+                "start": _text(item.get("start")),
+                "end": _text(item.get("end")),
+                "start_x": start_x,
+                "end_x": end_x,
+                "pattern": "diagonal",
+            }
+        )
+    return highlights
+
+
+def _bounded_ratio(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return min(1.0, max(0.0, number))
+
+
+def _domain_ratio(value: Any, start: float | None, end: float | None) -> float | None:
+    number = _float(value)
+    if number is None or start is None or end is None or end <= start:
+        return None
+    return _bounded_ratio((number - start) / (end - start))
+
+
+def _float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _points_from_pairs(value: Any, *, labels: list[str], scale: float) -> list[dict[str, Any]]:

@@ -114,7 +114,7 @@ def capture_quantum_dashboard_cards(
         captured = enrich_calls_with_live_contracts(
             captured,
             descriptors=descriptors_from_widgets(widgets),
-            live_contracts=capture_session.last_visual_contracts,
+            live_contracts=getattr(capture_session, "last_visual_contracts", {}),
         )
         rows.extend(captured)
     if not rows:

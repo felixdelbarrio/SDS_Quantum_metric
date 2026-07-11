@@ -81,6 +81,8 @@ class QuantumBandContract(BaseModel):
     kind: Literal["historical_range", "anomaly", "confidence", "custom"]
     start: str | None = None
     end: str | None = None
+    start_x: float | None = Field(default=None, ge=0, le=1)
+    end_x: float | None = Field(default=None, ge=0, le=1)
     lower_points: list[ChartSeriesPoint] = Field(default_factory=list)
     upper_points: list[ChartSeriesPoint] = Field(default_factory=list)
     pattern: str | None = None

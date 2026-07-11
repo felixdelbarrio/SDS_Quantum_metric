@@ -95,6 +95,7 @@ export function QuantumChart({
           </defs>
           <QuantumChartBands
             bands={payload.bands}
+            chartType={payload.chart_type}
             ticks={payload.x_axis.ticks}
             yAxis={payload.y_axis}
             width={size.width}

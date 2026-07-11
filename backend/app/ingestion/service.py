@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 import uuid
 from datetime import UTC, date, datetime, timedelta
@@ -49,6 +50,8 @@ INGESTION_TERMINAL_STATUSES = {
     "cancelled",
     "cancelled_by_user",
 }
+
+LOGGER = logging.getLogger(__name__)
 
 
 class IngestionFailure(RuntimeError):
@@ -469,6 +472,7 @@ class IngestionService:
                     enabled_roles=enabled_roles,
                     dashboard_id=discovery.dashboard_id,
                     range_key=ingestion_range.range_key,
+                    build_result=build,
                 )
             elif build and report:
                 update_progress(
@@ -501,6 +505,7 @@ class IngestionService:
                     enabled_roles=enabled_roles,
                     dashboard_id=discovery.dashboard_id,
                     range_key=ingestion_range.range_key,
+                    build_result=build,
                 )
             job.mandatory_cards_total = build.mandatory_cards
             job.mandatory_cards_captured = build.mandatory_cards_captured
@@ -573,6 +578,12 @@ class IngestionService:
             if job.current_chunk_index is not None:
                 _set_chunk_status(job, job.current_chunk_index, "failed")
         except Exception as exc:
+            LOGGER.exception(
+                "Unexpected ingestion failure id=%s country=%s stage=%s",
+                job.ingestion_id,
+                request.country.value,
+                job.status,
+            )
             job.status = "failed"
             failure = sanitize_error(exc)
             job.errors.append(failure)
@@ -715,7 +726,7 @@ def _quantum_relative_range_end(
     zone = zoneinfo_for(timezone)
     local_now = now.astimezone(zone) if now else datetime.now(zone)
     current_hour_start = local_now.replace(minute=0, second=0, microsecond=0)
-    return (current_hour_start - timedelta(hours=1, seconds=1)).astimezone(UTC)
+    return (current_hour_start - timedelta(seconds=1)).astimezone(UTC)
 
 
 def _bounded_dynamic_range_end(
@@ -785,6 +796,7 @@ def _publish_completed_chunk(
         enabled_roles=enabled_roles,
         dashboard_id=dashboard_id,
         range_key=resolved_range_key,
+        build_result=build,
     )
     return merge, build, report
 

@@ -23,6 +23,7 @@ from backend.app.quantum_dashboard.catalog import MANDATORY_CARDS, ROLE_SPECS, s
 from backend.app.quantum_dashboard.generic_roles import is_generic_role
 from backend.app.quantum_dashboard.models import (
     DashboardTab,
+    DerivedBuildResult,
     RegressionCardResult,
     RegressionReport,
     RegressionStatus,
@@ -43,12 +44,23 @@ def run_regression(
     enabled_roles: set[str] | list[str] | None = None,
     dashboard_id: str | None = None,
     range_key: str = "today",
+    build_result: DerivedBuildResult | None = None,
 ) -> RegressionReport:
     tolerance = (
         store.settings.quantum_regression_tolerance_percent
         if tolerance_percent is None
         else tolerance_percent
     )
+    if build_result is not None and not build_result.published:
+        return _failed_build_report(
+            store,
+            build_result,
+            ingestion_id=ingestion_id,
+            country=country,
+            dashboard_id=dashboard_id,
+            range_key=range_key,
+            tolerance=tolerance,
+        )
     contracts = _filter_dashboard_rows(
         _read_dataset(store, country, DATASET_VISUAL_CONTRACTS, range_key),
         dashboard_id,
@@ -136,6 +148,48 @@ def run_regression(
         status=status,
         tolerance_percent=tolerance,
         generated_at=generated_at,
+    )
+    _persist_report(store, report)
+    _write_docs_report(store.settings, report)
+    return report
+
+
+def _failed_build_report(
+    store: ParquetStore,
+    build: DerivedBuildResult,
+    *,
+    ingestion_id: str | None,
+    country: str,
+    dashboard_id: str | None,
+    range_key: str,
+    tolerance: float,
+) -> RegressionReport:
+    details: list[str] = []
+    if build.missing_roles:
+        details.append(f"Missing roles: {', '.join(build.missing_roles)}")
+    details.extend(
+        str(error.get("error_message") or error.get("error_code")) for error in build.parser_errors
+    )
+    report = RegressionReport(
+        ingestion_id=ingestion_id,
+        country=country,
+        range_key=range_key,
+        dashboard_id=dashboard_id,
+        tabs=["build"],
+        cards=[
+            RegressionCardResult(
+                tab="build",
+                card_role="build.validation",
+                card_title="Derived dashboard validation",
+                range_key=range_key,
+                status=build.regression_status,
+                details=" | ".join(details) or "Derived dashboard was not publishable.",
+            )
+        ],
+        verdict="FAILED",
+        status=build.regression_status,
+        tolerance_percent=tolerance,
+        generated_at=datetime.now(UTC).isoformat(),
     )
     _persist_report(store, report)
     _write_docs_report(store.settings, report)

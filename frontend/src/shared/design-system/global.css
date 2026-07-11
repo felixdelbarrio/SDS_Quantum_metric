@@ -686,7 +686,8 @@ textarea:focus-visible {
 
 .dashboard-widget-layout-item {
   min-width: 0;
-  grid-column: var(--widget-column-start, auto) / span var(--widget-column-span, 4);
+  grid-column: var(--widget-column-start, auto) / span
+    var(--widget-column-span, 4);
   grid-row: span var(--widget-row-span, 1);
 }
 
@@ -926,6 +927,12 @@ textarea:focus-visible {
 .quantum-chart-band-pattern-hatched {
   stroke: var(--color-danger);
   stroke-dasharray: 3 2;
+}
+
+.quantum-chart-whiskers line {
+  stroke: var(--chart-axis);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
 }
 
 .quantum-chart-series-kind-baseline {
