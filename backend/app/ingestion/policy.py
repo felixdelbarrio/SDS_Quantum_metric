@@ -5,12 +5,14 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
+from backend.app.config.defaults import (
+    DEFAULT_INCREMENTAL_REPROCESS_DAYS,
+    DEFAULT_INGESTION_DEPTH_DAYS,
+)
 from backend.app.ingestion.planner import IngestionChunk
 from backend.app.ingestion.time_rewriter import rewrite_query_time_range
 
 CAPTURE_WAIT_SECONDS = 35
-DEFAULT_INGESTION_DEPTH_DAYS = 30
-DEFAULT_INCREMENTAL_REPROCESS_DAYS = 1
 
 
 @dataclass(frozen=True)

@@ -471,7 +471,7 @@ def test_regression_fails_when_chart_payload_is_missing(tmp_path: Path) -> None:
     assert any(card.status == "failed_chart_contract_incomplete" for card in report.cards)
 
 
-def test_regression_compares_aggregate_chart_without_visible_series(tmp_path: Path) -> None:
+def test_regression_rejects_aggregate_chart_without_visible_series(tmp_path: Path) -> None:
     store = ParquetStore(Settings(qm_data_dir=tmp_path))
     aggregate_sessions_call = {
         **_summary_metric_shape_call(["session", "id"]),
@@ -498,21 +498,23 @@ def test_regression_compares_aggregate_chart_without_visible_series(tmp_path: Pa
         enabled_roles={"summary.sessions"},
         dashboard_id="sds-co",
         range_key="last_7_days",
+        build_result=build,
     )
 
-    widget = store.read_country_dataset(
-        "CO",
-        "range_key=last_7_days/derived/summary_widgets",
-    )[0]
-    card = report.cards[0]
-    assert build.regression_status == "passed"
-    assert widget["chart_payload"] is None
-    assert card.status == "passed"
-    assert card.web_value == 6504
-    assert card.local_value == 6504
+    assert build.published is False
+    assert build.regression_status == "failed_missing_chart_payload"
+    assert (
+        store.read_country_dataset(
+            "CO",
+            "range_key=last_7_days/derived/summary_widgets",
+        )
+        == []
+    )
+    assert report.status == "failed_missing_chart_payload"
+    assert report.verdict == "FAILED"
 
 
-def test_local_dashboard_reads_partial_supported_dashboard_after_regression(
+def test_local_dashboard_rejects_partial_chart_dashboard_after_regression(
     tmp_path: Path,
 ) -> None:
     settings = Settings(qm_data_dir=tmp_path)
@@ -562,7 +564,7 @@ def test_local_dashboard_reads_partial_supported_dashboard_after_regression(
         "response_json": json.dumps({"rows": [{"metrics": [6504]}]}),
     }
     store.merge_raw_calls("CO", [aggregate_sessions_call])
-    build_derived_datasets(
+    build = build_derived_datasets(
         store,
         "CO",
         enabled_roles={"summary.sessions"},
@@ -576,6 +578,7 @@ def test_local_dashboard_reads_partial_supported_dashboard_after_regression(
         enabled_roles={"summary.sessions"},
         dashboard_id="sds-co",
         range_key="last_7_days",
+        build_result=build,
     )
 
     service = LocalDashboardService(store, config_store)
@@ -583,11 +586,9 @@ def test_local_dashboard_reads_partial_supported_dashboard_after_regression(
     summary = service.summary("CO", range_key="last_7_days")
 
     assert status["mandatory_cards"] == 1
-    assert status["summary_ready"] is True
-    assert status["errors_ready"] is True
-    assert summary["status"] == "ok"
-    assert summary["widgets"][0]["role"] == "summary.sessions"
-    assert summary["widgets"][0]["value"] == 6504
+    assert status["summary_ready"] is False
+    assert status["regression_status"] == "failed_missing_card"
+    assert summary["status"] == "empty"
 
 
 def test_local_dashboard_status_cannot_pass_with_missing_enabled_generic_role(

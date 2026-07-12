@@ -189,11 +189,11 @@ def test_export_endpoint_creates_zip_in_requested_downloads_path(tmp_path: Path)
     assert "authorization" not in serialized.casefold()
 
 
-def test_default_config_uses_controlled_session_not_real_chrome(tmp_path: Path) -> None:
+def test_default_config_reuses_active_chrome_session(tmp_path: Path) -> None:
     settings = Settings(qm_data_dir=tmp_path)
     config = QuantumConfigStore(settings).default()
 
-    assert config.session_mode == "controlled"
+    assert config.session_mode == "browser"
 
 
 def _scaled_response(raw: object, multiplier: float) -> str:

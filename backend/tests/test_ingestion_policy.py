@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 
+from backend.app.ingestion.capture import _request_matches_ingestion_range
 from backend.app.ingestion.policy import apply_ingestion_range, build_ingestion_range
 from backend.app.ingestion.service import _preset_range
 
@@ -51,10 +52,10 @@ def test_relative_presets_use_quantum_web_complete_hour_cutoff() -> None:
 
     assert today is not None
     assert today.start == datetime(2026, 6, 29, 6, 0, tzinfo=UTC)
-    assert today.end == datetime(2026, 6, 29, 9, 59, 59, tzinfo=UTC)
+    assert today.end == datetime(2026, 6, 29, 10, 59, 59, tzinfo=UTC)
     assert last_7_days is not None
     assert last_7_days.start == datetime(2026, 6, 23, 6, 0, tzinfo=UTC)
-    assert last_7_days.end == datetime(2026, 6, 29, 9, 59, 59, tzinfo=UTC)
+    assert last_7_days.end == datetime(2026, 6, 29, 10, 59, 59, tzinfo=UTC)
 
 
 def test_today_preset_keeps_positive_window_early_in_cst_day() -> None:
@@ -65,6 +66,37 @@ def test_today_preset_keeps_positive_window_early_in_cst_day() -> None:
     assert today is not None
     assert today.start == datetime(2026, 7, 10, 6, 0, tzinfo=UTC)
     assert today.end == datetime(2026, 7, 10, 6, 59, 59, tzinfo=UTC)
+
+
+def test_native_quantum_preset_is_not_rewritten_within_end_minute() -> None:
+    ingestion_range = _preset_range(
+        "last_7_days",
+        now=datetime(2026, 7, 11, 17, 44, tzinfo=UTC),
+        timezone="America/Bogota",
+    )
+
+    assert ingestion_range is not None
+    request = {
+        "query": {
+            "ts": [
+                int(ingestion_range.start.timestamp()) - 21 * 86400,
+                int(ingestion_range.end.timestamp()) - 7 * 86400,
+            ]
+        },
+        "ts": [
+            int(ingestion_range.start.timestamp()),
+            int(ingestion_range.end.timestamp()) - 59,
+        ],
+    }
+    stale_request = {
+        "ts": [
+            int(ingestion_range.start.timestamp()),
+            int(ingestion_range.end.timestamp()) - 3600,
+        ]
+    }
+
+    assert _request_matches_ingestion_range(request, ingestion_range) is True
+    assert _request_matches_ingestion_range(stale_request, ingestion_range) is False
 
 
 def test_apply_ingestion_range_rewrites_nested_ts_preserving_timestamp_shape() -> None:

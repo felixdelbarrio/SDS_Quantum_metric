@@ -21,7 +21,16 @@ from backend.app.ingestion.time_rewriter import (
     validate_query_time_range,
 )
 from backend.app.observability.sanitizer import sanitize
+from backend.app.quantum_dashboard.visual_contracts import (
+    collect_visible_widget_contracts,
+    merge_visual_contract_maps,
+    visual_contracts_are_complete,
+)
 from backend.app.storage.parquet_store import hash_json
+
+
+class QuantumAuthenticationRequired(RuntimeError):
+    pass
 
 
 def capture_quantum_analytics(
@@ -34,7 +43,6 @@ def capture_quantum_analytics(
     wait_seconds: int,
     ingestion_id: str | None = None,
     ingestion_range: IngestionRange | None = None,
-    session_mode: str = "manual",
 ) -> list[dict[str, Any]]:
     with QuantumAnalyticsCaptureSession(
         settings=settings,
@@ -43,7 +51,6 @@ def capture_quantum_analytics(
         base_url=base_url,
         wait_seconds=wait_seconds,
         ingestion_id=ingestion_id,
-        session_mode=session_mode,
     ) as session:
         return session.capture(dashboard_url=dashboard_url, ingestion_range=ingestion_range)
 
@@ -58,7 +65,6 @@ class QuantumAnalyticsCaptureSession:
         base_url: str,
         wait_seconds: int,
         ingestion_id: str | None = None,
-        session_mode: str = "manual",
     ) -> None:
         self.settings = settings
         self.cookies = cookies
@@ -66,12 +72,12 @@ class QuantumAnalyticsCaptureSession:
         self.base_url = base_url
         self.wait_seconds = wait_seconds
         self.ingestion_id = ingestion_id or str(uuid.uuid4())
-        self.session_mode = session_mode
         self.quantum_host = urlparse(str(base_url)).hostname
         self._playwright_manager: Any | None = None
         self._playwright: Any | None = None
         self._browser: Any | None = None
         self._context: Any | None = None
+        self.last_visual_contracts: dict[str, dict[str, Any]] = {}
 
     def __enter__(self) -> QuantumAnalyticsCaptureSession:
         _configure_playwright_browser_path()
@@ -85,27 +91,11 @@ class QuantumAnalyticsCaptureSession:
                     "Run `make setup` to reinstall browser assets and retry ingestion."
                 ) from exc
             raise
-        if self.session_mode == "controlled":
-            user_data_dir = self.settings.runtime_dir / "quantum-controlled-profile"
-            user_data_dir.mkdir(parents=True, exist_ok=True)
-            self._context = self._playwright.chromium.launch_persistent_context(
-                str(user_data_dir),
-                headless=True,
-                ignore_https_errors=not self.settings.qm_verify_tls,
-                args=["--disable-dev-shm-usage", "--no-first-run"],
-            )
-            if self.cookies:
-                self._context.add_cookies(
-                    cast(Any, [cookie.as_playwright() for cookie in self.cookies])
-                )
-        else:
-            self._browser = _launch_headless_browser(self._playwright, self.settings)
-            self._context = self._browser.new_context(
-                ignore_https_errors=not self.settings.qm_verify_tls
-            )
-            self._context.add_cookies(
-                cast(Any, [cookie.as_playwright() for cookie in self.cookies])
-            )
+        self._browser = _launch_headless_browser(self._playwright, self.settings)
+        self._context = self._browser.new_context(
+            ignore_https_errors=not self.settings.qm_verify_tls
+        )
+        self._context.add_cookies(cast(Any, [cookie.as_playwright() for cookie in self.cookies]))
         return self
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
@@ -138,6 +128,9 @@ class QuantumAnalyticsCaptureSession:
         }
         routed_payloads_by_id: dict[int, dict[str, Any]] = {}
         routed_payloads_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
+        routed_range_status_by_id: dict[int, str] = {}
+        routed_range_status_by_key: dict[tuple[str, str, str], str] = {}
+        visual_contracts: dict[str, dict[str, Any]] = {}
         page = self._context.new_page()
 
         def on_route(route: Any) -> None:
@@ -151,16 +144,20 @@ class QuantumAnalyticsCaptureSession:
             analytics_state["requests"] = int(analytics_state["requests"]) + 1
             raw_post_data = request.post_data or ""
             request_json = _parse_json(raw_post_data)
-            if _preserve_quantum_native_range(request_json):
+            request_key = (request.method, request.url, raw_post_data)
+            if _preserve_request_range(request_json, ingestion_range):
                 routed_payloads_by_id[id(request)] = request_json
-                routed_payloads_by_key[(request.method, request.url, raw_post_data)] = request_json
+                routed_payloads_by_key[request_key] = request_json
+                routed_range_status_by_id[id(request)] = "original"
+                routed_range_status_by_key[request_key] = "original"
                 route.continue_()
                 return
             rewritten, changed = apply_ingestion_range(request_json, ingestion_range)
             routed_payloads_by_id[id(request)] = rewritten if changed else request_json
-            routed_payloads_by_key[(request.method, request.url, raw_post_data)] = (
-                rewritten if changed else request_json
-            )
+            routed_payloads_by_key[request_key] = rewritten if changed else request_json
+            range_status = "rewritten" if changed else "original"
+            routed_range_status_by_id[id(request)] = range_status
+            routed_range_status_by_key[request_key] = range_status
             if changed:
                 route.continue_(
                     post_data=json.dumps(rewritten, ensure_ascii=False, separators=(",", ":"))
@@ -177,12 +174,16 @@ class QuantumAnalyticsCaptureSession:
             cast(list[int], analytics_state["statuses"]).append(int(response.status))
             request = response.request
             raw_post_data = request.post_data or ""
+            request_key = (request.method, request.url, raw_post_data)
             request_json = routed_payloads_by_id.pop(id(request), None)
             if request_json is None:
                 request_json = routed_payloads_by_key.pop(
-                    (request.method, request.url, raw_post_data),
+                    request_key,
                     _parse_json(raw_post_data),
                 )
+            range_status = routed_range_status_by_id.pop(id(request), None)
+            if range_status is None:
+                range_status = routed_range_status_by_key.pop(request_key, "original")
             try:
                 response_json = _parse_json(response.body().decode("utf-8", "replace"))
             except Exception:
@@ -193,7 +194,7 @@ class QuantumAnalyticsCaptureSession:
                 response_json,
             )
             range_validation = None
-            if ingestion_range is not None and not _preserve_quantum_native_range(request_json):
+            if ingestion_range is not None and range_status == "rewritten":
                 validation_target = IngestionChunk(
                     start=ingestion_range.start,
                     end=ingestion_range.end,
@@ -284,7 +285,7 @@ class QuantumAnalyticsCaptureSession:
                     if range_validation
                     else "not_applicable",
                     "range_validation_error": range_validation.error if range_validation else None,
-                    "time_rewrite_status": "rewritten" if ingestion_range else "original",
+                    "time_rewrite_status": range_status,
                 }
             )
 
@@ -302,10 +303,24 @@ class QuantumAnalyticsCaptureSession:
         page.on("response", on_response)
         page.on("console", on_console)
         page.on("requestfailed", on_request_failed)
+        authentication_required = False
         try:
             page.goto(dashboard_url, wait_until="domcontentloaded", timeout=60_000)
-            _wait_for_analytics_settle(page, rows, analytics_state, self.wait_seconds)
+            _wait_for_analytics_settle(
+                page,
+                rows,
+                analytics_state,
+                self.wait_seconds,
+                visual_contracts=visual_contracts,
+                timezone=ingestion_range.timezone if ingestion_range else "UTC",
+            )
         finally:
+            authentication_required = _looks_unauthenticated(page)
+            _collect_page_visual_contracts(
+                page,
+                visual_contracts,
+                timezone=ingestion_range.timezone if ingestion_range else "UTC",
+            )
             diagnostics = _capture_diagnostics(
                 page,
                 analytics_state,
@@ -313,6 +328,7 @@ class QuantumAnalyticsCaptureSession:
                 request_failures=request_failures,
             )
             page.close()
+        self.last_visual_contracts = visual_contracts
         if range_validation_errors and not rows:
             unique_errors = list(dict.fromkeys(range_validation_errors))
             raise RuntimeError(
@@ -320,6 +336,10 @@ class QuantumAnalyticsCaptureSession:
                 + " | ".join(unique_errors[:5])
             )
         if not rows:
+            if authentication_required:
+                raise QuantumAuthenticationRequired(
+                    "La sesion de Quantum en Chrome necesita autenticacion."
+                )
             raise RuntimeError("No Quantum analytics responses were captured. " + diagnostics)
         return rows
 
@@ -385,6 +405,34 @@ def _preserve_quantum_native_range(request_json: dict[str, Any]) -> bool:
     return card_type == "TABLE" and view_name in {"topN", "table", "coreMetrics"}
 
 
+def _preserve_request_range(request_json: dict[str, Any], ingestion_range: IngestionRange) -> bool:
+    return _preserve_quantum_native_range(request_json) or _request_matches_ingestion_range(
+        request_json, ingestion_range
+    )
+
+
+def _request_matches_ingestion_range(
+    request_json: dict[str, Any], ingestion_range: IngestionRange
+) -> bool:
+    if ingestion_range.capture_mode != "range_contract" or ingestion_range.range_key not in {
+        "today",
+        "yesterday",
+        "last_7_days",
+    }:
+        return False
+    top_level_ts = request_json.get("ts")
+    query_range = (
+        extract_query_time_range({"ts": top_level_ts})
+        if isinstance(top_level_ts, list)
+        else extract_query_time_range(request_json)
+    )
+    if query_range is None:
+        return False
+    start_delta = abs((query_range.start - ingestion_range.start).total_seconds())
+    end_delta = abs((query_range.end - ingestion_range.end).total_seconds())
+    return start_delta <= 1 and end_delta <= 90
+
+
 def _effective_source_end(
     requested_end: datetime | None,
     response_json: dict[str, Any],
@@ -411,29 +459,89 @@ def _wait_for_analytics_settle(
     rows: list[dict[str, Any]],
     analytics_state: dict[str, Any],
     wait_seconds: int,
+    *,
+    visual_contracts: dict[str, dict[str, Any]] | None = None,
+    timezone: str = "UTC",
 ) -> None:
     started = time.monotonic()
     deadline = started + max(5, wait_seconds)
     quiet_seconds = 8.0
     minimum_seconds = 35.0
+    visual_wait_limit = min(float(max(5, wait_seconds)), 90.0)
     next_scroll_at = started + 2.0
     while time.monotonic() < deadline:
         page.wait_for_timeout(500)
         now = time.monotonic()
         if now >= next_scroll_at:
+            _dismiss_dashboard_overlays(page)
+            if visual_contracts is not None:
+                _collect_page_visual_contracts(page, visual_contracts, timezone=timezone)
             _scroll_dashboard(page)
             next_scroll_at = now + 1.5
         if rows and now - started >= minimum_seconds:
             last_response_at = float(analytics_state.get("last_response_at") or started)
             if now - last_response_at >= quiet_seconds:
-                return
+                if (
+                    visual_contracts is None
+                    or visual_contracts_are_complete(visual_contracts)
+                    or now - started >= visual_wait_limit
+                ):
+                    return
         if not rows and now - started >= 8 and _looks_unauthenticated(page):
             return
+
+
+def _collect_page_visual_contracts(
+    page: Any,
+    contracts: dict[str, dict[str, Any]],
+    *,
+    timezone: str,
+) -> None:
+    try:
+        captured = collect_visible_widget_contracts(page, timezone=timezone)
+    except Exception:
+        return
+    merge_visual_contract_maps(contracts, captured)
 
 
 def _prepare_dashboard_page(page: Any) -> None:
     try:
         page.set_viewport_size({"width": 1920, "height": 2400})
+    except Exception:
+        return
+
+
+def _dismiss_dashboard_overlays(page: Any) -> None:
+    try:
+        page.evaluate(
+            """
+            () => {
+              const welcome = Array.from(document.querySelectorAll("h1, h2, h3, div"))
+                .find((node) => (node.textContent || "").trim() === "Welcome to Quantum Metric");
+              if (!welcome) return;
+              let container = welcome.parentElement;
+              while (container && !/Welcome to Quantum Metric/.test(container.textContent || "")) {
+                container = container.parentElement;
+              }
+              const scope = container?.parentElement || container || document.body;
+              const close = Array.from(scope.querySelectorAll("*"))
+                .find((node) => {
+                  const text = (node.textContent || "").trim();
+                  const label = [
+                    node.getAttribute("aria-label") || "",
+                    node.getAttribute("title") || "",
+                  ].join(" ");
+                  const rect = node.getBoundingClientRect();
+                  return (
+                    rect.width > 0 &&
+                    rect.height > 0 &&
+                    ((node.children.length === 0 && text === "×") || /close/i.test(label))
+                  );
+                });
+              close?.click();
+            }
+            """
+        )
     except Exception:
         return
 

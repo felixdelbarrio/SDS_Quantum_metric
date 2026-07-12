@@ -1202,6 +1202,7 @@ def _widget_from_contract_row(row: dict[str, Any]) -> dict[str, Any]:
         "layout_width": row.get("layout_width"),
         "layout_height": row.get("layout_height"),
         "display": row.get("value") if isinstance(row.get("value"), dict) else None,
+        "breakdown": _list(row.get("breakdown")),
         "comparison": row.get("comparison") if isinstance(row.get("comparison"), dict) else None,
         "chart": row.get("chart") if isinstance(row.get("chart"), dict) else None,
         "table": row.get("table") if isinstance(row.get("table"), dict) else None,

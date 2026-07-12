@@ -19,6 +19,7 @@ from backend.app.quantum_dashboard.contracts import (
     DisplayUnit,
     HistoricalComparisonContract,
     QuantumBandContract,
+    QuantumBreakdownContract,
     QuantumChartContract,
     QuantumSeriesContract,
     QuantumTableColumnContract,
@@ -38,7 +39,11 @@ from backend.app.quantum_dashboard.models import (
     VisualRole,
     WebSnapshot,
 )
-from backend.app.quantum_dashboard.parsers import parse_card
+from backend.app.quantum_dashboard.parsers import (
+    chart_payload_from_contract,
+    parse_card,
+    resolve_chart_contract,
+)
 from backend.app.quantum_dashboard.periods import format_period_label, parse_datetime
 from backend.app.quantum_dashboard.semantics import semantic_intent, semantic_state
 from backend.app.quantum_dashboard.widget_roles import (
@@ -158,7 +163,12 @@ def build_derived_datasets(
     dashboard_widget_rows: list[dict[str, Any]] = []
     widget_table_payload_rows: list[dict[str, Any]] = []
     widget_contract_rows: list[dict[str, Any]] = []
-    parser_errors: list[dict[str, str]] = _correlation_errors(calls, descriptors, enabled_role_set)
+    parser_errors: list[dict[str, str]] = _correlation_errors(
+        calls,
+        descriptors,
+        enabled_role_set,
+        selected,
+    )
 
     for role, call in selected.items():
         contract = _contract_from_call(
@@ -185,11 +195,9 @@ def build_derived_datasets(
             )
             continue
 
-        result = _with_related_timeseries(
+        result = _with_related_chart(
             result,
             related_calls_by_role.get(role),
-            role,
-            range_key=range_key,
         )
 
         canonical_contract = _canonical_widget_contract(contract, result, call)
@@ -213,86 +221,13 @@ def build_derived_datasets(
         )
 
     validation_errors = _validate_required_chart_payloads(
-        selected, summary_widgets, errors_widgets, snapshots, enabled_role_set
+        selected,
+        summary_widgets,
+        errors_widgets,
+        enabled_role_set,
+        descriptors,
     )
     parser_errors.extend(validation_errors)
-
-    _write_range_dataset(
-        store,
-        country,
-        DATASET_VISUAL_CONTRACTS,
-        [contract.model_dump(mode="json") for contract in contracts],
-        file_name="visual_contracts.parquet",
-        range_key=range_key,
-    )
-    _write_range_dataset(
-        store,
-        country,
-        DATASET_WIDGET_CONTRACTS,
-        widget_contract_rows,
-        range_key=range_key,
-    )
-    _write_range_dataset(
-        store,
-        country,
-        DATASET_DASHBOARD_CARDS,
-        [_dashboard_card_row(contract) for contract in contracts],
-        file_name="dashboard_cards.parquet",
-        range_key=range_key,
-    )
-    _write_range_dataset(
-        store,
-        country,
-        DATASET_WEB_SNAPSHOTS,
-        [snapshot.model_dump(mode="json") for snapshot in snapshots],
-        file_name="web_snapshots.parquet",
-        range_key=range_key,
-    )
-    _write_range_dataset(
-        store, country, DATASET_SUMMARY_WIDGETS, summary_widgets, range_key=range_key
-    )
-    _write_range_dataset(store, country, DATASET_SUMMARY_TABLE, summary_rows, range_key=range_key)
-    _write_range_dataset(
-        store, country, DATASET_ERRORS_WIDGETS, errors_widgets, range_key=range_key
-    )
-    _write_range_dataset(
-        store, country, DATASET_ERRORS_TOP_ERRORS, top_error_rows, range_key=range_key
-    )
-    _write_range_dataset(
-        store, country, DATASET_ERRORS_APP_NAME, error_app_rows, range_key=range_key
-    )
-    _write_range_dataset(store, country, DATASET_TIMESERIES, timeseries_rows, range_key=range_key)
-    _write_range_dataset(
-        store, country, DATASET_CHART_PAYLOADS, chart_payload_rows, range_key=range_key
-    )
-    _write_range_dataset(
-        store,
-        country,
-        DATASET_DASHBOARD_TABS,
-        _dashboard_tab_rows(contracts),
-        range_key=range_key,
-    )
-    _write_range_dataset(
-        store,
-        country,
-        DATASET_DASHBOARD_WIDGETS,
-        dashboard_widget_rows,
-        range_key=range_key,
-    )
-    _write_range_dataset(
-        store,
-        country,
-        DATASET_WIDGET_CHART_PAYLOADS,
-        chart_payload_rows,
-        range_key=range_key,
-    )
-    _write_range_dataset(
-        store,
-        country,
-        DATASET_WIDGET_TABLE_PAYLOADS,
-        widget_table_payload_rows,
-        range_key=range_key,
-    )
 
     expected_roles = sorted(enabled_role_set)
     missing = [role for role in expected_roles if role not in selected]
@@ -304,6 +239,25 @@ def build_derived_datasets(
         regression_status = "failed_parse_error"
     if validation_errors:
         regression_status = "failed_missing_chart_payload"
+    publishable = not missing and not parser_errors
+    if publishable:
+        _publish_derived_datasets(
+            store=store,
+            country=country,
+            range_key=range_key,
+            contracts=contracts,
+            snapshots=snapshots,
+            widget_contract_rows=widget_contract_rows,
+            summary_widgets=summary_widgets,
+            summary_rows=summary_rows,
+            errors_widgets=errors_widgets,
+            top_error_rows=top_error_rows,
+            error_app_rows=error_app_rows,
+            timeseries_rows=timeseries_rows,
+            chart_payload_rows=chart_payload_rows,
+            dashboard_widget_rows=dashboard_widget_rows,
+            widget_table_payload_rows=widget_table_payload_rows,
+        )
 
     return DerivedBuildResult(
         ingestion_id=ingestion_id,
@@ -313,25 +267,97 @@ def build_derived_datasets(
         captured_cards=len(selected),
         mandatory_cards=len(expected_roles),
         mandatory_cards_captured=mandatory_captured,
-        derived_datasets=sum(
-            bool(rows)
-            for rows in (
-                summary_widgets,
-                summary_rows,
-                errors_widgets,
-                top_error_rows,
-                error_app_rows,
-                timeseries_rows,
-                chart_payload_rows,
-                dashboard_widget_rows,
-                widget_table_payload_rows,
-                widget_contract_rows,
+        derived_datasets=(
+            sum(
+                bool(rows)
+                for rows in (
+                    summary_widgets,
+                    summary_rows,
+                    errors_widgets,
+                    top_error_rows,
+                    error_app_rows,
+                    timeseries_rows,
+                    chart_payload_rows,
+                    dashboard_widget_rows,
+                    widget_table_payload_rows,
+                    widget_contract_rows,
+                )
             )
+            if publishable
+            else 0
         ),
         missing_roles=[str(role) for role in missing],
         parser_errors=parser_errors,
         regression_status=regression_status,
+        published=publishable,
     )
+
+
+def _publish_derived_datasets(
+    *,
+    store: ParquetStore,
+    country: str,
+    range_key: str,
+    contracts: list[CardContract],
+    snapshots: list[WebSnapshot],
+    widget_contract_rows: list[dict[str, Any]],
+    summary_widgets: list[dict[str, Any]],
+    summary_rows: list[dict[str, Any]],
+    errors_widgets: list[dict[str, Any]],
+    top_error_rows: list[dict[str, Any]],
+    error_app_rows: list[dict[str, Any]],
+    timeseries_rows: list[dict[str, Any]],
+    chart_payload_rows: list[dict[str, Any]],
+    dashboard_widget_rows: list[dict[str, Any]],
+    widget_table_payload_rows: list[dict[str, Any]],
+) -> None:
+    datasets = (
+        (
+            DATASET_VISUAL_CONTRACTS,
+            [item.model_dump(mode="json") for item in contracts],
+            "visual_contracts.parquet",
+        ),
+        (DATASET_WIDGET_CONTRACTS, widget_contract_rows, None),
+        (
+            DATASET_DASHBOARD_CARDS,
+            [_dashboard_card_row(item) for item in contracts],
+            "dashboard_cards.parquet",
+        ),
+        (
+            DATASET_WEB_SNAPSHOTS,
+            [item.model_dump(mode="json") for item in snapshots],
+            "web_snapshots.parquet",
+        ),
+        (DATASET_SUMMARY_WIDGETS, summary_widgets, None),
+        (DATASET_SUMMARY_TABLE, summary_rows, None),
+        (DATASET_ERRORS_WIDGETS, errors_widgets, None),
+        (DATASET_ERRORS_TOP_ERRORS, top_error_rows, None),
+        (DATASET_ERRORS_APP_NAME, error_app_rows, None),
+        (DATASET_TIMESERIES, timeseries_rows, None),
+        (DATASET_CHART_PAYLOADS, chart_payload_rows, None),
+        (DATASET_DASHBOARD_TABS, _dashboard_tab_rows(contracts), None),
+        (DATASET_DASHBOARD_WIDGETS, dashboard_widget_rows, None),
+        (DATASET_WIDGET_CHART_PAYLOADS, chart_payload_rows, None),
+        (DATASET_WIDGET_TABLE_PAYLOADS, widget_table_payload_rows, None),
+    )
+    for dataset, rows, file_name in datasets:
+        if file_name:
+            _write_range_dataset(
+                store,
+                country,
+                dataset,
+                rows,
+                file_name=file_name,
+                range_key=range_key,
+            )
+        else:
+            _write_range_dataset(
+                store,
+                country,
+                dataset,
+                rows,
+                range_key=range_key,
+            )
 
 
 def _latest_call_by_role(
@@ -363,14 +389,31 @@ def _correlation_errors(
     calls: list[dict[str, Any]],
     descriptors: list[WidgetRoleDescriptor],
     enabled_roles: set[str],
+    selected: dict[VisualRole, dict[str, Any]],
 ) -> list[dict[str, str]]:
     if not descriptors:
         return []
     errors: dict[tuple[str, str], dict[str, str]] = {}
     active_descriptors = [item for item in descriptors if item.role in enabled_roles]
+    selected_roles = {str(role) for role in selected}
     for call in calls:
         result = correlate_call_to_widget(call, active_descriptors)
         if result.status != "ambiguous":
+            continue
+        candidate_ids = {candidate.widget_id for candidate in result.candidates}
+        candidate_descriptors = [
+            descriptor
+            for descriptor in active_descriptors
+            if (descriptor.widget_id or descriptor.role) in candidate_ids
+        ]
+        candidate_roles = {descriptor.role for descriptor in candidate_descriptors}
+        if candidate_roles and candidate_roles.issubset(selected_roles):
+            continue
+        if (
+            candidate_descriptors
+            and all(descriptor.widget_type == "TABLE" for descriptor in candidate_descriptors)
+            and str(call.get("view_name") or "") not in {"table", "topN", "dimensionQuery"}
+        ):
             continue
         card_id = _text(call.get("card_id")) or "unknown"
         key = (card_id, str(call.get("view_name") or "unknown"))
@@ -445,53 +488,42 @@ def _is_non_widget_query(call: dict[str, Any]) -> bool:
     return str(call.get("view_name") or "") in {"navbarMetricsQuery", "dashboardReplayQuery"}
 
 
-def _with_related_timeseries(
+def _with_related_chart(
     result: ParserResult,
     related_calls: RelatedRoleCalls | None,
-    role: VisualRole,
-    *,
-    range_key: str,
 ) -> ParserResult:
-    del range_key
     if related_calls is None:
         return result
     widget = result.data.get("widget")
     if not isinstance(widget, dict):
         return result
-    candidates = [
-        candidate
-        for candidate in (
-            _explicit_chart_payload(related_calls.base_timeseries, role),
-            _explicit_chart_payload(related_calls.comparison_timeseries, role),
-        )
-        if candidate is not None
-    ]
-    unique_candidates = {hash_json(candidate): candidate for candidate in candidates}
-    if len(unique_candidates) == 1 and "chart_payload" not in widget:
-        widget["chart_payload"] = next(iter(unique_candidates.values()))
+    chart_payload = _explicit_chart_payload(related_calls.base_timeseries)
+    if chart_payload is None:
+        chart_payload = _explicit_chart_payload(related_calls.comparison_timeseries)
+    if chart_payload is not None:
+        widget["chart_payload"] = chart_payload
     return ParserResult(role=result.role, status=result.status, data=result.data)
 
 
-def _parsed_widget(call: dict[str, Any] | None, role: VisualRole) -> dict[str, Any] | None:
+def _explicit_chart_payload(call: dict[str, Any] | None) -> dict[str, Any] | None:
     if call is None:
         return None
-    parsed = parse_card(call, role)
-    widget = parsed.data.get("widget") if parsed.status == "ok" else None
-    return widget if isinstance(widget, dict) else None
-
-
-def _explicit_chart_payload(call: dict[str, Any] | None, role: VisualRole) -> dict[str, Any] | None:
-    widget = _parsed_widget(call, role)
-    if not widget:
+    response_json = parse_json_object(call.get("response_json"))
+    resolution = resolve_chart_contract(call, response_json)
+    if resolution.status != "resolved" or not isinstance(resolution.value, QuantumChartContract):
         return None
-    payload = widget.get("chart_payload")
-    return payload if isinstance(payload, dict) else None
+    payload = chart_payload_from_contract(resolution.value)
+    return payload if any(series.get("points") for series in payload["series"]) else None
 
 
 def _call_score(role: VisualRole, call: dict[str, Any]) -> int:
     view_name = str(call.get("view_name") or "")
     score = int(call.get("row_count") or 0)
     if is_generic_role(role) and str(call.get("card_type") or "").upper() == "TABLE":
+        visual_contract = parse_json_object(call.get("visual_contract"))
+        table_contract = visual_contract.get("table")
+        if isinstance(table_contract, dict) and table_contract.get("columns"):
+            score += 10_000 + len(table_contract.get("rows") or [])
         if view_name == "table":
             score += 1000
         if view_name == "topN":
@@ -631,6 +663,7 @@ def _canonical_widget_contract(
     widget_value = result.data.get("widget")
     widget: dict[str, Any] = widget_value if isinstance(widget_value, dict) else {}
     display = _canonical_display(widget)
+    breakdown = _canonical_breakdown(widget)
     comparison = _canonical_comparison(widget)
     chart = _canonical_chart(widget)
     table = _canonical_table(widget, result.data, contract, call)
@@ -686,6 +719,7 @@ def _canonical_widget_contract(
         layout_width=_positive_int_or_none(call.get("layout_width")),
         layout_height=_positive_int_or_none(call.get("layout_height")),
         value=display,
+        breakdown=breakdown,
         comparison=comparison,
         chart=chart,
         table=table,
@@ -723,6 +757,24 @@ def _canonical_display(widget: dict[str, Any]) -> DisplayNumberContract | None:
         unit=unit,
         precision=_decimal_places(numeric),
     )
+
+
+def _canonical_breakdown(widget: dict[str, Any]) -> list[QuantumBreakdownContract]:
+    values: list[QuantumBreakdownContract] = []
+    for item in _list_of_dicts(widget.get("breakdown")):
+        label = _text(item.get("label"))
+        raw_display = item.get("display")
+        if not label or not isinstance(raw_display, dict):
+            continue
+        display = DisplayNumberContract.model_validate(raw_display)
+        values.append(
+            QuantumBreakdownContract(
+                label=label,
+                value=display.display_value,
+                display=display,
+            )
+        )
+    return values
 
 
 def _canonical_comparison(widget: dict[str, Any]) -> HistoricalComparisonContract | None:
@@ -1189,27 +1241,34 @@ def _validate_required_chart_payloads(
     selected: dict[VisualRole, dict[str, Any]],
     summary_widgets: list[dict[str, Any]],
     errors_widgets: list[dict[str, Any]],
-    snapshots: list[WebSnapshot],
     enabled_roles: set[str],
+    descriptors: list[WidgetRoleDescriptor],
 ) -> list[dict[str, str]]:
     widgets = {str(row.get("card_role")): row for row in [*summary_widgets, *errors_widgets]}
-    snapshots_by_role = {str(snapshot.card_role): snapshot for snapshot in snapshots}
     errors: list[dict[str, str]] = []
-    for role in REQUIRED_CHART_ROLES:
+    required_chart_roles = {
+        str(role) for role in REQUIRED_CHART_ROLES if str(role) in enabled_roles
+    }
+    required_chart_roles.update(
+        descriptor.role
+        for descriptor in descriptors
+        if descriptor.role in enabled_roles and _descriptor_requires_chart(descriptor)
+    )
+    for role in sorted(required_chart_roles):
         if str(role) not in enabled_roles:
             continue
         if role not in selected:
             continue
         widget = widgets.get(role, {})
-        payload = widget.get("chart_payload")
-        snapshot = snapshots_by_role.get(role)
-        expects_chart_payload = bool(
-            _list_of_dicts(widget.get("timeseries") or widget.get("series"))
-            or (snapshot.visible_series if snapshot else [])
-        )
-        if not expects_chart_payload and not isinstance(payload, dict):
-            continue
-        if not isinstance(payload, dict) or not payload.get("series"):
+        raw_payload = widget.get("chart_payload")
+        payload: dict[str, Any] = raw_payload if isinstance(raw_payload, dict) else {}
+        series = payload.get("series")
+        populated_series = [
+            item
+            for item in series or []
+            if isinstance(item, dict) and _list_of_dicts(item.get("points"))
+        ]
+        if not populated_series:
             errors.append(
                 {
                     "card_role": role,
@@ -1229,6 +1288,16 @@ def _validate_required_chart_payloads(
                 }
             )
     return errors
+
+
+def _descriptor_requires_chart(descriptor: WidgetRoleDescriptor) -> bool:
+    if descriptor.widget_type == "DONUT":
+        return True
+    if descriptor.widget_type != "CHART":
+        return False
+    if isinstance(descriptor.visual_contract.get("chart"), dict):
+        return True
+    return bool(descriptor.layout_height and descriptor.layout_height >= 12)
 
 
 def _dashboard_card_row(contract: CardContract) -> dict[str, Any]:

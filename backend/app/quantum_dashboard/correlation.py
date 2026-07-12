@@ -5,7 +5,10 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from backend.app.analytics.normalizer import parse_json_object
-from backend.app.quantum_dashboard.widget_roles import WidgetRoleDescriptor
+from backend.app.quantum_dashboard.widget_roles import (
+    WidgetRoleDescriptor,
+    descriptor_query_matches,
+)
 from backend.app.storage.parquet_store import hash_json
 
 MINIMUM_AUTOMATIC_CONFIDENCE = 0.9
@@ -64,6 +67,9 @@ def correlate_call_to_widget(
         if call_section_id and descriptor.section_id == call_section_id:
             confidence += 0.05
             evidence.append("exact_section_id")
+        if descriptor_query_matches(call, descriptor):
+            confidence += 0.2
+            evidence.append("exact_query_contract")
         if not evidence:
             continue
         candidates.append(
@@ -82,9 +88,10 @@ def correlate_call_to_widget(
 
     accepted = [item for item in candidates if item.confidence >= MINIMUM_AUTOMATIC_CONFIDENCE]
     accepted.sort(key=lambda item: item.confidence, reverse=True)
-    if len(accepted) == 1:
-        return CorrelationResult(status="resolved", candidate=accepted[0], candidates=candidates)
-    if len(accepted) > 1:
+    best = [item for item in accepted if accepted and item.confidence == accepted[0].confidence]
+    if len(best) == 1:
+        return CorrelationResult(status="resolved", candidate=best[0], candidates=candidates)
+    if best:
         return CorrelationResult(
             status="ambiguous",
             candidates=candidates,

@@ -32,7 +32,7 @@ class QuantumConfigStore:
         )
         return QuantumConfig(
             browser=BrowserName(self.settings.qm_browser),
-            session_mode=SessionMode(_safe_default_session_mode(self.settings.qm_session_mode)),
+            session_mode=SessionMode(self.settings.qm_session_mode),
             country=Country(self.settings.qm_country),
             countries=self._countries_from_settings(),
             verify_tls=self.settings.qm_verify_tls,
@@ -46,19 +46,16 @@ class QuantumConfigStore:
         if not path.exists():
             return self.default()
         data = json.loads(path.read_text())
-        config = _harden_browser_session_mode(QuantumConfig.model_validate(data))
+        config = QuantumConfig.model_validate(data)
         if path == self.legacy_path and not self.path.exists():
             self._write_json(config)
-        elif data.get("session_mode") == SessionMode.browser.value:
+        elif data.get("session_mode") == "controlled":
             self._write_json(config)
         return config
 
     def write(self, update: QuantumConfigUpdate) -> QuantumConfig:
-        config = _harden_browser_session_mode(
-            QuantumConfig.model_validate(update.model_dump(exclude={"manual_cookie"}))
-        )
+        config = QuantumConfig.model_validate(update.model_dump(exclude={"manual_cookie"}))
         self._write_json(config)
-        self._sync_env(config)
         return config
 
     def delete(self) -> None:
@@ -117,68 +114,6 @@ class QuantumConfigStore:
             )
         ]
 
-    def _sync_env(self, config: QuantumConfig) -> None:
-        if not self._should_sync_env():
-            return
-
-        selected = config.country_config() or config.countries[0]
-        dashboard = selected.default_dashboard()
-        values = {
-            "QM_BASE_URL": selected.base_url,
-            "QM_BROWSER": config.browser.value,
-            "QM_SESSION_MODE": config.session_mode.value,
-            "QM_COUNTRY": config.country.value,
-            "QM_VERIFY_TLS": "true" if config.verify_tls else "false",
-            "QUANTUM_INGESTION_DEPTH_DAYS": str(config.ingestion_depth_days),
-            "QUANTUM_THEME_PREFERENCE": config.theme_preference,
-            "QM_EXPORT_DIR": config.export_path,
-            "QM_DASHBOARD_ID": dashboard.dashboard_id if dashboard else selected.dashboard_id,
-            "QM_TEAM_ID": dashboard.team_id if dashboard else selected.team_id,
-            "QM_DASHBOARD_TAB": str(dashboard.summary_tab if dashboard else selected.tab),
-            "QM_COUNTRY_CONFIGS": json.dumps(
-                [country.model_dump(mode="json") for country in config.countries],
-                ensure_ascii=False,
-                separators=(",", ":"),
-            ),
-        }
-
-        env_path = Path(".env")
-        lines = env_path.read_text().splitlines() if env_path.exists() else []
-        next_lines: list[str] = []
-        written: set[str] = set()
-        for line in lines:
-            key = line.split("=", 1)[0].strip() if "=" in line else ""
-            if key == "QM_DEFAULT_DASHBOARD_URL":
-                continue
-            if key in values:
-                next_lines.append(f"{key}={values[key]}")
-                written.add(key)
-                continue
-            next_lines.append(line)
-
-        for key, value in values.items():
-            if key not in written:
-                next_lines.append(f"{key}={value}")
-
-        env_path.write_text("\n".join(next_lines).rstrip() + "\n")
-
-    def _should_sync_env(self) -> bool:
-        try:
-            self.settings.qm_data_dir.resolve().relative_to(Path.cwd().resolve())
-        except ValueError:
-            return False
-        return True
-
 
 def ensure_parent(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-
-
-def _safe_default_session_mode(value: str) -> str:
-    return "controlled" if value == "browser" else value
-
-
-def _harden_browser_session_mode(config: QuantumConfig) -> QuantumConfig:
-    if config.session_mode == SessionMode.browser:
-        return config.model_copy(update={"session_mode": SessionMode.controlled})
-    return config

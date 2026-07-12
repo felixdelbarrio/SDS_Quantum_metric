@@ -160,7 +160,6 @@ def discover_dashboards_via_browser(
     country: Country,
     base_url: str,
     wait_seconds: int,
-    session_mode: str,
 ) -> tuple[list[QuantumDashboardSummary], str | None]:
     result, error = fetch_dashboard_resources_via_browser(
         settings=settings,
@@ -168,7 +167,6 @@ def discover_dashboards_via_browser(
         country=country,
         base_url=base_url,
         wait_seconds=wait_seconds,
-        session_mode=session_mode,
         page_size=25,
     )
     if result.resources:
@@ -183,7 +181,6 @@ def fetch_dashboard_resources_via_browser(
     country: Country,
     base_url: str,
     wait_seconds: int,
-    session_mode: str,
     page_size: int = 25,
 ) -> tuple[DashboardResourcesResult, str | None]:
     _configure_playwright_browser_path()
@@ -197,22 +194,10 @@ def fetch_dashboard_resources_via_browser(
         context: Any | None = None
         browser: Any | None = None
         try:
-            if session_mode == "controlled":
-                user_data_dir = settings.runtime_dir / "quantum-controlled-profile"
-                user_data_dir.mkdir(parents=True, exist_ok=True)
-                context = playwright.chromium.launch_persistent_context(
-                    str(user_data_dir),
-                    headless=True,
-                    ignore_https_errors=not settings.qm_verify_tls,
-                    args=["--disable-dev-shm-usage", "--no-first-run"],
-                )
-                if cookies:
-                    context.add_cookies(cast(Any, [cookie.as_playwright() for cookie in cookies]))
-            else:
-                browser = _launch_headless_browser(playwright, settings)
-                context = browser.new_context(ignore_https_errors=not settings.qm_verify_tls)
-                if cookies:
-                    context.add_cookies(cast(Any, [cookie.as_playwright() for cookie in cookies]))
+            browser = _launch_headless_browser(playwright, settings)
+            context = browser.new_context(ignore_https_errors=not settings.qm_verify_tls)
+            if cookies:
+                context.add_cookies(cast(Any, [cookie.as_playwright() for cookie in cookies]))
 
             page = context.new_page()
             page.on("request", lambda request: _capture_query_context(request, query_context_ref))

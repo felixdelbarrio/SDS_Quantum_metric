@@ -44,7 +44,7 @@ def test_config_store_does_not_persist_manual_cookie(tmp_path: Path) -> None:
     assert "manual_cookie" not in text
 
 
-def test_config_store_default_ingestion_depth_is_7_days(
+def test_config_store_default_ingestion_depth_is_30_days(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
     monkeypatch.delenv("QUANTUM_INGESTION_DEPTH_DAYS", raising=False)
@@ -52,7 +52,37 @@ def test_config_store_default_ingestion_depth_is_7_days(
     settings = Settings(qm_data_dir=tmp_path)
     store = QuantumConfigStore(settings)
 
-    assert store.default().ingestion_depth_days == 7
+    assert store.default().ingestion_depth_days == 30
+
+
+def test_config_store_write_never_mutates_environment_file(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    env_path = tmp_path / ".env"
+    env_path.write_text("KEEP_THIS=unchanged\n")
+    store = QuantumConfigStore(Settings(qm_data_dir=tmp_path / "data"))
+
+    store.write(
+        QuantumConfigUpdate(
+            browser=BrowserName.chrome,
+            session_mode=SessionMode.browser,
+            country=Country.CO,
+            countries=[
+                QuantumCountryConfig(
+                    country=Country.CO,
+                    base_url="https://bbvaco.quantummetric.com",
+                    dashboard_id="demo",
+                    team_id="team",
+                    tab=0,
+                )
+            ],
+            verify_tls=True,
+            ingestion_depth_days=30,
+        )
+    )
+
+    assert env_path.read_text() == "KEEP_THIS=unchanged\n"
 
 
 def test_config_store_persists_ingestion_depth_and_theme(tmp_path: Path) -> None:
@@ -83,10 +113,10 @@ def test_config_store_persists_ingestion_depth_and_theme(tmp_path: Path) -> None
     assert saved.ingestion_depth_days == 730
     assert loaded.ingestion_depth_days == 730
     assert loaded.theme_preference == "dark"
-    assert loaded.session_mode == "controlled"
+    assert loaded.session_mode == "browser"
 
 
-def test_config_store_migrates_persisted_browser_session_to_controlled(
+def test_config_store_migrates_persisted_controlled_session_to_browser(
     tmp_path: Path,
 ) -> None:
     settings = Settings(qm_data_dir=tmp_path)
@@ -97,7 +127,7 @@ def test_config_store_migrates_persisted_browser_session_to_controlled(
 {
   "schema_version": 2,
   "browser": "chrome",
-  "session_mode": "browser",
+  "session_mode": "controlled",
   "country": "MX",
   "countries": [
     {
@@ -116,8 +146,48 @@ def test_config_store_migrates_persisted_browser_session_to_controlled(
 
     loaded = store.read()
 
-    assert loaded.session_mode == "controlled"
-    assert '"session_mode": "controlled"' in store.path.read_text()
+    assert loaded.session_mode == "browser"
+    assert '"session_mode": "browser"' in store.path.read_text()
+
+
+def test_config_store_migrates_legacy_file_and_deletes_both_locations(tmp_path: Path) -> None:
+    settings = Settings(qm_data_dir=tmp_path)
+    store = QuantumConfigStore(settings)
+    store.legacy_path.parent.mkdir(parents=True, exist_ok=True)
+    store.legacy_path.write_text(
+        '{"browser":"chrome","session_mode":"browser","country":"MX",'
+        '"base_url":"https://bbvamx.quantummetric.com",'
+        '"dashboard_url":"https://bbvamx.quantummetric.com/#/dashboard/demo?teamID=team&tab=1"}'
+    )
+
+    loaded = store.read()
+
+    assert loaded.countries[0].dashboard_id == "demo"
+    assert loaded.countries[0].team_id == "team"
+    assert loaded.countries[0].dashboards[0].summary_tab == 1
+    assert store.path.exists()
+
+    store.delete()
+
+    assert not store.path.exists()
+    assert not store.legacy_path.exists()
+
+
+def test_config_store_builds_countries_from_json_settings(tmp_path: Path) -> None:
+    settings = Settings(
+        qm_data_dir=tmp_path,
+        qm_country="CO",
+        qm_country_configs=(
+            '[{"country":"CO","base_url":"https://bbvaco.quantummetric.com",'
+            '"dashboard_id":"co-dashboard","team_id":"co-team","tab":2}]'
+        ),
+    )
+
+    config = QuantumConfigStore(settings).default()
+
+    assert config.country == Country.CO
+    assert config.countries[0].dashboard_id == "co-dashboard"
+    assert config.countries[0].dashboards[0].summary_tab == 2
 
 
 def test_config_store_persists_dashboards_widgets_and_schema_version(tmp_path: Path) -> None:

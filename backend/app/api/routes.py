@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 from backend.app.analytics.models import SortDirection
 from backend.app.analytics.service import AnalyticsService
-from backend.app.auth.browser_cookies import BrowserCookie, BrowserCookieProvider, CookieAccessError
+from backend.app.auth.browser_cookies import BrowserCookie, BrowserCookieProvider
 from backend.app.auth.session_store import secret_store
 from backend.app.config.settings import Settings, get_settings
 from backend.app.ingestion.models import (
@@ -49,6 +49,7 @@ from backend.app.quantum_dashboard.dashboard_resources import (
     write_dashboard_resources_cache,
 )
 from backend.app.quantum_dashboard.dashboard_structure import (
+    dashboard_config_from_structure,
     discover_dashboard_structure_via_browser,
     section_configs_from_structure,
     structure_from_dashboard_config,
@@ -319,11 +320,6 @@ def _cookies_for_quantum(
                 detail="Manual session mode needs a cookie in memory.",
             )
         return cookie_provider.from_manual_header(manual_cookie, str(country_config.base_url))
-    if config.session_mode == "controlled":
-        try:
-            return cookie_provider.load(config.browser.value, str(country_config.base_url))
-        except CookieAccessError:
-            return []
     return cookie_provider.load(config.browser.value, str(country_config.base_url))
 
 
@@ -474,7 +470,6 @@ def refresh_country_quantum_dashboards(
         country=country_config.country,
         base_url=country_config.base_url or settings.quantum_default_base_url,
         wait_seconds=settings.quantum_capture_timeout_seconds,
-        session_mode=config.session_mode.value,
         page_size=25,
     )
     cache_dir = _dashboard_resources_cache_dir(settings)
@@ -584,7 +579,6 @@ def add_manual_quantum_dashboard(
         dashboard_id=manual.dashboard_id,
         team_id=manual.team_id or country_config.team_id or None,
         wait_seconds=settings.quantum_capture_timeout_seconds,
-        session_mode=config.session_mode.value,
     )
     if not structure.tabs and not structure.widgets:
         detail = error or "No se pudo validar el dashboard manual contra Quantum."
@@ -713,7 +707,6 @@ def discover_quantum_dashboard_structure(
         or country_config.team_id
         or None,
         wait_seconds=settings.quantum_capture_timeout_seconds,
-        session_mode=config.session_mode.value,
     )
     if not structure.tabs and not structure.widgets:
         cached_structure = structure_from_dashboard_config(country_config.country, dashboard)
@@ -723,26 +716,10 @@ def discover_quantum_dashboard_structure(
         payload = cached_structure.model_dump(mode="json")
         payload["warning"] = error or "Se conserva la ultima estructura real guardada."
         return payload
-    dashboard_with_structure = dashboard.model_copy(
-        update={
-            "name": structure.dashboard_name or dashboard.name,
-            "summary_tab": _structure_tab_index(
-                "summary",
-                dashboard.summary_tab,
-                structure.tabs,
-            ),
-            "errors_tab": _structure_tab_index(
-                "errors",
-                dashboard.errors_tab,
-                structure.tabs,
-            ),
-            "tabs": tab_configs_from_structure(structure),
-            "sections": section_configs_from_structure(structure),
-            "widgets": widget_configs_from_structure(structure, dashboard.widgets),
-            "timezone": dashboard.timezone or country_config.timezone,
-            "last_structure_at": structure.discovered_at,
-            "source": structure.source,
-        }
+    dashboard_with_structure = dashboard_config_from_structure(
+        dashboard,
+        structure,
+        timezone=country_config.timezone,
     )
     updated_countries = [
         item.model_copy(

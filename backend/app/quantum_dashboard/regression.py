@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 from datetime import UTC, datetime
 from typing import Any
 
@@ -22,6 +23,7 @@ from backend.app.quantum_dashboard.catalog import MANDATORY_CARDS, ROLE_SPECS, s
 from backend.app.quantum_dashboard.generic_roles import is_generic_role
 from backend.app.quantum_dashboard.models import (
     DashboardTab,
+    DerivedBuildResult,
     RegressionCardResult,
     RegressionReport,
     RegressionStatus,
@@ -42,12 +44,23 @@ def run_regression(
     enabled_roles: set[str] | list[str] | None = None,
     dashboard_id: str | None = None,
     range_key: str = "today",
+    build_result: DerivedBuildResult | None = None,
 ) -> RegressionReport:
     tolerance = (
         store.settings.quantum_regression_tolerance_percent
         if tolerance_percent is None
         else tolerance_percent
     )
+    if build_result is not None and not build_result.published:
+        return _failed_build_report(
+            store,
+            build_result,
+            ingestion_id=ingestion_id,
+            country=country,
+            dashboard_id=dashboard_id,
+            range_key=range_key,
+            tolerance=tolerance,
+        )
     contracts = _filter_dashboard_rows(
         _read_dataset(store, country, DATASET_VISUAL_CONTRACTS, range_key),
         dashboard_id,
@@ -141,6 +154,48 @@ def run_regression(
     return report
 
 
+def _failed_build_report(
+    store: ParquetStore,
+    build: DerivedBuildResult,
+    *,
+    ingestion_id: str | None,
+    country: str,
+    dashboard_id: str | None,
+    range_key: str,
+    tolerance: float,
+) -> RegressionReport:
+    details: list[str] = []
+    if build.missing_roles:
+        details.append(f"Missing roles: {', '.join(build.missing_roles)}")
+    details.extend(
+        str(error.get("error_message") or error.get("error_code")) for error in build.parser_errors
+    )
+    report = RegressionReport(
+        ingestion_id=ingestion_id,
+        country=country,
+        range_key=range_key,
+        dashboard_id=dashboard_id,
+        tabs=["build"],
+        cards=[
+            RegressionCardResult(
+                tab="build",
+                card_role="build.validation",
+                card_title="Derived dashboard validation",
+                range_key=range_key,
+                status=build.regression_status,
+                details=" | ".join(details) or "Derived dashboard was not publishable.",
+            )
+        ],
+        verdict="FAILED",
+        status=build.regression_status,
+        tolerance_percent=tolerance,
+        generated_at=datetime.now(UTC).isoformat(),
+    )
+    _persist_report(store, report)
+    _write_docs_report(store.settings, report)
+    return report
+
+
 def _compare_card(
     role: VisualRole,
     snapshot: dict[str, Any],
@@ -222,6 +277,9 @@ def _compare_card(
     chart_result = _compare_chart_contract(role, snapshot, local, range_key)
     if chart_result is not None:
         return chart_result.model_copy(update={"widget_id": widget_id})
+    breakdown_result = _compare_visible_breakdowns(role, snapshot, local, tolerance, range_key)
+    if breakdown_result is not None:
+        return breakdown_result.model_copy(update={"widget_id": widget_id})
 
     web_value = _number(snapshot.get("visible_value"))
     local_value = _number(local.get("value"))
@@ -261,6 +319,76 @@ def _compare_card(
         difference=difference,
         widget_id=widget_id,
     )
+
+
+def _compare_visible_breakdowns(
+    role: VisualRole,
+    snapshot: dict[str, Any],
+    local: dict[str, Any],
+    tolerance: float,
+    range_key: str,
+) -> RegressionCardResult | None:
+    web_items = [
+        item
+        for item in _list(snapshot.get("visible_breakdowns"))
+        if isinstance(item, dict) and isinstance(item.get("display"), dict)
+    ]
+    local_items = [
+        item
+        for item in _list(local.get("breakdown"))
+        if isinstance(item, dict) and isinstance(item.get("display"), dict)
+    ]
+    if not web_items and not local_items:
+        return None
+    spec = spec_for_role(role)
+    if spec is None:
+        return None
+    web_labels = [_text(item.get("label")) for item in web_items]
+    local_labels = [_text(item.get("label")) for item in local_items]
+    if web_labels != local_labels:
+        return _card_result(
+            spec.tab,
+            role,
+            spec.title,
+            "failed_value_mismatch",
+            range_key=range_key,
+            web_value=", ".join(label or "" for label in web_labels),
+            local_value=", ".join(label or "" for label in local_labels),
+            details="Visible KPI segment labels or order differ.",
+        )
+    for web_item, local_item in zip(web_items, local_items, strict=True):
+        web_display = web_item["display"]
+        local_display = local_item["display"]
+        web_formatted = _text(web_display.get("formatted"))
+        local_formatted = _text(local_display.get("formatted"))
+        web_value = _number(web_item.get("value"))
+        local_value = _number(local_item.get("value"))
+        if web_value is None:
+            web_value = _number(web_display.get("display_value"))
+        if local_value is None:
+            local_value = _number(local_display.get("display_value"))
+        difference = (
+            None if web_value is None or local_value is None else round(local_value - web_value, 6)
+        )
+        allowed = 0 if web_value is None else abs(web_value) * (tolerance / 100)
+        if (
+            web_value is None
+            or local_value is None
+            or abs(difference or 0) > allowed
+            or web_formatted != local_formatted
+        ):
+            return _card_result(
+                spec.tab,
+                role,
+                spec.title,
+                "failed_value_mismatch",
+                range_key=range_key,
+                web_value=web_formatted or web_value,
+                local_value=local_formatted or local_value,
+                difference=difference,
+                details=f"Visible KPI segment {web_item.get('label')} differs.",
+            )
+    return None
 
 
 def _local_payload(
@@ -466,8 +594,12 @@ def _table_row_signature(role: VisualRole, row: Any) -> tuple[Any, ...]:
     elif role == "errors.error_session_percentage_by_app_name":
         keys = ("name", "app_name", "sessions", "sessions_with_error", "error_session_percent")
     elif is_generic_role(role):
-        metric_keys = tuple(sorted(key for key in row if key.startswith("metric_")))
-        dimension_keys = tuple(sorted(key for key in row if key.startswith("dimension_")))
+        metric_keys = tuple(sorted(key for key in row if re.fullmatch(r"metric_\d+", key)))
+        dimension_keys = tuple(
+            sorted(
+                key for key in row if key != "dimension_1" and re.fullmatch(r"dimension_\d+", key)
+            )
+        )
         keys = ("name", *dimension_keys, *metric_keys)
     else:
         keys = ("name",)

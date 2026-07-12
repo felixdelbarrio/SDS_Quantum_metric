@@ -5,9 +5,18 @@ from typing import Any
 
 from backend.app.auth.browser_cookies import BrowserCookie
 from backend.app.config.settings import Settings
-from backend.app.ingestion.capture import QuantumAnalyticsCaptureSession, capture_quantum_analytics
+from backend.app.ingestion.capture import (
+    QuantumAnalyticsCaptureSession,
+    QuantumAuthenticationRequired,
+    capture_quantum_analytics,
+)
 from backend.app.ingestion.policy import IngestionRange
+from backend.app.quantum.schemas import QuantumWidgetConfig
 from backend.app.quantum_dashboard.discovery import dashboard_tab_url
+from backend.app.quantum_dashboard.widget_roles import (
+    descriptors_from_widgets,
+    enrich_calls_with_live_contracts,
+)
 
 type DashboardCaptureTab = dict[str, int | str | None]
 
@@ -23,9 +32,9 @@ def capture_quantum_dashboard_cards(
     summary_tab: int,
     errors_tab: int,
     tabs: list[DashboardCaptureTab] | None = None,
+    widgets: list[QuantumWidgetConfig] | None = None,
     ingestion_id: str,
     ingestion_range: IngestionRange | None,
-    session_mode: str = "manual",
     capture_session: QuantumAnalyticsCaptureSession | None = None,
     progress_callback: Callable[[str], None] | None = None,
 ) -> list[dict[str, Any]]:
@@ -37,7 +46,6 @@ def capture_quantum_dashboard_cards(
             base_url=base_url,
             wait_seconds=settings.quantum_capture_timeout_seconds,
             ingestion_id=ingestion_id,
-            session_mode=session_mode,
         ) as session:
             return capture_quantum_dashboard_cards(
                 settings=settings,
@@ -49,10 +57,10 @@ def capture_quantum_dashboard_cards(
                 summary_tab=summary_tab,
                 errors_tab=errors_tab,
                 tabs=tabs,
+                widgets=widgets,
                 ingestion_id=ingestion_id,
                 ingestion_range=ingestion_range,
                 capture_session=session,
-                session_mode=session_mode,
                 progress_callback=progress_callback,
             )
 
@@ -89,6 +97,8 @@ def capture_quantum_dashboard_cards(
                     ingestion_id=ingestion_id,
                     ingestion_range=ingestion_range,
                 )
+        except QuantumAuthenticationRequired:
+            raise
         except RuntimeError as exc:
             captured = []
             tab_failures.append(f"{tab_label}: {exc}")
@@ -104,6 +114,11 @@ def capture_quantum_dashboard_cards(
             row["captured_at"] = row.get("ingestion_ts")
             row.setdefault("parse_status", "pending")
             row.setdefault("parse_error", None)
+        captured = enrich_calls_with_live_contracts(
+            captured,
+            descriptors=descriptors_from_widgets(widgets),
+            live_contracts=getattr(capture_session, "last_visual_contracts", {}),
+        )
         rows.extend(captured)
     if not rows:
         details = " | ".join(dict.fromkeys(tab_failures))
