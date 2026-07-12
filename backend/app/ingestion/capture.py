@@ -13,10 +13,6 @@ from urllib.parse import urlparse
 from playwright.sync_api import sync_playwright
 
 from backend.app.auth.browser_cookies import BrowserCookie
-from backend.app.auth.controlled_browser import (
-    invalidate_controlled_quantum_cache,
-    launch_controlled_context,
-)
 from backend.app.config.settings import Settings
 from backend.app.ingestion.planner import IngestionChunk
 from backend.app.ingestion.policy import IngestionRange, apply_ingestion_range
@@ -47,7 +43,6 @@ def capture_quantum_analytics(
     wait_seconds: int,
     ingestion_id: str | None = None,
     ingestion_range: IngestionRange | None = None,
-    session_mode: str = "manual",
 ) -> list[dict[str, Any]]:
     with QuantumAnalyticsCaptureSession(
         settings=settings,
@@ -56,7 +51,6 @@ def capture_quantum_analytics(
         base_url=base_url,
         wait_seconds=wait_seconds,
         ingestion_id=ingestion_id,
-        session_mode=session_mode,
     ) as session:
         return session.capture(dashboard_url=dashboard_url, ingestion_range=ingestion_range)
 
@@ -71,7 +65,6 @@ class QuantumAnalyticsCaptureSession:
         base_url: str,
         wait_seconds: int,
         ingestion_id: str | None = None,
-        session_mode: str = "manual",
     ) -> None:
         self.settings = settings
         self.cookies = cookies
@@ -79,7 +72,6 @@ class QuantumAnalyticsCaptureSession:
         self.base_url = base_url
         self.wait_seconds = wait_seconds
         self.ingestion_id = ingestion_id or str(uuid.uuid4())
-        self.session_mode = session_mode
         self.quantum_host = urlparse(str(base_url)).hostname
         self._playwright_manager: Any | None = None
         self._playwright: Any | None = None
@@ -99,24 +91,11 @@ class QuantumAnalyticsCaptureSession:
                     "Run `make setup` to reinstall browser assets and retry ingestion."
                 ) from exc
             raise
-        if self.session_mode == "controlled":
-            self._context = launch_controlled_context(
-                self._playwright,
-                self.settings,
-                headless=True,
-            )
-            if self.cookies:
-                self._context.add_cookies(
-                    cast(Any, [cookie.as_playwright() for cookie in self.cookies])
-                )
-        else:
-            self._browser = _launch_headless_browser(self._playwright, self.settings)
-            self._context = self._browser.new_context(
-                ignore_https_errors=not self.settings.qm_verify_tls
-            )
-            self._context.add_cookies(
-                cast(Any, [cookie.as_playwright() for cookie in self.cookies])
-            )
+        self._browser = _launch_headless_browser(self._playwright, self.settings)
+        self._context = self._browser.new_context(
+            ignore_https_errors=not self.settings.qm_verify_tls
+        )
+        self._context.add_cookies(cast(Any, [cookie.as_playwright() for cookie in self.cookies]))
         return self
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
@@ -153,12 +132,6 @@ class QuantumAnalyticsCaptureSession:
         routed_range_status_by_key: dict[tuple[str, str, str], str] = {}
         visual_contracts: dict[str, dict[str, Any]] = {}
         page = self._context.new_page()
-        if self.session_mode == "controlled":
-            invalidate_controlled_quantum_cache(
-                self._context,
-                page,
-                base_url=self.base_url,
-            )
 
         def on_route(route: Any) -> None:
             request = route.request
@@ -365,7 +338,7 @@ class QuantumAnalyticsCaptureSession:
         if not rows:
             if authentication_required:
                 raise QuantumAuthenticationRequired(
-                    "La sesion gestionada de Quantum necesita autenticacion."
+                    "La sesion de Quantum en Chrome necesita autenticacion."
                 )
             raise RuntimeError("No Quantum analytics responses were captured. " + diagnostics)
         return rows

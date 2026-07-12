@@ -17,7 +17,7 @@ class Settings(BaseSettings):
 
     qm_base_url: str = "https://bbvamx.quantummetric.com"
     qm_browser: str = "chrome"
-    qm_session_mode: str = "controlled"
+    qm_session_mode: str = "browser"
     qm_country: str = "MX"
     qm_verify_tls: bool = True
     qm_data_dir: Path = Field(default_factory=default_user_data_dir)
@@ -44,9 +44,6 @@ class Settings(BaseSettings):
     frontend_host: str = "127.0.0.1"
     frontend_port: int = 5173
     chrome_cookie_profile: str = "Default"
-    chrome_executable: Path = Field(
-        default=Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
-    )
 
     @property
     def config_dir(self) -> Path:

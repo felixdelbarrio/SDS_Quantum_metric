@@ -24,7 +24,6 @@ class BrowserName(StrEnum):
 
 class SessionMode(StrEnum):
     browser = "browser"
-    controlled = "controlled"
     manual = "manual"
 
 
@@ -317,7 +316,7 @@ class QuantumCountryConfig(BaseModel):
 class QuantumConfig(BaseModel):
     schema_version: int = 3
     browser: BrowserName = BrowserName.chrome
-    session_mode: SessionMode = SessionMode.controlled
+    session_mode: SessionMode = SessionMode.browser
     country: Country = Country.MX
     countries: list[QuantumCountryConfig] = Field(default_factory=list)
     verify_tls: bool = True
@@ -332,6 +331,8 @@ class QuantumConfig(BaseModel):
             return value
         migrated = dict(value)
         migrated["schema_version"] = 3
+        if migrated.get("session_mode") == "controlled":
+            migrated["session_mode"] = SessionMode.browser.value
         if value.get("countries"):
             return migrated
 
@@ -389,7 +390,7 @@ class QuantumPublicCountryConfig(BaseModel):
 
 class QuantumPublicConfig(BaseModel):
     browser: BrowserName = BrowserName.chrome
-    session_mode: SessionMode = SessionMode.controlled
+    session_mode: SessionMode = SessionMode.browser
     country: Country = Country.MX
     countries: list[QuantumPublicCountryConfig] = Field(default_factory=list)
     verify_tls: bool = True

@@ -206,13 +206,8 @@ class IngestionService:
                 cookies = self.cookie_provider.from_manual_header(
                     manual_cookie, str(discovery.base_url)
                 )
-                capture_session_mode = config.session_mode.value
-            elif config.session_mode == "controlled":
-                cookies = []
-                capture_session_mode = config.session_mode.value
             else:
                 cookies = self.cookie_provider.load(config.browser.value, str(discovery.base_url))
-                capture_session_mode = config.session_mode.value
             structure, structure_error = await asyncio.to_thread(
                 discover_dashboard_structure_via_browser,
                 settings=self.settings,
@@ -222,7 +217,6 @@ class IngestionService:
                 dashboard_id=dashboard.dashboard_id,
                 team_id=dashboard.team_id or discovery.team_id,
                 wait_seconds=self.settings.quantum_capture_timeout_seconds,
-                session_mode=capture_session_mode,
             )
             if structure.widgets:
                 dashboard = dashboard_config_from_structure(
@@ -373,13 +367,12 @@ class IngestionService:
                         widgets=dashboard.widgets,
                         ingestion_id=job.ingestion_id,
                         ingestion_range=chunk_range,
-                        session_mode=capture_session_mode,
                         progress_callback=progress_callback,
                     )
                 except QuantumAuthenticationRequired as exc:
                     raise IngestionFailure(
                         "failed_no_session",
-                        f"{exc} Abre Configuracion y pulsa Autenticar antes de reintentar.",
+                        f"{exc} Inicia sesion en Chrome y vuelve a intentarlo.",
                     ) from exc
                 except RuntimeError as exc:
                     if "No Quantum analytics responses" in str(exc):

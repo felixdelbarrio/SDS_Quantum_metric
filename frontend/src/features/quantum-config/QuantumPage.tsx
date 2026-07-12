@@ -5,7 +5,6 @@ import {
   FolderDown,
   Globe2,
   LayoutDashboard,
-  LogIn,
   Monitor,
   Palette,
   Plus,
@@ -113,7 +112,7 @@ type ManualDashboardPayload = {
 type QuantumConfig = {
   schema_version?: number;
   browser: "chrome" | "edge" | "safari" | "firefox";
-  session_mode: "controlled" | "browser" | "manual";
+  session_mode: "browser" | "manual";
   country: CountryCode;
   countries: QuantumCountryConfig[];
   verify_tls: boolean;
@@ -211,22 +210,6 @@ export function QuantumPage() {
       if (result.data) setForm(result.data);
       void queryClient.invalidateQueries({ queryKey: ["quantum-config"] });
     },
-  });
-
-  const authenticateSession = useMutation({
-    mutationFn: ({
-      country,
-      dashboard,
-    }: {
-      country: QuantumCountryConfig;
-      dashboard: QuantumDashboardConfig;
-    }) =>
-      apiPost(`/quantum/countries/${country.country}/session/authenticate`, {
-        base_url: country.base_url,
-        dashboard_id: dashboard.dashboard_id,
-        team_id: dashboard.team_id,
-        tab: dashboard.summary_tab,
-      }),
   });
 
   const refreshDashboards = useMutation({
@@ -543,9 +526,7 @@ export function QuantumPage() {
                   )
                 }
               >
-                <option value="controlled">
-                  Sesion controlada de la aplicacion
-                </option>
+                <option value="browser">Chrome activo</option>
                 <option value="manual">Manual</option>
               </select>
             </label>
@@ -677,27 +658,6 @@ export function QuantumPage() {
                 </span>
               </div>
               <div className="config-row-actions config-country-actions">
-                {current.session_mode === "controlled" && selectedDashboard ? (
-                  <button
-                    className="command-button"
-                    type="button"
-                    disabled={
-                      !selectedCountry.base_url || authenticateSession.isPending
-                    }
-                    aria-busy={authenticateSession.isPending}
-                    onClick={() =>
-                      authenticateSession.mutate({
-                        country: selectedCountry,
-                        dashboard: selectedDashboard,
-                      })
-                    }
-                  >
-                    <LogIn size={16} />{" "}
-                    {authenticateSession.isPending
-                      ? "Esperando SSO"
-                      : "Autenticar"}
-                  </button>
-                ) : null}
                 <button
                   className="command-button"
                   type="button"
@@ -732,12 +692,6 @@ export function QuantumPage() {
                   <Trash2 size={16} />
                 </button>
               </div>
-              <ActionFeedback
-                mutation={authenticateSession}
-                pending="Completa el acceso SSO en la ventana de Chrome."
-                success="Sesion gestionada autenticada."
-                error="No se pudo autenticar la sesion gestionada."
-              />
               <ActionFeedback
                 mutation={testCountry}
                 pending="Validando acceso a Quantum."
@@ -1298,7 +1252,7 @@ function normalizeConfig(config: QuantumConfig): QuantumConfig {
   const countries = (config.countries ?? []).map(normalizeCountryConfig);
   return {
     browser: config.browser ?? "chrome",
-    session_mode: config.session_mode ?? "controlled",
+    session_mode: config.session_mode ?? "browser",
     country: countries.some((row) => row.country === config.country)
       ? config.country
       : (countries[0]?.country ?? "MX"),

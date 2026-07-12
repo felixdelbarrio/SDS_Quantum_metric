@@ -11,10 +11,6 @@ from urllib.parse import urlparse, urlunparse
 from pydantic import BaseModel, Field
 
 from backend.app.auth.browser_cookies import BrowserCookie
-from backend.app.auth.controlled_browser import (
-    invalidate_controlled_quantum_cache,
-    launch_controlled_context,
-)
 from backend.app.config.settings import Settings
 from backend.app.ingestion.capture import (
     _configure_playwright_browser_path,
@@ -164,7 +160,6 @@ def discover_dashboards_via_browser(
     country: Country,
     base_url: str,
     wait_seconds: int,
-    session_mode: str,
 ) -> tuple[list[QuantumDashboardSummary], str | None]:
     result, error = fetch_dashboard_resources_via_browser(
         settings=settings,
@@ -172,7 +167,6 @@ def discover_dashboards_via_browser(
         country=country,
         base_url=base_url,
         wait_seconds=wait_seconds,
-        session_mode=session_mode,
         page_size=25,
     )
     if result.resources:
@@ -187,7 +181,6 @@ def fetch_dashboard_resources_via_browser(
     country: Country,
     base_url: str,
     wait_seconds: int,
-    session_mode: str,
     page_size: int = 25,
 ) -> tuple[DashboardResourcesResult, str | None]:
     _configure_playwright_browser_path()
@@ -201,19 +194,12 @@ def fetch_dashboard_resources_via_browser(
         context: Any | None = None
         browser: Any | None = None
         try:
-            if session_mode == "controlled":
-                context = launch_controlled_context(playwright, settings, headless=True)
-                if cookies:
-                    context.add_cookies(cast(Any, [cookie.as_playwright() for cookie in cookies]))
-            else:
-                browser = _launch_headless_browser(playwright, settings)
-                context = browser.new_context(ignore_https_errors=not settings.qm_verify_tls)
-                if cookies:
-                    context.add_cookies(cast(Any, [cookie.as_playwright() for cookie in cookies]))
+            browser = _launch_headless_browser(playwright, settings)
+            context = browser.new_context(ignore_https_errors=not settings.qm_verify_tls)
+            if cookies:
+                context.add_cookies(cast(Any, [cookie.as_playwright() for cookie in cookies]))
 
             page = context.new_page()
-            if session_mode == "controlled":
-                invalidate_controlled_quantum_cache(context, page, base_url=base_url)
             page.on("request", lambda request: _capture_query_context(request, query_context_ref))
             page.on(
                 "response",

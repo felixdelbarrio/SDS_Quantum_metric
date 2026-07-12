@@ -66,7 +66,7 @@ def test_config_store_write_never_mutates_environment_file(
     store.write(
         QuantumConfigUpdate(
             browser=BrowserName.chrome,
-            session_mode=SessionMode.controlled,
+            session_mode=SessionMode.browser,
             country=Country.CO,
             countries=[
                 QuantumCountryConfig(
@@ -113,10 +113,10 @@ def test_config_store_persists_ingestion_depth_and_theme(tmp_path: Path) -> None
     assert saved.ingestion_depth_days == 730
     assert loaded.ingestion_depth_days == 730
     assert loaded.theme_preference == "dark"
-    assert loaded.session_mode == "controlled"
+    assert loaded.session_mode == "browser"
 
 
-def test_config_store_migrates_persisted_browser_session_to_controlled(
+def test_config_store_migrates_persisted_controlled_session_to_browser(
     tmp_path: Path,
 ) -> None:
     settings = Settings(qm_data_dir=tmp_path)
@@ -127,7 +127,7 @@ def test_config_store_migrates_persisted_browser_session_to_controlled(
 {
   "schema_version": 2,
   "browser": "chrome",
-  "session_mode": "browser",
+  "session_mode": "controlled",
   "country": "MX",
   "countries": [
     {
@@ -146,8 +146,8 @@ def test_config_store_migrates_persisted_browser_session_to_controlled(
 
     loaded = store.read()
 
-    assert loaded.session_mode == "controlled"
-    assert '"session_mode": "controlled"' in store.path.read_text()
+    assert loaded.session_mode == "browser"
+    assert '"session_mode": "browser"' in store.path.read_text()
 
 
 def test_config_store_persists_dashboards_widgets_and_schema_version(tmp_path: Path) -> None:

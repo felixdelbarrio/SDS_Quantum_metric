@@ -32,7 +32,7 @@ class QuantumConfigStore:
         )
         return QuantumConfig(
             browser=BrowserName(self.settings.qm_browser),
-            session_mode=SessionMode(_safe_default_session_mode(self.settings.qm_session_mode)),
+            session_mode=SessionMode(self.settings.qm_session_mode),
             country=Country(self.settings.qm_country),
             countries=self._countries_from_settings(),
             verify_tls=self.settings.qm_verify_tls,
@@ -46,17 +46,15 @@ class QuantumConfigStore:
         if not path.exists():
             return self.default()
         data = json.loads(path.read_text())
-        config = _harden_browser_session_mode(QuantumConfig.model_validate(data))
+        config = QuantumConfig.model_validate(data)
         if path == self.legacy_path and not self.path.exists():
             self._write_json(config)
-        elif data.get("session_mode") == SessionMode.browser.value:
+        elif data.get("session_mode") == "controlled":
             self._write_json(config)
         return config
 
     def write(self, update: QuantumConfigUpdate) -> QuantumConfig:
-        config = _harden_browser_session_mode(
-            QuantumConfig.model_validate(update.model_dump(exclude={"manual_cookie"}))
-        )
+        config = QuantumConfig.model_validate(update.model_dump(exclude={"manual_cookie"}))
         self._write_json(config)
         return config
 
@@ -119,13 +117,3 @@ class QuantumConfigStore:
 
 def ensure_parent(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-
-
-def _safe_default_session_mode(value: str) -> str:
-    return "controlled" if value == "browser" else value
-
-
-def _harden_browser_session_mode(config: QuantumConfig) -> QuantumConfig:
-    if config.session_mode == SessionMode.browser:
-        return config.model_copy(update={"session_mode": SessionMode.controlled})
-    return config

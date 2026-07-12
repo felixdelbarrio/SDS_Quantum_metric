@@ -17,7 +17,7 @@ type Props = {
 
 export function KpiWidget({ widget }: Props) {
   const [expanded, setExpanded] = useState(false);
-  const segments = widget.breakdown.filter(
+  const segments = (widget.breakdown ?? []).filter(
     (item): item is KpiBreakdownItem & { display: DisplayNumberContract } =>
       Boolean(item.display),
   );

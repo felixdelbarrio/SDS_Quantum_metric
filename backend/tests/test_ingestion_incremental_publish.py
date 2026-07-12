@@ -92,7 +92,6 @@ async def test_ingestion_publishes_dashboard_after_each_completed_chunk(
 
     def fake_capture(**kwargs: Any) -> list[dict[str, Any]]:
         ingestion_range = kwargs["ingestion_range"]
-        assert kwargs["session_mode"] == "browser"
         assert kwargs["cookies"] == ["chrome-session"]
         return [
             {
