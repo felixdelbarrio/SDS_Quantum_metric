@@ -12,7 +12,12 @@ from pydantic import BaseModel, Field
 
 from backend.app.analytics.models import SortDirection
 from backend.app.analytics.service import AnalyticsService
-from backend.app.auth.browser_cookies import BrowserCookie, BrowserCookieProvider, CookieAccessError
+from backend.app.auth.browser_cookies import BrowserCookie, BrowserCookieProvider
+from backend.app.auth.controlled_browser import (
+    ControlledSessionError,
+    authenticate_controlled_session,
+    check_controlled_session,
+)
 from backend.app.auth.session_store import secret_store
 from backend.app.config.settings import Settings, get_settings
 from backend.app.ingestion.models import (
@@ -56,7 +61,10 @@ from backend.app.quantum_dashboard.dashboard_structure import (
     tab_configs_from_structure,
     widget_configs_from_structure,
 )
-from backend.app.quantum_dashboard.discovery import discover_dashboard_from_config
+from backend.app.quantum_dashboard.discovery import (
+    dashboard_tab_url,
+    discover_dashboard_from_config,
+)
 from backend.app.quantum_dashboard.evidence import build_evidence_report
 from backend.app.quantum_dashboard.manual_dashboard import (
     ManualDashboardRequest,
@@ -80,6 +88,12 @@ class DatasetExportRequest(BaseModel):
 
 class CountryActionRequest(BaseModel):
     base_url: str | None = None
+
+
+class ControlledSessionRequest(CountryActionRequest):
+    dashboard_id: str | None = None
+    team_id: str | None = None
+    tab: int = 0
 
 
 class DashboardStructureRequest(CountryActionRequest):
@@ -321,10 +335,7 @@ def _cookies_for_quantum(
             )
         return cookie_provider.from_manual_header(manual_cookie, str(country_config.base_url))
     if config.session_mode == "controlled":
-        try:
-            return cookie_provider.load(config.browser.value, str(country_config.base_url))
-        except CookieAccessError:
-            return []
+        return []
     return cookie_provider.load(config.browser.value, str(country_config.base_url))
 
 
@@ -371,6 +382,29 @@ def _dashboard_by_id(
             if dashboard.dashboard_id == dashboard_id
         ),
         None,
+    )
+
+
+def _controlled_session_target(
+    country_config: QuantumCountryConfig,
+    request: ControlledSessionRequest | None,
+) -> str:
+    dashboard = (
+        _dashboard_by_id(country_config, request.dashboard_id)
+        if request and request.dashboard_id
+        else country_config.default_dashboard()
+    )
+    if not country_config.base_url or dashboard is None or not dashboard.dashboard_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Selecciona un dashboard default antes de autenticar Quantum.",
+        )
+    return dashboard_tab_url(
+        base_url=country_config.base_url,
+        dashboard_id=dashboard.dashboard_id,
+        team_id=(request.team_id if request else None) or dashboard.team_id or None,
+        tab=request.tab if request else dashboard.summary_tab,
+        range_key="last_7_days",
     )
 
 
@@ -743,13 +777,42 @@ def discover_quantum_dashboard_structure(
     return payload
 
 
+@router.post("/quantum/countries/{country}/session/authenticate")
+def authenticate_quantum_session(
+    country: str,
+    store: Annotated[QuantumConfigStore, Depends(config_store_dep)],
+    settings: Annotated[Settings, Depends(settings_dep)],
+    request: Annotated[ControlledSessionRequest | None, Body()] = None,
+) -> dict[str, object]:
+    config = store.read()
+    if config.session_mode != "controlled":
+        raise HTTPException(
+            status_code=400,
+            detail="La autenticacion gestionada requiere el modo de sesion controlada.",
+        )
+    country_config = _country_config_for_action(
+        config,
+        country,
+        base_url=request.base_url if request else None,
+    )
+    _persist_action_country(store, config, country_config)
+    try:
+        return authenticate_controlled_session(
+            settings,
+            base_url=country_config.base_url,
+            dashboard_url=_controlled_session_target(country_config, request),
+        )
+    except ControlledSessionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.post("/quantum/test-connection")
 def test_connection(
     store: Annotated[QuantumConfigStore, Depends(config_store_dep)],
     cookie_provider: Annotated[BrowserCookieProvider, Depends(cookie_provider_dep)],
     settings: Annotated[Settings, Depends(settings_dep)],
     country: str | None = None,
-    request: Annotated[CountryActionRequest | None, Body()] = None,
+    request: Annotated[ControlledSessionRequest | None, Body()] = None,
 ) -> dict[str, object]:
     config = store.read()
     country_config = _country_config_for_action(
@@ -760,6 +823,16 @@ def test_connection(
     config = _persist_action_country(store, config, country_config)
     if not country_config.base_url:
         raise HTTPException(status_code=400, detail="Selected country needs a base URL.")
+    if config.session_mode == "controlled":
+        try:
+            return check_controlled_session(
+                settings,
+                base_url=country_config.base_url,
+                dashboard_url=_controlled_session_target(country_config, request),
+                timeout_seconds=min(60, settings.quantum_capture_timeout_seconds),
+            )
+        except ControlledSessionError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     cookies = _cookies_for_quantum(config, country_config, cookie_provider)
     return (
         QuantumClient(settings, config, cookie_provider, cookies)

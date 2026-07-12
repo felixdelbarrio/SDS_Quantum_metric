@@ -44,7 +44,7 @@ def test_config_store_does_not_persist_manual_cookie(tmp_path: Path) -> None:
     assert "manual_cookie" not in text
 
 
-def test_config_store_default_ingestion_depth_is_7_days(
+def test_config_store_default_ingestion_depth_is_30_days(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
     monkeypatch.delenv("QUANTUM_INGESTION_DEPTH_DAYS", raising=False)
@@ -52,7 +52,37 @@ def test_config_store_default_ingestion_depth_is_7_days(
     settings = Settings(qm_data_dir=tmp_path)
     store = QuantumConfigStore(settings)
 
-    assert store.default().ingestion_depth_days == 7
+    assert store.default().ingestion_depth_days == 30
+
+
+def test_config_store_write_never_mutates_environment_file(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    env_path = tmp_path / ".env"
+    env_path.write_text("KEEP_THIS=unchanged\n")
+    store = QuantumConfigStore(Settings(qm_data_dir=tmp_path / "data"))
+
+    store.write(
+        QuantumConfigUpdate(
+            browser=BrowserName.chrome,
+            session_mode=SessionMode.controlled,
+            country=Country.CO,
+            countries=[
+                QuantumCountryConfig(
+                    country=Country.CO,
+                    base_url="https://bbvaco.quantummetric.com",
+                    dashboard_id="demo",
+                    team_id="team",
+                    tab=0,
+                )
+            ],
+            verify_tls=True,
+            ingestion_depth_days=30,
+        )
+    )
+
+    assert env_path.read_text() == "KEEP_THIS=unchanged\n"
 
 
 def test_config_store_persists_ingestion_depth_and_theme(tmp_path: Path) -> None:

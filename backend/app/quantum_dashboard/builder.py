@@ -19,6 +19,7 @@ from backend.app.quantum_dashboard.contracts import (
     DisplayUnit,
     HistoricalComparisonContract,
     QuantumBandContract,
+    QuantumBreakdownContract,
     QuantumChartContract,
     QuantumSeriesContract,
     QuantumTableColumnContract,
@@ -162,7 +163,12 @@ def build_derived_datasets(
     dashboard_widget_rows: list[dict[str, Any]] = []
     widget_table_payload_rows: list[dict[str, Any]] = []
     widget_contract_rows: list[dict[str, Any]] = []
-    parser_errors: list[dict[str, str]] = _correlation_errors(calls, descriptors, enabled_role_set)
+    parser_errors: list[dict[str, str]] = _correlation_errors(
+        calls,
+        descriptors,
+        enabled_role_set,
+        selected,
+    )
 
     for role, call in selected.items():
         contract = _contract_from_call(
@@ -383,11 +389,13 @@ def _correlation_errors(
     calls: list[dict[str, Any]],
     descriptors: list[WidgetRoleDescriptor],
     enabled_roles: set[str],
+    selected: dict[VisualRole, dict[str, Any]],
 ) -> list[dict[str, str]]:
     if not descriptors:
         return []
     errors: dict[tuple[str, str], dict[str, str]] = {}
     active_descriptors = [item for item in descriptors if item.role in enabled_roles]
+    selected_roles = {str(role) for role in selected}
     for call in calls:
         result = correlate_call_to_widget(call, active_descriptors)
         if result.status != "ambiguous":
@@ -398,6 +406,9 @@ def _correlation_errors(
             for descriptor in active_descriptors
             if (descriptor.widget_id or descriptor.role) in candidate_ids
         ]
+        candidate_roles = {descriptor.role for descriptor in candidate_descriptors}
+        if candidate_roles and candidate_roles.issubset(selected_roles):
+            continue
         if (
             candidate_descriptors
             and all(descriptor.widget_type == "TABLE" for descriptor in candidate_descriptors)
@@ -652,6 +663,7 @@ def _canonical_widget_contract(
     widget_value = result.data.get("widget")
     widget: dict[str, Any] = widget_value if isinstance(widget_value, dict) else {}
     display = _canonical_display(widget)
+    breakdown = _canonical_breakdown(widget)
     comparison = _canonical_comparison(widget)
     chart = _canonical_chart(widget)
     table = _canonical_table(widget, result.data, contract, call)
@@ -707,6 +719,7 @@ def _canonical_widget_contract(
         layout_width=_positive_int_or_none(call.get("layout_width")),
         layout_height=_positive_int_or_none(call.get("layout_height")),
         value=display,
+        breakdown=breakdown,
         comparison=comparison,
         chart=chart,
         table=table,
@@ -744,6 +757,24 @@ def _canonical_display(widget: dict[str, Any]) -> DisplayNumberContract | None:
         unit=unit,
         precision=_decimal_places(numeric),
     )
+
+
+def _canonical_breakdown(widget: dict[str, Any]) -> list[QuantumBreakdownContract]:
+    values: list[QuantumBreakdownContract] = []
+    for item in _list_of_dicts(widget.get("breakdown")):
+        label = _text(item.get("label"))
+        raw_display = item.get("display")
+        if not label or not isinstance(raw_display, dict):
+            continue
+        display = DisplayNumberContract.model_validate(raw_display)
+        values.append(
+            QuantumBreakdownContract(
+                label=label,
+                value=display.display_value,
+                display=display,
+            )
+        )
+    return values
 
 
 def _canonical_comparison(widget: dict[str, Any]) -> HistoricalComparisonContract | None:
@@ -1229,8 +1260,9 @@ def _validate_required_chart_payloads(
         if role not in selected:
             continue
         widget = widgets.get(role, {})
-        payload = widget.get("chart_payload")
-        series = payload.get("series") if isinstance(payload, dict) else None
+        raw_payload = widget.get("chart_payload")
+        payload: dict[str, Any] = raw_payload if isinstance(raw_payload, dict) else {}
+        series = payload.get("series")
         populated_series = [
             item
             for item in series or []

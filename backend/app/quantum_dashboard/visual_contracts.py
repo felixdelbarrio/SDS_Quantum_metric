@@ -21,8 +21,14 @@ _CAPTURE_SCRIPT = r"""
     const titleNode = root.querySelector('[data-testid="dashboard-card-title-link"]');
     const title = (titleNode?.textContent || "").trim();
     if (!widgetId || !title) continue;
+    const kpis = Array.from(root.querySelectorAll(".kpi-segment-comparison"))
+      .map((node) => ({
+        label: (node.querySelector(".kpi-title")?.textContent || "").trim(),
+        formatted: (node.querySelector('[data-testid="kpi-metric-data"]')?.textContent || "").trim(),
+      }))
+      .filter((item) => item.label && item.formatted);
     const kpiNode = root.querySelector(".sandbox-kpi-value") || root.querySelector('[data-testid="kpi-metric-data"]');
-    const formatted = (kpiNode?.textContent || "").trim().split("\n")[0].trim();
+    const formatted = kpis[0]?.formatted || (kpiNode?.textContent || "").trim().split("\n")[0].trim();
     const trend = root.querySelector(".qm-trend");
     const chartNode = root.querySelector("[data-pivot-hook]") || root.querySelector('[data-testid="multi-line-chart"]');
     const chartSvg = chartNode?.querySelector("svg") || null;
@@ -32,6 +38,7 @@ _CAPTURE_SCRIPT = r"""
     const legendNodes = root.querySelectorAll(".chart-legend .legend-item");
     const period = (root.querySelector(".panel-date-interior")?.textContent || "").trim();
     const table = root.querySelector("table");
+    const emptyTable = !table && /No Results Found\.?/i.test(root.textContent || "");
     const tableHeaders = table
       ? Array.from(table.querySelectorAll("thead th")).map((cell) => ({
           label: (cell.textContent || "").trim(),
@@ -59,6 +66,7 @@ _CAPTURE_SCRIPT = r"""
       widgetId,
       title,
       formatted,
+      kpis,
       comparison: trend
         ? {
             formatted: (trend.querySelector('[data-testid="qm-trend-metric"]')?.textContent || "").trim(),
@@ -115,7 +123,9 @@ _CAPTURE_SCRIPT = r"""
             rows: tableRows,
             period,
           }
-        : null,
+        : emptyTable
+          ? { headers: [], rows: [], period, empty: true }
+          : null,
     });
   }
   return cards;
@@ -200,6 +210,21 @@ def _contract_from_dom(item: dict[str, Any], *, timezone: str) -> dict[str, Any]
     formatted = _text(item.get("formatted"))
     if formatted:
         contract.update(_number_display_contract(formatted))
+    breakdown = []
+    for value in item.get("kpis") or []:
+        if not isinstance(value, dict):
+            continue
+        label = _text(value.get("label"))
+        segment_formatted = _text(value.get("formatted"))
+        if label and segment_formatted:
+            breakdown.append(
+                {
+                    "label": label,
+                    "display": _number_display_contract(segment_formatted),
+                }
+            )
+    if breakdown:
+        contract["breakdown"] = breakdown
     comparison = item.get("comparison")
     if isinstance(comparison, dict):
         parsed_comparison = _comparison_contract(comparison)
@@ -221,12 +246,17 @@ def _contract_from_dom(item: dict[str, Any], *, timezone: str) -> dict[str, Any]
 
 
 def _number_display_contract(formatted: str) -> dict[str, Any]:
-    unit = "percent" if "%" in formatted else "count"
+    normalized = formatted.casefold()
+    unit = "percent" if "%" in formatted else "seconds" if "sec" in normalized else "count"
+    display_value = _parse_number(formatted)
+    scale = 100 if unit == "percent" else 1
     return {
+        "raw_value": display_value / scale if display_value is not None else None,
+        "display_value": display_value,
         "unit": unit,
-        "scale": 100 if unit == "percent" else 1,
+        "scale": scale,
         "precision": _display_precision(formatted),
-        "suffix": "%" if unit == "percent" else None,
+        "suffix": "%" if unit == "percent" else " sec" if unit == "seconds" else None,
         "formatter": "quantum",
         "formatted": formatted,
     }
@@ -561,6 +591,16 @@ def _table_contract(value: dict[str, Any], *, timezone: str) -> dict[str, Any]:
     headers = [item for item in value.get("headers") or [] if isinstance(item, dict)]
     raw_rows = [item for item in value.get("rows") or [] if isinstance(item, dict)]
     period_label = _text(value.get("period")) or ""
+    if not headers and value.get("empty") is True:
+        return {
+            "columns": [],
+            "rows": [],
+            "empty": True,
+            "default_sort_column": None,
+            "default_sort_direction": None,
+            "period_label": period_label,
+            "timezone": timezone,
+        }
     if not headers:
         return {}
     columns: list[dict[str, Any]] = []
@@ -607,6 +647,7 @@ def _table_contract(value: dict[str, Any], *, timezone: str) -> dict[str, Any]:
     return {
         "columns": columns,
         "rows": rows,
+        "empty": False,
         "default_sort_column": active_column,
         "default_sort_direction": _sort_direction(active_header or {}),
         "period_label": period_label,
@@ -634,7 +675,10 @@ def _display_precision(value: str | None) -> int:
     if not numeric:
         return 0
     if "." in numeric:
-        return len(numeric.rsplit(".", 1)[1])
+        tail = numeric.rsplit(".", 1)[1]
+        if numeric.count(".") == 1 and len(tail) != 3:
+            return len(tail)
+        return 0
     if "," in numeric and len(numeric.rsplit(",", 1)[1]) != 3:
         return len(numeric.rsplit(",", 1)[1])
     return 0
@@ -651,6 +695,10 @@ def _parse_number(value: str | None) -> float | None:
     elif "," in token:
         tail = token.rsplit(",", 1)[1]
         token = token.replace(",", "." if len(tail) != 3 else "")
+    elif "." in token:
+        tail = token.rsplit(".", 1)[1]
+        if token.count(".") > 1 or len(tail) == 3:
+            token = token.replace(".", "")
     try:
         return float(token)
     except ValueError:

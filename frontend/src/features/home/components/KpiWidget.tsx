@@ -2,7 +2,11 @@ import { Maximize2 } from "lucide-react";
 import { useState } from "react";
 import { MetricDelta } from "../../../shared/components/MetricDelta";
 import { SemanticValue } from "../../../shared/components/SemanticValue";
-import { KpiWidget as KpiWidgetType } from "../types";
+import type {
+  DisplayNumberContract,
+  KpiBreakdownItem,
+  KpiWidget as KpiWidgetType,
+} from "../types";
 import { CardExplorerModal } from "./CardExplorerModal";
 import { QuantumFormattedValue } from "./QuantumFormattedValue";
 import { QuantumChart } from "./charts/QuantumChart";
@@ -13,7 +17,11 @@ type Props = {
 
 export function KpiWidget({ widget }: Props) {
   const [expanded, setExpanded] = useState(false);
-  const hasValue = Boolean(widget.display);
+  const segments = widget.breakdown.filter(
+    (item): item is KpiBreakdownItem & { display: DisplayNumberContract } =>
+      Boolean(item.display),
+  );
+  const hasValue = Boolean(widget.display || segments.length);
   const tableRows = widget.table?.rows ?? [];
   const tableColumns = widget.table?.columns ?? [];
   const semanticIntent = comparisonIntent(widget);
@@ -39,7 +47,18 @@ export function KpiWidget({ widget }: Props) {
       <div
         className={`kpi-value-row ${widget.table ? "table-widget-actions" : ""}`}
       >
-        {widget.table ? null : (
+        {widget.table ? null : segments.length ? (
+          <div className="kpi-segment-values">
+            {segments.map((item) => (
+              <span key={item.label}>
+                <small>{item.label}</small>
+                <strong>
+                  <QuantumFormattedValue display={item.display} />
+                </strong>
+              </span>
+            ))}
+          </div>
+        ) : (
           <strong className="kpi-value">
             {widget.display ? (
               <SemanticValue intent={semanticIntent}>

@@ -11,6 +11,10 @@ from urllib.parse import urlencode, urlparse, urlunparse
 from pydantic import BaseModel, Field
 
 from backend.app.auth.browser_cookies import BrowserCookie
+from backend.app.auth.controlled_browser import (
+    invalidate_controlled_quantum_cache,
+    launch_controlled_context,
+)
 from backend.app.config.settings import Settings
 from backend.app.ingestion.capture import (
     _configure_playwright_browser_path,
@@ -283,14 +287,7 @@ def discover_dashboard_structure_via_browser(
         browser: Any | None = None
         try:
             if session_mode == "controlled":
-                user_data_dir = settings.runtime_dir / "quantum-controlled-profile"
-                user_data_dir.mkdir(parents=True, exist_ok=True)
-                context = playwright.chromium.launch_persistent_context(
-                    str(user_data_dir),
-                    headless=True,
-                    ignore_https_errors=not settings.qm_verify_tls,
-                    args=["--disable-dev-shm-usage", "--no-first-run"],
-                )
+                context = launch_controlled_context(playwright, settings, headless=True)
                 if cookies:
                     context.add_cookies(cast(Any, [cookie.as_playwright() for cookie in cookies]))
             else:
@@ -300,6 +297,8 @@ def discover_dashboard_structure_via_browser(
                     context.add_cookies(cast(Any, [cookie.as_playwright() for cookie in cookies]))
 
             page = context.new_page()
+            if session_mode == "controlled":
+                invalidate_controlled_quantum_cache(context, page, base_url=base_url)
             page.on("request", lambda request: _capture_query_headers(request, query_headers_ref))
             page.on(
                 "response",

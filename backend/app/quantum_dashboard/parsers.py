@@ -339,16 +339,17 @@ def resolve_table_contract(
     visual = _visual_contract(call)
     candidate = visual.get("table") or response_json.get("table_contract")
     columns_value = candidate.get("columns") if isinstance(candidate, dict) else None
+    explicit_empty = isinstance(candidate, dict) and candidate.get("empty") is True
     if columns_value is None:
         columns_value = response_json.get("columns") or response_json.get("columnNames")
-    if not isinstance(columns_value, list) or not columns_value:
+    if (not isinstance(columns_value, list) or not columns_value) and not explicit_empty:
         return ContractResolution(
             status="missing",
             evidence=["table_columns_not_captured"],
             error="Quantum table headers were not captured with the response.",
         )
     try:
-        columns = [_table_column_from_value(column) for column in columns_value]
+        columns = [_table_column_from_value(column) for column in columns_value or []]
     except ValueError as exc:
         return ContractResolution(
             status="invalid",
@@ -364,6 +365,7 @@ def resolve_table_contract(
         value=QuantumTableContract(
             columns=columns,
             rows=[row for row in rows if isinstance(row, dict)],
+            empty=explicit_empty,
             default_sort_column=_text_value(table_mapping.get("default_sort_column")),
             default_sort_direction=_sort_direction(table_mapping.get("default_sort_direction")),
             period_label=_text_value(table_mapping.get("period_label") or call.get("period_label"))
@@ -534,7 +536,18 @@ def _parse_metric_widget(
             value_resolution.error or f"No explicit aggregate value found for {role}.",
         )
     display = value_resolution.value
-    timeseries = _timeseries(response_json, metric_aliases)
+    chart_resolution = resolve_chart_contract(call, response_json)
+    chart = (
+        chart_resolution.value
+        if chart_resolution.status == "resolved"
+        and isinstance(chart_resolution.value, QuantumChartContract)
+        and any(series.points for series in chart_resolution.value.series)
+        else None
+    )
+    timeseries = (
+        _timeseries_from_chart(chart) if chart else _timeseries(response_json, metric_aliases)
+    )
+    visual_breakdown = _visual_breakdowns(call)
 
     widget = {
         "id": spec.local_id,
@@ -543,10 +556,12 @@ def _parse_metric_widget(
         "value": display.display_value,
         "display": display.model_dump(mode="json"),
         "unit": display.unit,
-        "breakdown": _breakdowns(response_json, rows, metric_aliases),
+        "breakdown": visual_breakdown or _breakdowns(response_json, rows, metric_aliases),
         "timeseries": timeseries,
         "comparison": _comparison(response_json),
-        "chart_payload": _line_chart_payload(
+        "chart_payload": chart_payload_from_contract(chart)
+        if chart
+        else _line_chart_payload(
             response_json=response_json,
             role=role,
             title=spec.title,
@@ -887,6 +902,32 @@ def _breakdowns(
             display = _display_bucket(label)
             buckets[display] = buckets.get(display, 0.0) + value
     return [{"label": key, "value": round(value, 2)} for key, value in buckets.items()]
+
+
+def _visual_breakdowns(call: dict[str, Any]) -> list[dict[str, Any]]:
+    candidates = _visual_contract(call).get("breakdown")
+    if not isinstance(candidates, list):
+        return []
+    parsed: list[dict[str, Any]] = []
+    for item in candidates:
+        if not isinstance(item, dict):
+            continue
+        label = _text_value(item.get("label"))
+        display_value = item.get("display")
+        display = (
+            _display_contract_from_mapping(display_value, call)
+            if isinstance(display_value, dict)
+            else None
+        )
+        if label and display is not None:
+            parsed.append(
+                {
+                    "label": label,
+                    "value": display.display_value,
+                    "display": display.model_dump(mode="json"),
+                }
+            )
+    return parsed
 
 
 def _series(response_json: dict[str, Any]) -> list[dict[str, Any]]:

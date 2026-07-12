@@ -47,7 +47,8 @@ export type DashboardCoverage = {
 
 export type KpiBreakdownItem = {
   label: string;
-  value: number;
+  value: number | null;
+  display?: DisplayNumberContract | null;
 };
 
 export type TimeseriesPoint = {

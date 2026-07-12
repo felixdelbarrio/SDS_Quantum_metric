@@ -56,6 +56,12 @@ class DisplayNumberContract(BaseModel):
     formatted: str | None = None
 
 
+class QuantumBreakdownContract(BaseModel):
+    label: str
+    value: float | int | None = None
+    display: DisplayNumberContract
+
+
 class HistoricalComparisonContract(BaseModel):
     label: str
     raw_delta: float | None = None
@@ -120,6 +126,7 @@ class QuantumTableColumnContract(BaseModel):
 class QuantumTableContract(BaseModel):
     columns: list[QuantumTableColumnContract] = Field(default_factory=list)
     rows: list[dict[str, Any]] = Field(default_factory=list)
+    empty: bool = False
     default_sort_column: str | None = None
     default_sort_direction: SortDirection | None = None
     period_label: str
@@ -148,6 +155,7 @@ class QuantumWidgetContract(BaseModel):
     layout_width: int | None = Field(default=None, ge=1)
     layout_height: int | None = Field(default=None, ge=1)
     value: DisplayNumberContract | None = None
+    breakdown: list[QuantumBreakdownContract] = Field(default_factory=list)
     comparison: HistoricalComparisonContract | None = None
     chart: QuantumChartContract | None = None
     table: QuantumTableContract | None = None

@@ -13,6 +13,10 @@ from urllib.parse import urlparse
 from playwright.sync_api import sync_playwright
 
 from backend.app.auth.browser_cookies import BrowserCookie
+from backend.app.auth.controlled_browser import (
+    invalidate_controlled_quantum_cache,
+    launch_controlled_context,
+)
 from backend.app.config.settings import Settings
 from backend.app.ingestion.planner import IngestionChunk
 from backend.app.ingestion.policy import IngestionRange, apply_ingestion_range
@@ -27,6 +31,10 @@ from backend.app.quantum_dashboard.visual_contracts import (
     visual_contracts_are_complete,
 )
 from backend.app.storage.parquet_store import hash_json
+
+
+class QuantumAuthenticationRequired(RuntimeError):
+    pass
 
 
 def capture_quantum_analytics(
@@ -92,13 +100,10 @@ class QuantumAnalyticsCaptureSession:
                 ) from exc
             raise
         if self.session_mode == "controlled":
-            user_data_dir = self.settings.runtime_dir / "quantum-controlled-profile"
-            user_data_dir.mkdir(parents=True, exist_ok=True)
-            self._context = self._playwright.chromium.launch_persistent_context(
-                str(user_data_dir),
+            self._context = launch_controlled_context(
+                self._playwright,
+                self.settings,
                 headless=True,
-                ignore_https_errors=not self.settings.qm_verify_tls,
-                args=["--disable-dev-shm-usage", "--no-first-run"],
             )
             if self.cookies:
                 self._context.add_cookies(
@@ -148,6 +153,12 @@ class QuantumAnalyticsCaptureSession:
         routed_range_status_by_key: dict[tuple[str, str, str], str] = {}
         visual_contracts: dict[str, dict[str, Any]] = {}
         page = self._context.new_page()
+        if self.session_mode == "controlled":
+            invalidate_controlled_quantum_cache(
+                self._context,
+                page,
+                base_url=self.base_url,
+            )
 
         def on_route(route: Any) -> None:
             request = route.request
@@ -319,6 +330,7 @@ class QuantumAnalyticsCaptureSession:
         page.on("response", on_response)
         page.on("console", on_console)
         page.on("requestfailed", on_request_failed)
+        authentication_required = False
         try:
             page.goto(dashboard_url, wait_until="domcontentloaded", timeout=60_000)
             _wait_for_analytics_settle(
@@ -330,6 +342,7 @@ class QuantumAnalyticsCaptureSession:
                 timezone=ingestion_range.timezone if ingestion_range else "UTC",
             )
         finally:
+            authentication_required = _looks_unauthenticated(page)
             _collect_page_visual_contracts(
                 page,
                 visual_contracts,
@@ -350,6 +363,10 @@ class QuantumAnalyticsCaptureSession:
                 + " | ".join(unique_errors[:5])
             )
         if not rows:
+            if authentication_required:
+                raise QuantumAuthenticationRequired(
+                    "La sesion gestionada de Quantum necesita autenticacion."
+                )
             raise RuntimeError("No Quantum analytics responses were captured. " + diagnostics)
         return rows
 

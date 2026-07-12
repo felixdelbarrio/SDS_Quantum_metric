@@ -7,9 +7,10 @@ import uuid
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
-from backend.app.auth.browser_cookies import BrowserCookieProvider, CookieAccessError
+from backend.app.auth.browser_cookies import BrowserCookieProvider
 from backend.app.auth.session_store import secret_store
 from backend.app.config.settings import Settings
+from backend.app.ingestion.capture import QuantumAuthenticationRequired
 from backend.app.ingestion.models import IngestionCreate, IngestionJob
 from backend.app.ingestion.planner import IngestionChunk, plan_ingestion_chunks
 from backend.app.ingestion.policy import IngestionRange, build_ingestion_range
@@ -207,14 +208,8 @@ class IngestionService:
                 )
                 capture_session_mode = config.session_mode.value
             elif config.session_mode == "controlled":
-                try:
-                    cookies = self.cookie_provider.load(
-                        config.browser.value, str(discovery.base_url)
-                    )
-                    capture_session_mode = "browser"
-                except CookieAccessError:
-                    cookies = []
-                    capture_session_mode = config.session_mode.value
+                cookies = []
+                capture_session_mode = config.session_mode.value
             else:
                 cookies = self.cookie_provider.load(config.browser.value, str(discovery.base_url))
                 capture_session_mode = config.session_mode.value
@@ -381,6 +376,11 @@ class IngestionService:
                         session_mode=capture_session_mode,
                         progress_callback=progress_callback,
                     )
+                except QuantumAuthenticationRequired as exc:
+                    raise IngestionFailure(
+                        "failed_no_session",
+                        f"{exc} Abre Configuracion y pulsa Autenticar antes de reintentar.",
+                    ) from exc
                 except RuntimeError as exc:
                     if "No Quantum analytics responses" in str(exc):
                         raise IngestionFailure(

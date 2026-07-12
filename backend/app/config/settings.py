@@ -4,6 +4,7 @@ from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from backend.app.config.defaults import DEFAULT_INGESTION_DEPTH_DAYS
 from backend.app.config.paths import (
     default_downloads_dir,
     default_user_data_dir,
@@ -33,7 +34,7 @@ class Settings(BaseSettings):
     quantum_default_errors_tab: int = 1
     quantum_capture_timeout_seconds: int = 120
     quantum_regression_tolerance_percent: float = 0.1
-    quantum_ingestion_depth_days: int = 7
+    quantum_ingestion_depth_days: int = DEFAULT_INGESTION_DEPTH_DAYS
     quantum_incremental_reprocess_days: int = 1
     quantum_ingestion_chunk_days: int = 1
     quantum_theme_preference: str = "system"

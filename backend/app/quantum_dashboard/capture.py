@@ -5,7 +5,11 @@ from typing import Any
 
 from backend.app.auth.browser_cookies import BrowserCookie
 from backend.app.config.settings import Settings
-from backend.app.ingestion.capture import QuantumAnalyticsCaptureSession, capture_quantum_analytics
+from backend.app.ingestion.capture import (
+    QuantumAnalyticsCaptureSession,
+    QuantumAuthenticationRequired,
+    capture_quantum_analytics,
+)
 from backend.app.ingestion.policy import IngestionRange
 from backend.app.quantum.schemas import QuantumWidgetConfig
 from backend.app.quantum_dashboard.discovery import dashboard_tab_url
@@ -96,6 +100,8 @@ def capture_quantum_dashboard_cards(
                     ingestion_id=ingestion_id,
                     ingestion_range=ingestion_range,
                 )
+        except QuantumAuthenticationRequired:
+            raise
         except RuntimeError as exc:
             captured = []
             tab_failures.append(f"{tab_label}: {exc}")

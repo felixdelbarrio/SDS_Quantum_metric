@@ -68,6 +68,54 @@ describe("KpiWidget exact contracts", () => {
     expect(screen.getByText("Exact Quantum Header")).toBeInTheDocument();
     expect(screen.getByText("746")).toBeInTheDocument();
   });
+
+  it("renders every captured Quantum segment with its exact formatting", () => {
+    render(
+      <KpiWidget
+        widget={widget({
+          display: {
+            raw_value: 262,
+            display_value: 262,
+            unit: "count",
+            scale: 1,
+            precision: 0,
+            formatted: "262",
+          },
+          breakdown: [
+            {
+              label: "Desktop",
+              value: 262,
+              display: {
+                raw_value: 262,
+                display_value: 262,
+                unit: "count",
+                scale: 1,
+                precision: 0,
+                formatted: "262",
+              },
+            },
+            {
+              label: "Mobile",
+              value: 7_742_025,
+              display: {
+                raw_value: 7_742_025,
+                display_value: 7_742_025,
+                unit: "count",
+                scale: 1,
+                precision: 0,
+                formatted: "7,742,025",
+              },
+            },
+          ],
+        })}
+      />,
+    );
+
+    expect(screen.getByText("Desktop")).toBeInTheDocument();
+    expect(screen.getByText("262")).toBeInTheDocument();
+    expect(screen.getByText("Mobile")).toBeInTheDocument();
+    expect(screen.getByText("7,742,025")).toBeInTheDocument();
+  });
 });
 
 function widget(overrides: Partial<KpiWidgetContract>): KpiWidgetContract {

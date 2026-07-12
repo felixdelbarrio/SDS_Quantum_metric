@@ -5,7 +5,7 @@ from pathlib import Path
 
 from backend.app.config.settings import Settings
 from backend.app.quantum.schemas import QuantumWidgetConfig
-from backend.app.quantum_dashboard.builder import build_derived_datasets
+from backend.app.quantum_dashboard.builder import _correlation_errors, build_derived_datasets
 from backend.app.quantum_dashboard.contracts import (
     DisplayNumberContract,
     QuantumChartContract,
@@ -14,13 +14,19 @@ from backend.app.quantum_dashboard.contracts import (
 from backend.app.quantum_dashboard.correlation import correlate_call_to_widget
 from backend.app.quantum_dashboard.generic_roles import dashboard_tab_for_widget
 from backend.app.quantum_dashboard.parsers import (
+    parse_card,
     resolve_chart_contract,
     resolve_primary_value_from_contract,
     resolve_table_contract,
 )
-from backend.app.quantum_dashboard.regression import _table_row_signature
+from backend.app.quantum_dashboard.regression import (
+    _compare_visible_breakdowns,
+    _table_row_signature,
+)
 from backend.app.quantum_dashboard.visual_contracts import (
     _chart_contract,
+    _contract_from_dom,
+    _number_display_contract,
     merge_visual_contracts,
     visual_contracts_are_complete,
 )
@@ -89,6 +95,63 @@ def test_primary_value_applies_quantum_percent_scale_and_display_precision() -> 
     assert resolution.value.display_value == 56.86002123142
     assert resolution.value.precision == 2
     assert resolution.value.formatted == "56.86%"
+
+
+def test_visible_number_contract_preserves_localized_counts_and_seconds() -> None:
+    localized_count = _number_display_contract("1.532.267")
+    seconds = _number_display_contract("162.64 sec")
+
+    assert localized_count["display_value"] == 1_532_267
+    assert localized_count["precision"] == 0
+    assert seconds["display_value"] == 162.64
+    assert seconds["unit"] == "seconds"
+    assert seconds["precision"] == 2
+
+
+def test_visible_empty_quantum_table_is_an_explicit_contract() -> None:
+    contract = _contract_from_dom(
+        {
+            "formatted": "",
+            "kpis": [],
+            "comparison": None,
+            "chart": None,
+            "table": {
+                "headers": [],
+                "rows": [],
+                "period": "Today (Jul 12, 2026, 12:00am - 12:59am +05)",
+                "empty": True,
+            },
+        },
+        timezone="America/Bogota",
+    )
+
+    assert contract["table"]["empty"] is True
+    assert contract["table"]["columns"] == []
+    assert contract["table"]["rows"] == []
+
+
+def test_generic_parser_accepts_only_explicitly_empty_quantum_tables() -> None:
+    result = parse_card(
+        {
+            "card_type": "TABLE",
+            "period_label": "Today (Jul 12, 2026)",
+            "range_timezone": "America/Bogota",
+            "visual_contract": {
+                "table": {
+                    "columns": [],
+                    "rows": [],
+                    "empty": True,
+                    "period_label": "Today (Jul 12, 2026)",
+                    "timezone": "America/Bogota",
+                }
+            },
+            "response_json": json.dumps({"rows": []}),
+        },
+        "generic.0.table.empty",
+    )
+
+    assert result.status == "ok"
+    assert result.data["widget"]["table_contract"]["empty"] is True
 
 
 def test_chart_contract_preserves_bar_series_bands_legends_period_and_timezone() -> None:
@@ -189,6 +252,119 @@ def test_chart_contract_populates_visible_series_from_quantum_timeseries() -> No
     assert [point.value for point in resolution.value.series[0].points] == [2.87, 0.0]
 
 
+def test_standard_metric_parser_preserves_captured_multi_series_chart() -> None:
+    chart = {
+        "chart_type": "line",
+        "x_axis": {
+            "ticks": [
+                {"value": "Jul 10", "label": "Jul 10"},
+                {"value": "Jul 11", "label": "Jul 11"},
+            ]
+        },
+        "y_axis": {"unit": "count", "ticks": []},
+        "series": [
+            {
+                "series_id": "desktop",
+                "label": "Desktop",
+                "kind": "line",
+                "order": 0,
+                "points": [
+                    {"ts": "2026-07-10T05:00:00Z", "label": "Jul 10", "value": 100},
+                    {"ts": "2026-07-11T05:00:00Z", "label": "Jul 11", "value": 120},
+                ],
+            },
+            {
+                "series_id": "mobile",
+                "label": "Mobile",
+                "kind": "line",
+                "order": 1,
+                "points": [
+                    {"ts": "2026-07-10T05:00:00Z", "label": "Jul 10", "value": 20},
+                    {"ts": "2026-07-11T05:00:00Z", "label": "Jul 11", "value": 25},
+                ],
+            },
+        ],
+        "bands": [],
+        "legends": [
+            {"id": "desktop", "label": "Desktop", "kind": "line", "order": 0},
+            {"id": "mobile", "label": "Mobile", "kind": "line", "order": 1},
+        ],
+        "period_label": "Last 7 Days (Jul 05 - 11, 2026)",
+        "timezone": "America/Mexico_City",
+        "granularity": "day",
+    }
+
+    result = parse_card(
+        {
+            "card_type": "CHART",
+            "visual_contract": {
+                "display": _display(12_003, "count", 0, "12,003"),
+                "breakdown": [
+                    {
+                        "label": "Desktop",
+                        "display": _display(262, "count", 0, "262"),
+                    },
+                    {
+                        "label": "Mobile",
+                        "display": _display(7_742_025, "count", 0, "7,742,025"),
+                    },
+                ],
+                "chart": chart,
+            },
+            "response_json": json.dumps({"rows": [{"dimensions": [], "metrics": [12_003]}]}),
+        },
+        "summary.sessions",
+    )
+
+    assert result.status == "ok"
+    assert result.data is not None
+    payload = result.data["widget"]["chart_payload"]
+    assert [series["label"] for series in payload["series"]] == ["Desktop", "Mobile"]
+    assert [[point["value"] for point in series["points"]] for series in payload["series"]] == [
+        [100.0, 120.0],
+        [20.0, 25.0],
+    ]
+    breakdown = result.data["widget"]["breakdown"]
+    assert [item["label"] for item in breakdown] == ["Desktop", "Mobile"]
+    assert [item["display"]["formatted"] for item in breakdown] == ["262", "7,742,025"]
+
+
+def test_regression_compares_visible_segment_order_values_and_format() -> None:
+    exact = [
+        {
+            "label": "Desktop",
+            "value": 262,
+            "display": _display(262, "count", 0, "262"),
+        },
+        {
+            "label": "Mobile",
+            "value": 7_742_025,
+            "display": _display(7_742_025, "count", 0, "7,742,025"),
+        },
+    ]
+
+    assert (
+        _compare_visible_breakdowns(
+            "summary.sessions",
+            {"visible_breakdowns": exact},
+            {"breakdown": exact},
+            0,
+            "last_7_days",
+        )
+        is None
+    )
+    mismatch = [exact[1], exact[0]]
+    result = _compare_visible_breakdowns(
+        "summary.sessions",
+        {"visible_breakdowns": exact},
+        {"breakdown": mismatch},
+        0,
+        "last_7_days",
+    )
+    assert result is not None
+    assert result.status == "failed_value_mismatch"
+
+
 def test_table_contract_preserves_exact_headers_and_default_sort() -> None:
     table = {
         "columns": [
@@ -250,6 +426,53 @@ def test_duplicate_card_id_correlation_is_ambiguous() -> None:
     assert resolution.status == "ambiguous"
     assert resolution.error_code == "failed_ambiguous_widget_correlation"
     assert len(resolution.candidates) == 2
+
+
+def test_redundant_shared_card_calls_do_not_fail_resolved_widgets() -> None:
+    widgets = [
+        QuantumWidgetConfig(
+            role=f"summary.{name}",
+            title=name,
+            widget_id=f"widget-{name}",
+            card_id="shared-card",
+            widget_type="CHART",
+            visual_contract={"query": {"metric_ids": [f"metric-{name}"]}},
+            enabled=True,
+            supported=True,
+        )
+        for name in ("sessions", "page_views")
+    ]
+    descriptors = descriptors_from_widgets(widgets)
+    ambiguous_call = {
+        "widget_id": "shared-card",
+        "card_id": "shared-card",
+        "card_type": "CHART",
+        "view_name": "timeSeriesQuery",
+        "request_json": json.dumps({"metadata": {"cardId": "shared-card"}}),
+        "response_json": json.dumps({"rows": []}),
+    }
+    selected = {
+        "summary.sessions": {"card_role": "summary.sessions"},
+        "summary.page_views": {"card_role": "summary.page_views"},
+    }
+
+    assert (
+        _correlation_errors(
+            [ambiguous_call],
+            descriptors,
+            set(selected),
+            selected,
+        )
+        == []
+    )
+    errors = _correlation_errors(
+        [ambiguous_call],
+        descriptors,
+        set(selected),
+        {"summary.sessions": selected["summary.sessions"]},
+    )
+
+    assert [error["error_code"] for error in errors] == ["failed_ambiguous_widget_correlation"]
 
 
 def test_duplicate_card_id_is_resolved_by_declared_quantum_selection() -> None:
