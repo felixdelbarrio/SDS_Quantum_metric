@@ -150,6 +150,46 @@ def test_config_store_migrates_persisted_controlled_session_to_browser(
     assert '"session_mode": "browser"' in store.path.read_text()
 
 
+def test_config_store_migrates_legacy_file_and_deletes_both_locations(tmp_path: Path) -> None:
+    settings = Settings(qm_data_dir=tmp_path)
+    store = QuantumConfigStore(settings)
+    store.legacy_path.parent.mkdir(parents=True, exist_ok=True)
+    store.legacy_path.write_text(
+        '{"browser":"chrome","session_mode":"browser","country":"MX",'
+        '"base_url":"https://bbvamx.quantummetric.com",'
+        '"dashboard_url":"https://bbvamx.quantummetric.com/#/dashboard/demo?teamID=team&tab=1"}'
+    )
+
+    loaded = store.read()
+
+    assert loaded.countries[0].dashboard_id == "demo"
+    assert loaded.countries[0].team_id == "team"
+    assert loaded.countries[0].dashboards[0].summary_tab == 1
+    assert store.path.exists()
+
+    store.delete()
+
+    assert not store.path.exists()
+    assert not store.legacy_path.exists()
+
+
+def test_config_store_builds_countries_from_json_settings(tmp_path: Path) -> None:
+    settings = Settings(
+        qm_data_dir=tmp_path,
+        qm_country="CO",
+        qm_country_configs=(
+            '[{"country":"CO","base_url":"https://bbvaco.quantummetric.com",'
+            '"dashboard_id":"co-dashboard","team_id":"co-team","tab":2}]'
+        ),
+    )
+
+    config = QuantumConfigStore(settings).default()
+
+    assert config.country == Country.CO
+    assert config.countries[0].dashboard_id == "co-dashboard"
+    assert config.countries[0].dashboards[0].summary_tab == 2
+
+
 def test_config_store_persists_dashboards_widgets_and_schema_version(tmp_path: Path) -> None:
     settings = Settings(qm_data_dir=tmp_path)
     store = QuantumConfigStore(settings)
