@@ -217,14 +217,16 @@ def resolve_primary_value_from_contract(
         )
     unit: DisplayUnit = _explicit_unit(call, visual)
     value = numeric_values[0]
+    scale = _to_number(visual.get("scale")) or 1
+    display_value = value * scale
     return ContractResolution(
         status="resolved",
         value=DisplayNumberContract(
             raw_value=value,
-            display_value=value,
+            display_value=display_value,
             unit=unit,
-            scale=1,
-            precision=_explicit_precision(call, visual, value),
+            scale=scale,
+            precision=_explicit_precision(call, visual, display_value),
             prefix=_text_value(visual.get("prefix")),
             suffix=_text_value(visual.get("suffix")),
             formatter=_text_value(visual.get("formatter")),
@@ -315,7 +317,7 @@ def resolve_chart_contract(
     if not isinstance(candidate, dict):
         return ContractResolution(status="missing", evidence=["chart_contract_not_captured"])
     try:
-        chart = _chart_contract_from_mapping(candidate, call)
+        chart = _chart_contract_from_mapping(candidate, call, response_json)
     except (TypeError, ValueError) as exc:
         return ContractResolution(
             status="invalid",
@@ -337,16 +339,17 @@ def resolve_table_contract(
     visual = _visual_contract(call)
     candidate = visual.get("table") or response_json.get("table_contract")
     columns_value = candidate.get("columns") if isinstance(candidate, dict) else None
+    explicit_empty = isinstance(candidate, dict) and candidate.get("empty") is True
     if columns_value is None:
         columns_value = response_json.get("columns") or response_json.get("columnNames")
-    if not isinstance(columns_value, list) or not columns_value:
+    if (not isinstance(columns_value, list) or not columns_value) and not explicit_empty:
         return ContractResolution(
             status="missing",
             evidence=["table_columns_not_captured"],
             error="Quantum table headers were not captured with the response.",
         )
     try:
-        columns = [_table_column_from_value(column) for column in columns_value]
+        columns = [_table_column_from_value(column) for column in columns_value or []]
     except ValueError as exc:
         return ContractResolution(
             status="invalid",
@@ -362,6 +365,7 @@ def resolve_table_contract(
         value=QuantumTableContract(
             columns=columns,
             rows=[row for row in rows if isinstance(row, dict)],
+            empty=explicit_empty,
             default_sort_column=_text_value(table_mapping.get("default_sort_column")),
             default_sort_direction=_sort_direction(table_mapping.get("default_sort_direction")),
             period_label=_text_value(table_mapping.get("period_label") or call.get("period_label"))
@@ -414,7 +418,7 @@ def _parse_generic_metric(
         "breakdown": [],
         "timeseries": _timeseries_from_chart(chart),
         "comparison": comparison.model_dump(mode="json") if comparison else None,
-        "chart_payload": _legacy_chart_payload(chart) if chart else None,
+        "chart_payload": chart_payload_from_contract(chart) if chart else None,
         "missing_source_field": None,
     }
     return ParserResult(role=role, status="ok", data={"widget": widget})
@@ -504,7 +508,7 @@ def _parse_generic_donut(
         "display": display.model_dump(mode="json"),
         "unit": display.unit,
         "series": [],
-        "chart_payload": _legacy_chart_payload(chart),
+        "chart_payload": chart_payload_from_contract(chart),
         "comparison": None,
     }
     return ParserResult(role=role, status="ok", data={"widget": widget})
@@ -532,7 +536,18 @@ def _parse_metric_widget(
             value_resolution.error or f"No explicit aggregate value found for {role}.",
         )
     display = value_resolution.value
-    timeseries = _timeseries(response_json, metric_aliases)
+    chart_resolution = resolve_chart_contract(call, response_json)
+    chart = (
+        chart_resolution.value
+        if chart_resolution.status == "resolved"
+        and isinstance(chart_resolution.value, QuantumChartContract)
+        and any(series.points for series in chart_resolution.value.series)
+        else None
+    )
+    timeseries = (
+        _timeseries_from_chart(chart) if chart else _timeseries(response_json, metric_aliases)
+    )
+    visual_breakdown = _visual_breakdowns(call)
 
     widget = {
         "id": spec.local_id,
@@ -541,10 +556,12 @@ def _parse_metric_widget(
         "value": display.display_value,
         "display": display.model_dump(mode="json"),
         "unit": display.unit,
-        "breakdown": _breakdowns(response_json, rows, metric_aliases),
+        "breakdown": visual_breakdown or _breakdowns(response_json, rows, metric_aliases),
         "timeseries": timeseries,
         "comparison": _comparison(response_json),
-        "chart_payload": _line_chart_payload(
+        "chart_payload": chart_payload_from_contract(chart)
+        if chart
+        else _line_chart_payload(
             response_json=response_json,
             role=role,
             title=spec.title,
@@ -887,6 +904,32 @@ def _breakdowns(
     return [{"label": key, "value": round(value, 2)} for key, value in buckets.items()]
 
 
+def _visual_breakdowns(call: dict[str, Any]) -> list[dict[str, Any]]:
+    candidates = _visual_contract(call).get("breakdown")
+    if not isinstance(candidates, list):
+        return []
+    parsed: list[dict[str, Any]] = []
+    for item in candidates:
+        if not isinstance(item, dict):
+            continue
+        label = _text_value(item.get("label"))
+        display_value = item.get("display")
+        display = (
+            _display_contract_from_mapping(display_value, call)
+            if isinstance(display_value, dict)
+            else None
+        )
+        if label and display is not None:
+            parsed.append(
+                {
+                    "label": label,
+                    "value": display.display_value,
+                    "display": display.model_dump(mode="json"),
+                }
+            )
+    return parsed
+
+
 def _series(response_json: dict[str, Any]) -> list[dict[str, Any]]:
     candidates = response_json.get("series") or response_json.get("breakdown")
     if not isinstance(candidates, list):
@@ -1066,7 +1109,9 @@ def _display_contract_from_mapping(
 
 
 def _chart_contract_from_mapping(
-    candidate: dict[str, Any], call: dict[str, Any]
+    candidate: dict[str, Any],
+    call: dict[str, Any],
+    response_json: dict[str, Any],
 ) -> QuantumChartContract:
     raw_chart_type = str(candidate.get("chart_type") or candidate.get("type") or "").lower()
     chart_type: ChartType = cast(ChartType, raw_chart_type)
@@ -1098,6 +1143,8 @@ def _chart_contract_from_mapping(
         ):
             raise ValueError("Quantum chart series identity, label or kind is incomplete.")
         points = value.get("points")
+        if not points and kind in {"line", "bar", "area"}:
+            points = _chart_points_from_response(candidate, call, response_json)
         series.append(
             QuantumSeriesContract(
                 series_id=series_id,
@@ -1130,6 +1177,8 @@ def _chart_contract_from_mapping(
                 kind=cast(Any, raw_band_kind),
                 start=_text_value(value.get("start") or value.get("start_ts")),
                 end=_text_value(value.get("end") or value.get("end_ts")),
+                start_x=_to_number(value.get("start_x")),
+                end_x=_to_number(value.get("end_x")),
                 lower_points=value.get("lower_points") or [],
                 upper_points=value.get("upper_points") or [],
                 pattern=_text_value(value.get("pattern")),
@@ -1190,7 +1239,7 @@ def _table_column_from_value(value: Any) -> QuantumTableColumnContract:
     )
 
 
-def _legacy_chart_payload(chart: QuantumChartContract) -> dict[str, Any]:
+def chart_payload_from_contract(chart: QuantumChartContract) -> dict[str, Any]:
     return {
         "chart_type": chart.chart_type,
         "x_axis": chart.x_axis.model_dump(mode="json"),
@@ -1214,6 +1263,8 @@ def _legacy_chart_payload(chart: QuantumChartContract) -> dict[str, Any]:
                 "kind": item.kind,
                 "start_ts": item.start,
                 "end_ts": item.end,
+                "start_x": item.start_x,
+                "end_x": item.end_x,
                 "lower_points": [point.model_dump(mode="json") for point in item.lower_points],
                 "upper_points": [point.model_dump(mode="json") for point in item.upper_points],
                 "pattern": item.pattern,
@@ -1226,6 +1277,43 @@ def _legacy_chart_payload(chart: QuantumChartContract) -> dict[str, Any]:
         "granularity": chart.granularity,
         "timezone": chart.timezone,
     }
+
+
+def _chart_points_from_response(
+    candidate: dict[str, Any],
+    call: dict[str, Any],
+    response_json: dict[str, Any],
+) -> list[dict[str, Any]]:
+    source = sorted(
+        _timeseries(response_json, ()),
+        key=lambda point: _timeseries_sort_key(point.get("ts")),
+    )
+    if not source:
+        return []
+    visual = _visual_contract(call)
+    scale = _to_number(visual.get("scale")) or 1
+    axis = candidate.get("x_axis")
+    ticks = axis.get("ticks") if isinstance(axis, dict) else []
+    labels = [
+        _text_value(tick.get("label")) if isinstance(tick, dict) else _text_value(tick)
+        for tick in ticks or []
+    ]
+    denominator = max(1, len(source) - 1)
+    return [
+        {
+            "ts": str(point.get("ts") or ""),
+            "label": labels[index] if index < len(labels) and labels[index] else str(point["ts"]),
+            "raw_value": float(point["value"]),
+            "value": float(point["value"]) * scale,
+            "x": index / denominator,
+        }
+        for index, point in enumerate(source)
+    ]
+
+
+def _timeseries_sort_key(value: Any) -> tuple[int, float | str]:
+    number = _to_number(value)
+    return (0, number) if number is not None else (1, str(value or ""))
 
 
 def _timeseries_from_chart(chart: QuantumChartContract | None) -> list[dict[str, Any]]:

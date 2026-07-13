@@ -97,9 +97,9 @@ Por defecto los datos viven en la ruta persistente del usuario calculada con `pl
 
 ## Seguridad
 
-El modo de sesion por defecto es `controlled`: usa un perfil propio de la aplicacion y no lee
-perfiles reales de Chrome. Las configuraciones legacy con modo `browser` se migran a
-`controlled`. El modo manual mantiene la cookie solo en memoria.
+El modo de sesion por defecto reutiliza las cookies del Chrome activo. La captura se ejecuta con
+el Chromium headless empaquetado, sin abrir ventanas, perfiles ni sesiones adicionales de Chrome.
+El modo manual mantiene la cookie solo en memoria.
 
 La aplicacion local no implementa reproduccion, descarga, cache ni rutas de video de sesiones.
 

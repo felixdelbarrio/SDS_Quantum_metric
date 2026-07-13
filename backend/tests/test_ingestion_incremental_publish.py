@@ -92,7 +92,6 @@ async def test_ingestion_publishes_dashboard_after_each_completed_chunk(
 
     def fake_capture(**kwargs: Any) -> list[dict[str, Any]]:
         ingestion_range = kwargs["ingestion_range"]
-        assert kwargs["session_mode"] == "browser"
         assert kwargs["cookies"] == ["chrome-session"]
         return [
             {
@@ -353,6 +352,12 @@ class _ConfigStore(QuantumConfigStore):
                                         tab="summary",
                                         tab_name="Resumen",
                                         tab_index=0,
+                                        visual_contract={
+                                            "query": {
+                                                "metric_ids": ["page-views"],
+                                                "fingerprint": "page-views-query",
+                                            }
+                                        },
                                         enabled=True,
                                         required=True,
                                         supported=True,

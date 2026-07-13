@@ -40,9 +40,7 @@ describe("QuantumPage configuration", () => {
     expect(dashboardSelect).toHaveTextContent("Dashboard General MX");
     expect(dashboardSelect).toHaveTextContent("Page Analysis");
     expect(await screen.findByDisplayValue("~/Downloads")).toBeInTheDocument();
-    expect(
-      await screen.findByText("Sesion controlada de la aplicacion"),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("Chrome activo")).toBeInTheDocument();
     expect(await screen.findByText("CHART")).toBeInTheDocument();
     expect(await screen.findByText("id: card-page-views")).toBeInTheDocument();
     expect(await screen.findByText("Errores")).toBeInTheDocument();
@@ -71,7 +69,7 @@ describe("QuantumPage configuration", () => {
   it("renderiza configuracion legacy sin dashboards sin pantalla en blanco", async () => {
     mockFetch({
       browser: "chrome",
-      session_mode: "controlled",
+      session_mode: "browser",
       country: "MX",
       countries: [
         {
@@ -279,7 +277,7 @@ function dashboardResourcesFor(body: unknown, country?: string | null) {
 function defaultQuantumConfig() {
   return {
     browser: "chrome",
-    session_mode: "controlled",
+    session_mode: "browser",
     country: "MX",
     countries: [
       {

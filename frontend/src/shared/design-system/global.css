@@ -681,12 +681,13 @@ textarea:focus-visible {
 }
 
 .dashboard-widget-layout-grid {
-  grid-template-columns: repeat(12, minmax(0, 1fr));
+  grid-template-columns: repeat(16, minmax(0, 1fr));
 }
 
 .dashboard-widget-layout-item {
   min-width: 0;
-  grid-column: span var(--widget-column-span, 4);
+  grid-column: var(--widget-column-start, auto) / span
+    var(--widget-column-span, 4);
   grid-row: span var(--widget-row-span, 1);
 }
 
@@ -736,6 +737,25 @@ textarea:focus-visible {
   overflow-x: auto;
 }
 
+.table-metric-with-delta {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.table-metric-with-delta small {
+  font-size: inherit;
+  font-weight: 700;
+}
+
+.table-delta-positive small {
+  color: var(--semantic-positive);
+}
+
+.table-delta-negative small {
+  color: var(--semantic-negative);
+}
+
 .generic-widget-table .dashboard-table {
   min-width: 420px;
   font-size: 13px;
@@ -783,6 +803,15 @@ textarea:focus-visible {
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-3);
+}
+
+.kpi-value-row.table-widget-actions {
+  justify-content: flex-end;
+}
+
+.table-empty-cell {
+  color: var(--color-muted);
+  text-align: center;
 }
 
 .kpi-value {
@@ -884,7 +913,8 @@ textarea:focus-visible {
   stroke-dasharray: 2 4;
 }
 
-.quantum-chart-bands rect {
+.quantum-chart-bands rect,
+.quantum-chart-bands path {
   fill: var(--chart-band);
   opacity: var(--chart-band-opacity);
 }
@@ -897,6 +927,12 @@ textarea:focus-visible {
 .quantum-chart-band-pattern-hatched {
   stroke: var(--color-danger);
   stroke-dasharray: 3 2;
+}
+
+.quantum-chart-whiskers line {
+  stroke: var(--chart-axis);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
 }
 
 .quantum-chart-series-kind-baseline {
@@ -2567,6 +2603,10 @@ textarea:focus-visible {
   .dataset-business-grid,
   .donut-layout {
     grid-template-columns: 1fr;
+  }
+
+  .dashboard-widget-layout-item {
+    grid-column: 1;
   }
 
   .config-actions {

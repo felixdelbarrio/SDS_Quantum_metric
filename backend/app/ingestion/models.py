@@ -56,6 +56,7 @@ class IngestionJob(BaseModel):
         "failed",
         "failed_no_session",
         "failed_dashboard_not_found",
+        "failed_dashboard_contract",
         "failed_no_widgets",
         "failed_no_analytics_responses",
         "failed_coverage_incomplete",

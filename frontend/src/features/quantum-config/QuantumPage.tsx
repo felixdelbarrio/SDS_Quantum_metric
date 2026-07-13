@@ -15,7 +15,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useState } from "react";
 import { apiGet, apiPost, apiPut } from "../../shared/api/client";
 import {
   COUNTRY_OPTIONS,
@@ -112,7 +112,7 @@ type ManualDashboardPayload = {
 type QuantumConfig = {
   schema_version?: number;
   browser: "chrome" | "edge" | "safari" | "firefox";
-  session_mode: "controlled" | "browser" | "manual";
+  session_mode: "browser" | "manual";
   country: CountryCode;
   countries: QuantumCountryConfig[];
   verify_tls: boolean;
@@ -286,12 +286,6 @@ export function QuantumPage() {
       });
     },
   });
-
-  useEffect(() => {
-    if (config.data?.theme_preference) {
-      setThemePreference(config.data.theme_preference);
-    }
-  }, [config.data?.theme_preference, setThemePreference]);
 
   function update<K extends keyof QuantumConfig>(
     key: K,
@@ -526,9 +520,7 @@ export function QuantumPage() {
                   )
                 }
               >
-                <option value="controlled">
-                  Sesion controlada de la aplicacion
-                </option>
+                <option value="browser">Chrome activo</option>
                 <option value="manual">Manual</option>
               </select>
             </label>
@@ -1254,7 +1246,7 @@ function normalizeConfig(config: QuantumConfig): QuantumConfig {
   const countries = (config.countries ?? []).map(normalizeCountryConfig);
   return {
     browser: config.browser ?? "chrome",
-    session_mode: config.session_mode ?? "controlled",
+    session_mode: config.session_mode ?? "browser",
     country: countries.some((row) => row.country === config.country)
       ? config.country
       : (countries[0]?.country ?? "MX"),

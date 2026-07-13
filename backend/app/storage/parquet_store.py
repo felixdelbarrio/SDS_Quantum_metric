@@ -124,10 +124,10 @@ class ParquetStore:
         frame = pl.DataFrame([_parquet_safe_row(row) for row in rows])
         temporary = path.with_suffix(".tmp.parquet")
         frame.write_parquet(temporary)
-        for file in target.glob("*.parquet"):
-            if file != temporary:
-                file.unlink(missing_ok=True)
         temporary.replace(path)
+        for file in target.glob("*.parquet"):
+            if file != path:
+                file.unlink(missing_ok=True)
         return path
 
     def read_country_dataset(self, country: str, dataset_path: str) -> list[dict[str, Any]]:
@@ -601,7 +601,13 @@ class ParquetStore:
     def _read_parquet_files(self, files: list[Path]) -> pl.DataFrame:
         if not files:
             return pl.DataFrame()
-        return pl.concat([pl.read_parquet(file) for file in files], how="diagonal_relaxed")
+        frames: list[pl.DataFrame] = []
+        for file in files:
+            try:
+                frames.append(pl.read_parquet(file))
+            except FileNotFoundError:
+                continue
+        return pl.concat(frames, how="diagonal_relaxed") if frames else pl.DataFrame()
 
     def _drop_overlapping_source_range(
         self, frame: pl.DataFrame, new_rows: list[dict[str, Any]]

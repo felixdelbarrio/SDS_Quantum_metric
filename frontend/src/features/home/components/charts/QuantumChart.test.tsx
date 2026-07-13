@@ -46,6 +46,35 @@ describe("QuantumChart", () => {
     expect(container.querySelector("path.quantum-chart-series")).toBeNull();
   });
 
+  it("renderiza los rangos historicos como whiskers en barras", () => {
+    const payload = chartPayload();
+    payload.chart_type = "stacked_bar";
+    payload.bands = [
+      {
+        id: "historical",
+        kind: "historical_range",
+        lower_points: [
+          { x: 0, value: 5 },
+          { x: 1, value: 10 },
+        ],
+        upper_points: [
+          { x: 0, value: 25 },
+          { x: 1, value: 30 },
+        ],
+      },
+    ];
+    const { container } = render(
+      <QuantumChart payload={payload} title="Sesiones" />,
+    );
+
+    expect(
+      container.querySelectorAll(".quantum-chart-whiskers > g"),
+    ).toHaveLength(2);
+    expect(
+      container.querySelectorAll(".quantum-chart-whiskers line"),
+    ).toHaveLength(6);
+  });
+
   it("mantiene tooltip accesible en barras", () => {
     const { container } = render(
       <QuantumChart
