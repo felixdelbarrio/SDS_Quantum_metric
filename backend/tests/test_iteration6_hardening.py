@@ -4,6 +4,7 @@ import os
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -13,8 +14,10 @@ from backend.app.config.paths import default_user_data_dir, frontend_dist_path
 from backend.app.config.settings import Settings
 from backend.app.ingestion.capture import (
     _configure_playwright_browser_path,
+    _detail_widget_id,
     _effective_source_end,
     _launch_headless_browser,
+    _missing_chart_detail_urls,
 )
 from backend.app.ingestion.models import IngestionJob
 from backend.app.ingestion.planner import plan_ingestion_chunks
@@ -235,6 +238,36 @@ def test_capture_effective_end_uses_complete_archive_hour() -> None:
     end = _effective_source_end(requested_end, {"stats": {"archive_cutoff_ts": archive_cutoff}})
 
     assert end == datetime(2026, 6, 29, 9, 59, 59, tzinfo=UTC)
+
+
+def test_capture_opens_only_compact_chart_details_without_series() -> None:
+    candidates = [
+        {"widgetId": "compact", "href": "https://qm.example/#/dashboard/d/card/compact"},
+        {"widgetId": "chart", "href": "https://qm.example/#/dashboard/d/card/chart"},
+        {"widgetId": "table", "href": "https://qm.example/#/dashboard/d/card/table"},
+        {"widgetId": "unseen", "href": "https://qm.example/#/dashboard/d/card/unseen"},
+        {"widgetId": "external", "href": "https://example.com/card/external"},
+    ]
+    page = type("Page", (), {"evaluate": lambda self, script: candidates})()
+    contracts: dict[str, dict[str, Any]] = {
+        "compact": {"formatted": "9.3"},
+        "chart": {"formatted": "8.1", "chart": {"series": [{"points": [1]}]}},
+        "table": {"formatted": "4", "table": {"rows": []}},
+        "external": {"formatted": "2"},
+    }
+
+    assert _missing_chart_detail_urls(page, contracts) == [
+        "https://qm.example/#/dashboard/d/card/compact"
+    ]
+    assert _missing_chart_detail_urls(
+        page,
+        contracts,
+        required_chart_widget_ids={"compact", "chart", "unseen"},
+    ) == [
+        "https://qm.example/#/dashboard/d/card/compact",
+        "https://qm.example/#/dashboard/d/card/unseen",
+    ]
+    assert _detail_widget_id("https://qm.example/#/dashboard/d/card/compact?tab=0") == "compact"
 
 
 def test_capture_prefers_playwright_chromium_over_user_chrome(tmp_path: Path) -> None:

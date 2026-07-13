@@ -22,6 +22,7 @@ from backend.app.ingestion.time_rewriter import (
 )
 from backend.app.observability.sanitizer import sanitize
 from backend.app.quantum_dashboard.visual_contracts import (
+    collect_open_widget_chart_contract,
     collect_visible_widget_contracts,
     merge_visual_contract_maps,
     visual_contracts_are_complete,
@@ -111,6 +112,7 @@ class QuantumAnalyticsCaptureSession:
         *,
         dashboard_url: str,
         ingestion_range: IngestionRange | None,
+        required_chart_widget_ids: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         if self._context is None:
             raise RuntimeError("Capture session is not started.")
@@ -314,6 +316,32 @@ class QuantumAnalyticsCaptureSession:
                 visual_contracts=visual_contracts,
                 timezone=ingestion_range.timezone if ingestion_range else "UTC",
             )
+            for detail_url in _missing_chart_detail_urls(
+                page,
+                visual_contracts,
+                required_chart_widget_ids=required_chart_widget_ids,
+            ):
+                response_count = len(rows)
+                page.goto(detail_url, wait_until="domcontentloaded", timeout=60_000)
+                _wait_for_analytics_settle(
+                    page,
+                    rows,
+                    analytics_state,
+                    min(self.wait_seconds, 45),
+                    minimum_seconds=10.0,
+                    minimum_row_count=response_count + 1,
+                )
+                widget_id = _detail_widget_id(detail_url)
+                if widget_id:
+                    try:
+                        detail_contract = collect_open_widget_chart_contract(
+                            page,
+                            widget_id=widget_id,
+                            timezone=ingestion_range.timezone if ingestion_range else "UTC",
+                        )
+                    except Exception:
+                        detail_contract = {}
+                    merge_visual_contract_maps(visual_contracts, detail_contract)
         finally:
             authentication_required = _looks_unauthenticated(page)
             _collect_page_visual_contracts(
@@ -462,11 +490,12 @@ def _wait_for_analytics_settle(
     *,
     visual_contracts: dict[str, dict[str, Any]] | None = None,
     timezone: str = "UTC",
+    minimum_seconds: float = 35.0,
+    minimum_row_count: int = 1,
 ) -> None:
     started = time.monotonic()
     deadline = started + max(5, wait_seconds)
     quiet_seconds = 8.0
-    minimum_seconds = 35.0
     visual_wait_limit = min(float(max(5, wait_seconds)), 90.0)
     next_scroll_at = started + 2.0
     while time.monotonic() < deadline:
@@ -478,7 +507,7 @@ def _wait_for_analytics_settle(
                 _collect_page_visual_contracts(page, visual_contracts, timezone=timezone)
             _scroll_dashboard(page)
             next_scroll_at = now + 1.5
-        if rows and now - started >= minimum_seconds:
+        if len(rows) >= minimum_row_count and now - started >= minimum_seconds:
             last_response_at = float(analytics_state.get("last_response_at") or started)
             if now - last_response_at >= quiet_seconds:
                 if (
@@ -489,6 +518,56 @@ def _wait_for_analytics_settle(
                     return
         if not rows and now - started >= 8 and _looks_unauthenticated(page):
             return
+
+
+def _missing_chart_detail_urls(
+    page: Any,
+    contracts: dict[str, dict[str, Any]],
+    *,
+    required_chart_widget_ids: set[str] | None = None,
+) -> list[str]:
+    try:
+        candidates = page.evaluate(
+            """
+            () => Array.from(document.querySelectorAll("[data-card-id]")).map((root) => {
+              const link = root.querySelector('[data-testid="dashboard-card-title-link"]');
+              return {
+                widgetId: root.getAttribute("data-card-id") || "",
+                href: link?.href || "",
+              };
+            })
+            """
+        )
+    except Exception:
+        return []
+    if not isinstance(candidates, list):
+        return []
+    urls: list[str] = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        widget_id = str(candidate.get("widgetId") or "")
+        url = str(candidate.get("href") or "")
+        if required_chart_widget_ids is not None and widget_id not in required_chart_widget_ids:
+            continue
+        contract = contracts.get(widget_id, {})
+        if isinstance(contract.get("chart"), dict) or isinstance(contract.get("table"), dict):
+            continue
+        if required_chart_widget_ids is None and "formatted" not in contract:
+            continue
+        parsed = urlparse(url)
+        if parsed.hostname and "/card/" in parsed.fragment and url not in urls:
+            urls.append(url)
+    return urls
+
+
+def _detail_widget_id(url: str) -> str | None:
+    fragment = urlparse(url).fragment
+    marker = "/card/"
+    if marker not in fragment:
+        return None
+    widget_id = fragment.split(marker, 1)[1].split("?", 1)[0].strip("/")
+    return widget_id or None
 
 
 def _collect_page_visual_contracts(

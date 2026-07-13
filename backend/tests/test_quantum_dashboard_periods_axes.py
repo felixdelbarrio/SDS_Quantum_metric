@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 
 from backend.app.quantum_dashboard.chart_axes import readable_x_ticks
 from backend.app.quantum_dashboard.periods import format_period_label, zoneinfo_for
+from backend.app.quantum_dashboard.service import _period_matches
 
 
 def _utc(year: int, month: int, day: int, hour: int, minute: int = 0) -> datetime:
@@ -68,3 +69,14 @@ def test_readable_x_ticks_limit_labels_and_hide_epoch() -> None:
     assert 1 <= len(ticks) <= 7
     assert all(not tick["label"].isdigit() for tick in ticks)
     assert {tick["label"] for tick in ticks} >= {"18:00"}
+
+
+def test_selected_period_requires_complete_local_coverage() -> None:
+    period = {
+        "start": "2026-07-06T05:00:00Z",
+        "end": "2026-07-12T09:59:59Z",
+        "timezone": "America/Bogota",
+    }
+
+    assert not _period_matches(period, "2026-07-07", "2026-07-13")
+    assert _period_matches(period, "2026-07-07", "2026-07-12")

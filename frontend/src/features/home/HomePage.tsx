@@ -14,6 +14,7 @@ import { DashboardSectionGrid } from "./components/DashboardSectionGrid";
 import { COUNTRY_OPTIONS } from "../../shared/countries";
 import { useAppStore } from "../../shared/state/appStore";
 import { timezoneForCountry, todayInTimezone } from "./timezone";
+import { normalizeDashboardDisplayText } from "./displayText";
 
 const COUNTRY_CODES = COUNTRY_OPTIONS.map((country) => country.code);
 
@@ -87,6 +88,7 @@ export function HomePage() {
         endDate: dateRange.endDate,
         rangeKey: dateRange.preset,
       }),
+    select: normalizeDashboardDisplayText,
     enabled: hasDashboardData,
   });
 
