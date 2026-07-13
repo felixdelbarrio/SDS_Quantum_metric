@@ -132,6 +132,78 @@ _CAPTURE_SCRIPT = r"""
 }
 """
 
+_OPEN_CARD_CHART_SCRIPT = r"""
+() => {
+  const uniqueText = (nodes) => {
+    const values = [];
+    for (const node of Array.from(nodes)) {
+      const value = (node.textContent || "").trim();
+      if (value && !values.includes(value)) values.push(value);
+    }
+    return values;
+  };
+  const chartNode = document.querySelector('[data-testid="multi-line-chart"]') ||
+    Array.from(document.querySelectorAll(".chart[data-pivot-hook]"))
+      .find((node) => node.querySelector("svg"));
+  const chartSvg = chartNode?.querySelector("svg") || null;
+  if (!chartNode || !chartSvg) return null;
+  const scope = chartNode.closest(".visualization-panel") || chartNode.parentElement;
+  const trend = scope?.querySelector(".qm-trend");
+  const kpiNode = scope?.querySelector(".sandbox-kpi-value") ||
+    scope?.querySelector('[data-testid="kpi-metric-data"]');
+  const chartPaths = Array.from(chartSvg.querySelectorAll("path"));
+  const plotDomain = chartSvg.querySelector("g.x.axis path.domain");
+  const plotBounds = plotDomain?.getBBox() || null;
+  return {
+    formatted: (kpiNode?.textContent || "").trim().split("\n")[0].trim(),
+    comparison: trend
+      ? {
+          formatted: (trend.querySelector('[data-testid="qm-trend-metric"]')?.textContent || "").trim(),
+          label: (trend.querySelector(".qm-trend-baseline")?.textContent || "").trim(),
+          className: String(trend.className || ""),
+          directionPath: trend.querySelector(".qm-trend-direction-icon path")?.getAttribute("d") || "",
+        }
+      : null,
+    chart: {
+      pivotHook: chartNode.getAttribute("data-pivot-hook") || chartNode.getAttribute("data-testid") || "",
+      xTicks: uniqueText(chartSvg.querySelectorAll("g.x.axis text")),
+      yTicks: uniqueText(chartSvg.querySelectorAll("g.y.axis text")),
+      legends: uniqueText(scope?.querySelectorAll(".chart-legend .legend-item") || []),
+      period: (scope?.querySelector(".panel-date-interior")?.textContent || "").trim(),
+      seriesData: chartPaths
+        .filter((path) => Array.isArray(path.__data__?.values))
+        .map((path) => ({
+          id: path.__data__.id,
+          label: path.__data__.text,
+          values: path.__data__.values,
+          dasharray: getComputedStyle(path).strokeDasharray,
+        })),
+      bandsData: chartPaths
+        .filter((path) => Array.isArray(path.__data__?.points))
+        .map((path) => ({ points: path.__data__.points })),
+      whiskersData: Array.from(chartSvg.querySelectorAll("g.bar-whisker"))
+        .filter((group) => Array.isArray(group.__data__) && group.__data__.length >= 2)
+        .map((group) => ({ low: group.__data__[0], high: group.__data__[1] })),
+      highlightsData: Array.from(chartSvg.querySelectorAll("rect.backdrop"))
+        .filter((rect) => rect.__data__?.start != null && rect.__data__?.end != null)
+        .map((rect) => {
+          const x = Number(rect.getAttribute("x") || 0);
+          const width = Number(rect.getAttribute("width") || 0);
+          const plotX = Number(plotBounds?.x || 0);
+          const plotWidth = Number(plotBounds?.width || 0);
+          return {
+            start: rect.__data__.start,
+            end: rect.__data__.end,
+            label: rect.__data__.name || "Anomaly",
+            startX: plotWidth ? (x - plotX) / plotWidth : null,
+            endX: plotWidth ? (x + width - plotX) / plotWidth : null,
+          };
+        }),
+    },
+  };
+}
+"""
+
 
 def collect_visible_widget_contracts(page: Any, *, timezone: str) -> dict[str, dict[str, Any]]:
     captured = page.evaluate(_CAPTURE_SCRIPT)
@@ -148,6 +220,19 @@ def collect_visible_widget_contracts(page: Any, *, timezone: str) -> dict[str, d
         if contract:
             contracts[widget_id] = contract
     return contracts
+
+
+def collect_open_widget_chart_contract(
+    page: Any,
+    *,
+    widget_id: str,
+    timezone: str,
+) -> dict[str, dict[str, Any]]:
+    captured = page.evaluate(_OPEN_CARD_CHART_SCRIPT)
+    if not isinstance(captured, dict):
+        return {}
+    contract = _contract_from_dom(captured, timezone=timezone)
+    return {widget_id: contract} if contract.get("chart") else {}
 
 
 def merge_visual_contract_maps(

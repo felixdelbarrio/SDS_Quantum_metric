@@ -15,7 +15,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useState } from "react";
 import { apiGet, apiPost, apiPut } from "../../shared/api/client";
 import {
   COUNTRY_OPTIONS,
@@ -286,12 +286,6 @@ export function QuantumPage() {
       });
     },
   });
-
-  useEffect(() => {
-    if (config.data?.theme_preference) {
-      setThemePreference(config.data.theme_preference);
-    }
-  }, [config.data?.theme_preference, setThemePreference]);
 
   function update<K extends keyof QuantumConfig>(
     key: K,

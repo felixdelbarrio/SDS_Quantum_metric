@@ -1466,7 +1466,7 @@ def _period_matches(
     requested_end = _parse_date(end_date) or requested_start
     if requested_start is None or requested_end is None or period_end is None:
         return False
-    return period_start <= requested_end and period_end >= requested_start
+    return period_start <= requested_start and period_end >= requested_end
 
 
 def _period_date(value: Any, timezone: Any) -> date | None:

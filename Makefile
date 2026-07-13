@@ -3,8 +3,9 @@
 CODEQL_VERSION ?= latest
 CODEQL_HOME ?= .tools/codeql
 CODEQL ?= $(CODEQL_HOME)/codeql
-CODEQL_DB_DIR ?= .codeql-db
-CODEQL_SOURCE_DIR ?= .codeql-source
+CODEQL_WORK_DIR ?= /tmp/sds-quantum-codeql-$(shell id -u)
+CODEQL_DB_DIR ?= $(CODEQL_WORK_DIR)/db
+CODEQL_SOURCE_DIR ?= $(CODEQL_WORK_DIR)/source
 CODEQL_PYTHON_DB ?= $(CODEQL_DB_DIR)/python
 CODEQL_TS_DB ?= $(CODEQL_DB_DIR)/javascript-typescript
 

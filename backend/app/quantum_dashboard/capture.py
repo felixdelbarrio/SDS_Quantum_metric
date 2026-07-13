@@ -82,9 +82,15 @@ def capture_quantum_dashboard_cards(
         )
         try:
             if capture_session:
+                capture_args: dict[str, Any] = {
+                    "dashboard_url": dashboard_url,
+                    "ingestion_range": ingestion_range,
+                }
+                chart_widget_ids = _chart_widget_ids(widgets, tab_index)
+                if chart_widget_ids:
+                    capture_args["required_chart_widget_ids"] = chart_widget_ids
                 captured = capture_session.capture(
-                    dashboard_url=dashboard_url,
-                    ingestion_range=ingestion_range,
+                    **capture_args,
                 )
             else:
                 captured = capture_quantum_analytics(
@@ -156,6 +162,21 @@ def _capture_tabs(
         {"tab": "summary", "tab_name": "Resumen", "tab_index": summary_tab},
         {"tab": "errors", "tab_name": "Errores", "tab_index": errors_tab},
     ]
+
+
+def _chart_widget_ids(
+    widgets: list[QuantumWidgetConfig] | None,
+    tab_index: int,
+) -> set[str]:
+    return {
+        widget.widget_id
+        for widget in widgets or []
+        if widget.enabled
+        and widget.supported
+        and widget.widget_type == "CHART"
+        and widget.tab_index == tab_index
+        and widget.widget_id
+    }
 
 
 def _slug(value: str) -> str:
